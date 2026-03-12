@@ -3,13 +3,79 @@ import { useMemo } from 'react'
 import { getFlattenedTree, type FlatTreeNode } from '@/lib/api/taxons'
 import * as d3 from 'd3'
 
-// Rank hierarchy for filtering (domain first for horizontal tree filter)
-const RANK_ORDER = ['domain', 'phylum', 'class', 'order', 'family', 'genus', 'species']
+// Rank hierarchy for filtering (domain first for horizontal tree filter). Export for UI.
+export const RANK_ORDER = ['kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species'] as const
+
+export type RankDistributionEntry = { rank: string; count: number }
 
 function getRankIndex(rank: string | null): number {
   if (!rank) return -1
-  const index = RANK_ORDER.indexOf(rank.toLowerCase())
+  const index = (RANK_ORDER as readonly string[]).indexOf(rank.toLowerCase())
   return index >= 0 ? index : -1
+}
+
+/** Applies rank filter to any tree root (same logic as filterTreeByRank). Returns filtered tree or original if invalid. */
+function applyRankFilterToTree(
+  treeRoot: d3.HierarchyNode<FlatTreeNode>,
+  rank: string
+): d3.HierarchyNode<FlatTreeNode> {
+  const maxRankIndex = getRankIndex(rank)
+  if (maxRankIndex < 0) return treeRoot
+
+  const nodesToInclude = new Set<string>()
+  if (treeRoot.data?.id) nodesToInclude.add(treeRoot.data.id)
+
+  treeRoot.each((node) => {
+    if (!node.data) return
+    const nodeRank = node.data.rank
+    const rankIndex = getRankIndex(nodeRank)
+    if (rankIndex >= 0 && rankIndex <= maxRankIndex) nodesToInclude.add(node.data.id)
+    else if (!nodeRank) nodesToInclude.add(node.data.id)
+  })
+
+  treeRoot.each((node) => {
+    if (!node.data || !nodesToInclude.has(node.data.id)) return
+    let current = node.parent
+    while (current && current.data) {
+      nodesToInclude.add(current.data.id)
+      current = current.parent
+    }
+  })
+
+  const filteredFlatNodes: FlatTreeNode[] = []
+  treeRoot.each((node) => {
+    if (!node.data || !nodesToInclude.has(node.data.id)) return
+    let parentId: string | null = null
+    let current = node.parent
+    while (current) {
+      if (current.data && nodesToInclude.has(current.data.id)) {
+        parentId = current.data.id
+        break
+      }
+      current = current.parent
+    }
+    filteredFlatNodes.push({
+      id: node.data.id,
+      parentId,
+      scientific_name: node.data.scientific_name,
+      annotations_count: node.data.annotations_count,
+      assemblies_count: node.data.assemblies_count,
+      organisms_count: node.data.organisms_count,
+      rank: node.data.rank,
+      coding_count: node.data.coding_count,
+      non_coding_count: node.data.non_coding_count,
+      pseudogene_count: node.data.pseudogene_count,
+    })
+  })
+
+  if (filteredFlatNodes.length === 0) return treeRoot
+  try {
+    const stratify = d3.stratify<FlatTreeNode>().id((d) => d.id).parentId((d) => d.parentId)
+    const rebuilt = stratify(filteredFlatNodes)
+    return rebuilt && rebuilt.data ? rebuilt : treeRoot
+  } catch {
+    return treeRoot
+  }
 }
 
 interface FlattenedTreeState {
@@ -27,6 +93,20 @@ interface FlattenedTreeState {
   searchNodes: (query: string, limit?: number) => FlatTreeNode[]
   filterTreeByRank: (rank: string | null) => d3.HierarchyNode<FlatTreeNode> | null
   filterTreeByRootTaxon: (rootTaxid: string | null) => d3.HierarchyNode<FlatTreeNode> | null
+  /** Tree filtered by root (when set) and by rank (when set). Use this for unified rank + root filtering. */
+  getFilteredTreeByRootAndRank: (rootTaxid: string | null, rank: string | null) => d3.HierarchyNode<FlatTreeNode> | null
+  /** Returns ordered list of rank counts for nodes under the given root (null = full tree). */
+  getRankDistribution: (rootTaxid: string | null) => RankDistributionEntry[]
+  /** Number of leaf nodes (no children) under the given root (null = full tree). */
+  getLeafCountUnderRoot: (rootTaxid: string | null) => number
+  /** organisms_count of the root of the tree (subtree root when rootTaxid set, else full tree). Matches selected taxon's organisms_count. */
+  getRootOrganismsCount: (rootTaxid: string | null) => number
+  /** For a given taxid, return the node from the tree plus its children and ancestors (from flat data). Used by details panel. */
+  getTaxonContext: (taxid: string) => {
+    node: FlatTreeNode | null
+    children: FlatTreeNode[]
+    ancestors: FlatTreeNode[]
+  }
 }
 
 export const useFlattenedTreeStore = create<FlattenedTreeState>((set, get) => ({
@@ -346,6 +426,90 @@ export const useFlattenedTreeStore = create<FlattenedTreeState>((set, get) => ({
       return treeStructure
     }
   },
+
+  getFilteredTreeByRootAndRank: (rootTaxid: string | null, rank: string | null) => {
+    const { getTreeStructure, filterTreeByRootTaxon } = get()
+    const baseTree = rootTaxid
+      ? filterTreeByRootTaxon(rootTaxid)
+      : getTreeStructure()
+    if (!baseTree) return null
+    if (!rank) return baseTree
+    return applyRankFilterToTree(baseTree, rank)
+  },
+
+  // Rank distribution under a root: ordered list of { rank, count }
+  getRankDistribution: (rootTaxid: string | null) => {
+    const { getTreeStructure, filterTreeByRootTaxon } = get()
+    const tree = rootTaxid
+      ? filterTreeByRootTaxon(rootTaxid)
+      : getTreeStructure()
+    if (!tree) return []
+
+    const countByRank = new Map<string, number>()
+    tree.each((node) => {
+      if (!node.data?.rank) return
+      const r = node.data.rank.toLowerCase().trim()
+      if (!r) return
+      countByRank.set(r, (countByRank.get(r) ?? 0) + 1)
+    })
+
+    const entries: RankDistributionEntry[] = Array.from(countByRank.entries()).map(([rank, count]) => ({ rank, count }))
+    entries.sort((a, b) => {
+      const i = getRankIndex(a.rank)
+      const j = getRankIndex(b.rank)
+      if (i >= 0 && j >= 0) return i - j
+      if (i >= 0) return -1
+      if (j >= 0) return 1
+      return a.rank.localeCompare(b.rank)
+    })
+    return entries
+  },
+
+  getLeafCountUnderRoot: (rootTaxid: string | null) => {
+    const { getTreeStructure, filterTreeByRootTaxon } = get()
+    const tree = rootTaxid
+      ? filterTreeByRootTaxon(rootTaxid)
+      : getTreeStructure()
+    if (!tree) return 0
+    let count = 0
+    tree.each((node) => {
+      // Leaf = node with no children in this tree (d3: leaf has .children undefined or empty)
+      if (!node.data) return
+      if (!node.children || node.children.length === 0) count += 1
+    })
+    return count
+  },
+
+  getRootOrganismsCount: (rootTaxid: string | null) => {
+    const { getTreeStructure, filterTreeByRootTaxon } = get()
+    const tree = rootTaxid
+      ? filterTreeByRootTaxon(rootTaxid)
+      : getTreeStructure()
+    if (!tree?.data) return 0
+    return tree.data.organisms_count ?? 0
+  },
+
+  getTaxonContext: (taxid: string) => {
+    const { flatNodes } = get()
+    const node = flatNodes.find((n) => n.id === taxid) ?? null
+    const children = flatNodes
+      .filter((n) => n.parentId === taxid)
+      .sort((a, b) => (b.annotations_count ?? 0) - (a.annotations_count ?? 0))
+    const ancestors: FlatTreeNode[] = []
+    let currentId: string | null = node?.parentId ?? null
+    const excludeIds = new Set(['root', '131567'])
+    while (currentId && !excludeIds.has(currentId)) {
+      const ancestor = flatNodes.find((n) => n.id === currentId)
+      if (ancestor) {
+        ancestors.push(ancestor)
+        currentId = ancestor.parentId
+      } else {
+        break
+      }
+    }
+    ancestors.reverse()
+    return { node: node ?? null, children, ancestors }
+  },
 }))
 
 // Selector hook for treeStructure (computed on-demand from flatNodes)
@@ -397,4 +561,38 @@ export const useFilteredTreeByRootTaxon = (rootTaxid: string | null) => {
   return useMemo(() => {
     return filterTreeByRootTaxon(rootTaxid)
   }, [flatNodes, filterTreeByRootTaxon, rootTaxid])
+}
+
+// Selector hook: tree filtered by root and optionally by rank (for rank slider + root)
+export const useFilteredTreeByRootAndRank = (rootTaxid: string | null, rank: string | null) => {
+  const flatNodes = useFlattenedTreeStore((state) => state.flatNodes)
+  const getFilteredTreeByRootAndRank = useFlattenedTreeStore((state) => state.getFilteredTreeByRootAndRank)
+
+  return useMemo(() => {
+    return getFilteredTreeByRootAndRank(rootTaxid, rank)
+  }, [flatNodes, getFilteredTreeByRootAndRank, rootTaxid, rank])
+}
+
+// Selector hook for leaf count under a root
+export const useLeafCountUnderRoot = (rootTaxid: string | null) => {
+  const flatNodes = useFlattenedTreeStore((state) => state.flatNodes)
+  const getLeafCountUnderRoot = useFlattenedTreeStore((state) => state.getLeafCountUnderRoot)
+  return useMemo(() => getLeafCountUnderRoot(rootTaxid), [flatNodes, getLeafCountUnderRoot, rootTaxid])
+}
+
+// Selector hook for root's organisms_count (matches selected taxon's organisms_count for "All leaves" display)
+export const useRootOrganismsCount = (rootTaxid: string | null) => {
+  const flatNodes = useFlattenedTreeStore((state) => state.flatNodes)
+  const getRootOrganismsCount = useFlattenedTreeStore((state) => state.getRootOrganismsCount)
+  return useMemo(() => getRootOrganismsCount(rootTaxid), [flatNodes, getRootOrganismsCount, rootTaxid])
+}
+
+// Selector hook for rank distribution under a root
+export const useRankDistribution = (rootTaxid: string | null) => {
+  const flatNodes = useFlattenedTreeStore((state) => state.flatNodes)
+  const getRankDistribution = useFlattenedTreeStore((state) => state.getRankDistribution)
+
+  return useMemo(() => {
+    return getRankDistribution(rootTaxid)
+  }, [flatNodes, getRankDistribution, rootTaxid])
 }

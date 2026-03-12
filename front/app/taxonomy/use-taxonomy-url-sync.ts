@@ -18,8 +18,9 @@ interface UseTaxonomyUrlSyncOptions {
 
 /**
  * Handles URL <-> state sync for taxonomy explorer:
- * - On mount with ?taxon=X: loads that taxon, sets as root, opens panel
- * - When root changes: updates URL so reload preserves view
+ * - URL always has ?taxon=<taxid>. If missing, redirects to ?taxon=2759 (Eukaryota).
+ * - On mount: loads taxon from URL, sets as root; 2759 is a normal root (no special "null" state).
+ * - When root changes: updates URL to /taxonomy?taxon=<rootTaxon.taxid>.
  */
 export function useTaxonomyUrlSync({
   rootTaxon,
@@ -34,7 +35,7 @@ export function useTaxonomyUrlSync({
   useEffect(() => {
     const taxidFromUrl = searchParams?.get("taxon")
     if (!taxidFromUrl) {
-      hasHydratedRef.current = true
+      router.replace("/taxonomy?taxon=" + EUKARYOTA_TAXID, { scroll: false })
       return
     }
     if (rootTaxon?.taxid === taxidFromUrl) {
@@ -46,29 +47,23 @@ export function useTaxonomyUrlSync({
     getTaxon(taxidFromUrl)
       .then((taxonData) => {
         if (cancelled) return
-        if (taxidFromUrl === EUKARYOTA_TAXID) {
-          setRootTaxon(null)
-          setSelectedTaxon(null)
-          router.replace("/taxonomy", { scroll: false })
-        } else {
-          const payload: TaxonomyPayload = {
+        const payload: TaxonomyPayload = {
+          taxid: taxonData.taxid,
+          taxon: {
             taxid: taxonData.taxid,
-            taxon: {
-              taxid: taxonData.taxid,
-              scientific_name: taxonData.scientific_name,
-              rank: taxonData.rank,
-              organisms_count: taxonData.organisms_count,
-              assemblies_count: taxonData.assemblies_count,
-              annotations_count: taxonData.annotations_count,
-            },
-          }
-          setRootTaxon(payload)
-          setSelectedTaxon(payload)
+            scientific_name: taxonData.scientific_name,
+            rank: taxonData.rank,
+            organisms_count: taxonData.organisms_count,
+            assemblies_count: taxonData.assemblies_count,
+            annotations_count: taxonData.annotations_count,
+          },
         }
+        setRootTaxon(payload)
+        setSelectedTaxon(payload)
         setActiveView("overview")
       })
       .catch(() => {
-        if (!cancelled) router.replace("/taxonomy", { scroll: false })
+        if (!cancelled) router.replace("/taxonomy?taxon=" + EUKARYOTA_TAXID, { scroll: false })
       })
       .finally(() => {
         if (!cancelled) hasHydratedRef.current = true
@@ -77,14 +72,17 @@ export function useTaxonomyUrlSync({
     return () => {
       cancelled = true
     }
-  }, [searchParams, router, rootTaxon?.taxid, setRootTaxon, setSelectedTaxon, setActiveView])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- Intentionally omit rootTaxon: we only sync
+    // URL→state when the URL changes (searchParams). Including rootTaxon would make this effect re-run
+    // when the user sets a new root from the UI, fetch the OLD taxid from the URL, and overwrite their
+    // selection—causing the URL to never update in production (where fetches complete before router.replace).
+  }, [searchParams, router, setRootTaxon, setSelectedTaxon, setActiveView])
 
   useEffect(() => {
-    if (!hasHydratedRef.current) return
+    if (!hasHydratedRef.current || !rootTaxon) return
     const urlTaxid = searchParams?.get("taxon")
-    const desiredUrl = rootTaxon ? `/taxonomy?taxon=${rootTaxon.taxid}` : "/taxonomy"
-    const currentMatches = rootTaxon ? urlTaxid === rootTaxon.taxid : !urlTaxid
-    if (currentMatches) return
+    const desiredUrl = `/taxonomy?taxon=${rootTaxon.taxid}`
+    if (urlTaxid === rootTaxon.taxid) return
     router.replace(desiredUrl, { scroll: false })
   }, [rootTaxon?.taxid, searchParams, router])
 }

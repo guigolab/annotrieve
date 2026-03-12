@@ -1,12 +1,14 @@
 import type { Metadata } from "next";
 import localFont from "next/font/local";
+import { Fraunces, DM_Mono } from "next/font/google";
 import "./globals.css";
 import { AppHeader } from "@/components/app-header";
 import { FavoritesFloatingButton } from "@/components/favorites-floating-button";
 import { BetaBannerProvider } from "@/components/beta-banner-provider";
 import { ReactQueryProvider } from "@/components/providers/react-query-provider";
 import { ThemeProvider } from "@/components/theme-provider";
-import { InsdcModalProvider } from "@/components/providers/insdc-modal-provider";
+import { InsdcModalProvider } from "@/components/providers/insdc-modal-provider"
+import { Toaster } from "sonner";
 
 const geistSans = localFont({
   src: "./fonts/GeistVF.woff",
@@ -17,6 +19,19 @@ const geistMono = localFont({
   src: "./fonts/GeistMonoVF.woff",
   variable: "--font-geist-mono",
   weight: "100 900",
+});
+const fraunces = Fraunces({
+  subsets: ["latin"],
+  variable: "--font-fraunces",
+  display: "swap",
+  axes: ["opsz"],
+});
+const dmMono = DM_Mono({
+  subsets: ["latin"],
+  variable: "--font-dm-mono",
+  weight: ["300", "400", "500"],
+  display: "swap",
+  style: ["normal", "italic"],
 });
 
 export const metadata: Metadata = {
@@ -56,7 +71,7 @@ export default function RootLayout({
         <meta name="google-site-verification" content="WlV38EDOLs3XwYrtqyIJTYe-TAwaimfc1emCbx7RG_A" />
       </head>
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased h-full overflow-hidden`}
+        className={`${geistSans.variable} ${geistMono.variable} ${fraunces.variable} ${dmMono.variable} antialiased h-full overflow-hidden`}
       >
         <ThemeProvider>
           <ReactQueryProvider>
@@ -72,6 +87,7 @@ export default function RootLayout({
             </BetaBannerProvider>
           </ReactQueryProvider>
         </ThemeProvider>
+        <Toaster richColors position="top-center" />
       </body>
     </html>
   );

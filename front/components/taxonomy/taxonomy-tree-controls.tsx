@@ -14,7 +14,7 @@ import { useTaxonomyGeneTypesStore } from "@/lib/stores/taxonomy-gene-types"
 import { cn } from "@/lib/utils"
 
 export const TREE_RANK_OPTIONS = [
-  "domain",
+  "kingdom",
   "phylum",
   "class",
   "order",
@@ -73,9 +73,6 @@ export function TaxonomyTreeControls({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {showAllRanksOption && (
-                <SelectItem value="all">All ranks</SelectItem>
-              )}
               {TREE_RANK_OPTIONS.map((r) => (
                 <SelectItem key={r} value={r}>
                   {r.charAt(0).toUpperCase() + r.slice(1)}

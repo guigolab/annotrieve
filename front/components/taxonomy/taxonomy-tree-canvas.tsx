@@ -4,8 +4,7 @@ import { useEffect, useState, useRef, useMemo, useCallback } from "react"
 import * as d3 from "d3"
 import {
   useFlattenedTreeStore,
-  useFilteredTreeByRank,
-  useFilteredTreeByRootTaxon,
+  useFilteredTreeByRootAndRank,
 } from "@/lib/stores/flattened-tree"
 import { useUIStore } from "@/lib/stores/ui"
 import { useTaxonomyGeneTypesStore } from "@/lib/stores/taxonomy-gene-types"
@@ -14,8 +13,9 @@ import {
   TaxonomyTreeControls,
   getTreeGeneColors,
   type TreeRankOption,
-} from "@/components/taxonomy-tree-controls"
+} from "./taxonomy-tree-controls"
 import type { FlatTreeNode } from "@/lib/api/taxons"
+import type { NodeClickEvent } from "./taxonomy-types"
 
 const ROW_HEIGHT = 28
 const INDENT = 24
@@ -85,13 +85,28 @@ function getHasChildrenIds(root: d3.HierarchyNode<FlatTreeNode>): Set<string> {
 
 interface TaxonomyTreeCanvasProps {
   rootTaxid?: string | null
+  highlightTaxid?: string | null
+  selectedTaxid?: string | null
+  onNodeClick?: (event: NodeClickEvent) => void
+  /** @deprecated use onNodeClick */
   onTaxonSelect?: (taxid: string, taxon: FlatTreeNode) => void
+  onDoubleClick?: (taxid: string, taxon: FlatTreeNode) => void
   hideControls?: boolean
   controlledRank?: TreeRankOption | null
   scopeHint?: string
 }
 
-export function TaxonomyTreeCanvas({ rootTaxid = null, onTaxonSelect, hideControls, controlledRank, scopeHint }: TaxonomyTreeCanvasProps) {
+export function TaxonomyTreeCanvas({
+  rootTaxid = null,
+  highlightTaxid = null,
+  selectedTaxid = null,
+  onNodeClick,
+  onTaxonSelect,
+  onDoubleClick,
+  hideControls,
+  controlledRank,
+  scopeHint,
+}: TaxonomyTreeCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const [internalRank, setInternalRank] = useState<TreeRankOption>("class")
@@ -107,6 +122,8 @@ export function TaxonomyTreeCanvas({ rootTaxid = null, onTaxonSelect, hideContro
   )
   const [hoveredOnBar, setHoveredOnBar] = useState(false)
   const [hoveredExpandZone, setHoveredExpandZone] = useState(false)
+  // Bar display mode: absolute counts vs percentage of max
+  const [barMode, setBarMode] = useState<"absolute" | "percent">("absolute")
   const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(
     null
   )
@@ -124,14 +141,27 @@ export function TaxonomyTreeCanvas({ rootTaxid = null, onTaxonSelect, hideContro
       : selectedRank === "all"
         ? null
         : selectedRank
-  const rootFilteredTree = useFilteredTreeByRootTaxon(rootTaxid)
-  const rankFilteredTree = useFilteredTreeByRank(rootTaxid ? null : rankForFilter)
-  const filteredTree = rootTaxid ? rootFilteredTree : rankFilteredTree
+  const filteredTree = useFilteredTreeByRootAndRank(rootTaxid, rankForFilter)
 
   const hasChildrenIds = useMemo(
     () => (filteredTree ? getHasChildrenIds(filteredTree) : new Set<string>()),
     [filteredTree]
   )
+
+  // Ancestor path IDs for glow stroke when a node is highlighted
+  const ancestorPathIds = useMemo(() => {
+    if (!highlightTaxid || !filteredTree) return new Set<string>()
+    let target: d3.HierarchyNode<FlatTreeNode> | null = null
+    filteredTree.each((n) => { if (n.data.id === highlightTaxid) target = n })
+    if (!target) return new Set<string>()
+    const ids = new Set<string>()
+    let cur: d3.HierarchyNode<FlatTreeNode> | null = target as d3.HierarchyNode<FlatTreeNode>
+    while (cur) {
+      ids.add(cur.data.id)
+      cur = cur.parent
+    }
+    return ids
+  }, [highlightTaxid, filteredTree])
 
   const layoutNodes = useMemo(() => {
     if (!filteredTree) return []
@@ -157,6 +187,44 @@ export function TaxonomyTreeCanvas({ rootTaxid = null, onTaxonSelect, hideContro
     setViewportHeight(el.clientHeight)
     return () => ro.disconnect()
   }, [filteredTree])
+
+  // When highlightTaxid is set: expand path to that node and scroll it into view
+  useEffect(() => {
+    if (!highlightTaxid || !filteredTree || !scrollRef.current) return
+    let targetNode: d3.HierarchyNode<FlatTreeNode> | null = null
+    filteredTree.each((n) => {
+      if (n.data.id === highlightTaxid) targetNode = n
+    })
+    if (!targetNode) return
+    const node = targetNode as d3.HierarchyNode<FlatTreeNode>
+    const ancestorIds = node.ancestors().slice(1).map((a: d3.HierarchyNode<FlatTreeNode>) => a.data.id)
+    setCollapsedIds((prev) => {
+      const next = new Set(prev)
+      ancestorIds.forEach((id: string) => next.delete(id))
+      return next
+    })
+  }, [highlightTaxid, filteredTree])
+
+  // Scroll to highlighted node after layout updates (collapsedIds may have changed)
+  const prevHighlightTaxidRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!highlightTaxid) {
+      prevHighlightTaxidRef.current = null
+      return
+    }
+    if (!scrollRef.current) return
+    const layout = layoutNodesRef.current.find(
+      (ln) => ln.node.data.id === highlightTaxid
+    )
+    if (!layout) return
+    const rowY = layout.rowIndex * ROW_HEIGHT
+    const vh = scrollRef.current.clientHeight
+    const desiredScrollTop = Math.max(0, rowY - vh / 2 + ROW_HEIGHT / 2)
+    if (prevHighlightTaxidRef.current !== highlightTaxid) {
+      prevHighlightTaxidRef.current = highlightTaxid
+      scrollRef.current.scrollTop = desiredScrollTop
+    }
+  }, [highlightTaxid, layoutNodes, collapsedIds])
 
   const getMaxGeneSum = useCallback(() => {
     let max = 0
@@ -223,7 +291,9 @@ export function TaxonomyTreeCanvas({ rootTaxid = null, onTaxonSelect, hideContro
       const { node, depth, rowIndex, x, y, childrenSpan } = layout
       const data = node.data
       const rowY = rowIndex * ROW_HEIGHT
-      const isHovered = hoveredLayoutNode === layout
+      const isHovered =
+        hoveredLayoutNode === layout ||
+        (highlightTaxid != null && data.id === highlightTaxid)
       const labelMaxWidth = LABEL_ZONE_WIDTH
       const hasChildren = hasChildrenIds.has(data.id)
       const isCollapsed = collapsedIds.has(data.id)
@@ -284,7 +354,7 @@ export function TaxonomyTreeCanvas({ rootTaxid = null, onTaxonSelect, hideContro
       const rowBarLeft = x + LABEL_ZONE_WIDTH + GAP_BEFORE_BAR
 
       if (total > 0) {
-        const scale = BAR_WIDTH / maxGeneSum
+        const scale = barMode === "percent" ? BAR_WIDTH / total : BAR_WIDTH / maxGeneSum
         let offset = 0
         if (selectedGeneTypes.has("coding") && coding > 0) {
           const w = coding * scale
@@ -308,6 +378,14 @@ export function TaxonomyTreeCanvas({ rootTaxid = null, onTaxonSelect, hideContro
           ctx.lineWidth = 1.5
           ctx.strokeRect(rowBarLeft, barTop, BAR_WIDTH, BAR_HEIGHT)
         }
+      }
+
+      // Ancestor path glow: highlight the entire row with a glowing left border
+      if (ancestorPathIds.has(data.id) && data.id !== highlightTaxid) {
+        ctx.fillStyle = isDark ? "rgba(251,191,36,0.07)" : "rgba(245,158,11,0.07)"
+        ctx.fillRect(0, rowY, width, ROW_HEIGHT)
+        ctx.fillStyle = isDark ? "#fbbf24" : "#f59e0b"
+        ctx.fillRect(0, rowY + 2, 3, ROW_HEIGHT - 4)
       }
     }
 
@@ -339,6 +417,9 @@ export function TaxonomyTreeCanvas({ rootTaxid = null, onTaxonSelect, hideContro
     hasChildrenIds,
     collapsedIds,
     selectedGeneTypes,
+    highlightTaxid,
+    barMode,
+    ancestorPathIds,
   ])
 
   const handleScroll = useCallback(() => {
@@ -410,12 +491,27 @@ export function TaxonomyTreeCanvas({ rootTaxid = null, onTaxonSelect, hideContro
           else next.add(data.id)
           return next
         })
+      } else if (onNodeClick) {
+        onNodeClick({ taxid: data.id, node: data, screenX: e.clientX, screenY: e.clientY })
       } else if (onTaxonSelect) {
-        // If onTaxonSelect is provided, call it when clicking on a row (outside expand zone)
         onTaxonSelect(data.id, data)
       }
     },
-    [hasChildrenIds, onTaxonSelect]
+    [hasChildrenIds, onNodeClick, onTaxonSelect]
+  )
+
+  const handleDoubleClick = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      if (!scrollRef.current || !onDoubleClick) return
+      const rect = scrollRef.current.getBoundingClientRect()
+      const st = scrollRef.current.scrollTop
+      const mouseY = e.clientY - rect.top + st
+      const rowIndex = Math.floor(mouseY / ROW_HEIGHT)
+      const layout = layoutNodesRef.current[rowIndex] ?? null
+      if (!layout) return
+      onDoubleClick(layout.node.data.id, layout.node.data)
+    },
+    [onDoubleClick]
   )
 
   if (isLoading && layoutNodes.length === 0) {
@@ -448,15 +544,34 @@ export function TaxonomyTreeCanvas({ rootTaxid = null, onTaxonSelect, hideContro
         <>
           <p className="text-xs text-muted-foreground">
             {scopeHint
-              ? `Tree under ${scopeHint}. Expandable view with stacked gene-count bars per taxon. Click rows to select; use the expand/collapse control to navigate.`
-              : "Expandable tree view with stacked gene-count bars per taxon. Click rows to select; use the expand/collapse control to navigate the hierarchy."}
+              ? `Tree under ${scopeHint}. Click to select · Double-click to re-root · Toggle bars between absolute counts and % share.`
+              : "Expandable tree. Click to select · Double-click to re-root · Toggle bars between absolute counts and % share."}
           </p>
-          <TaxonomyTreeControls
-            rootTaxid={rootTaxid}
-            selectedRank={selectedRank}
-            onRankChange={setInternalRank}
-            geneColors={geneColors}
-          />
+          <div className="flex flex-wrap items-center gap-4">
+            <TaxonomyTreeControls
+              rootTaxid={rootTaxid}
+              selectedRank={selectedRank}
+              onRankChange={setInternalRank}
+              geneColors={geneColors}
+            />
+            {/* Absolute / % toggle */}
+            <div className="flex items-center gap-1 rounded-md border border-border overflow-hidden text-xs">
+              <button
+                type="button"
+                onClick={() => setBarMode("absolute")}
+                className={`px-2.5 py-1 transition-colors ${barMode === "absolute" ? "bg-primary text-primary-foreground" : "hover:bg-muted text-muted-foreground"}`}
+              >
+                Abs
+              </button>
+              <button
+                type="button"
+                onClick={() => setBarMode("percent")}
+                className={`px-2.5 py-1 transition-colors ${barMode === "percent" ? "bg-primary text-primary-foreground" : "hover:bg-muted text-muted-foreground"}`}
+              >
+                %
+              </button>
+            </div>
+          </div>
         </>
       )}
 
@@ -468,6 +583,7 @@ export function TaxonomyTreeCanvas({ rootTaxid = null, onTaxonSelect, hideContro
         onMouseMove={handleMouseMove}
         onMouseLeave={handleMouseLeave}
         onClick={handleClick}
+        onDoubleClick={handleDoubleClick}
       >
         <div style={{ height: totalHeight, position: "relative" }}>
           <canvas

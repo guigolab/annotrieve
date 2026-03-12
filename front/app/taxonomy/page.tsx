@@ -1,34 +1,48 @@
 "use client"
 
-import { useState, useEffect, useRef, useCallback, useMemo } from "react"
 import {
-  Network,
-  GitBranch,
-  LayoutList,
-  Layers,
-  Search,
-  Info,
-  Home,
-} from "lucide-react"
-import { Input } from "@/components/ui/input"
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { TreeOfLifeD3New } from "@/components/tree-of-life-d3-new"
-import { TaxonomyTreeCanvas } from "@/components/taxonomy-tree-canvas"
-import { GeneStackRadialChart } from "@/components/gene-stack-radial-chart"
-import { TaxonomyDetailsPanel } from "@/components/taxonomy-details-panel"
-import { RadialTreeWithWarning } from "./radial-tree-with-warning"
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+  useMemo,
+} from "react"
+import { useSearchParams } from "next/navigation"
+import { Search, X, HelpCircle } from "lucide-react"
+
+import { D3CirclePack } from "@/components/taxonomy/d3-circle-pack"
+import { TaxonomyTreeCanvas } from "@/components/taxonomy/taxonomy-tree-canvas"
+import type { TreeRankOption } from "@/components/taxonomy/taxonomy-tree-controls"
+import { D3StackedRadialBar } from "@/components/taxonomy/d3-stacked-radial-bar"
+import { TaxonomyDetailsPanel } from "@/components/taxonomy/taxonomy-details-panel"
+import { RadialTreeWithWarning } from "@/components/taxonomy/radial-tree-with-warning"
 import { useTaxonomyUrlSync } from "./use-taxonomy-url-sync"
-import { useFlattenedTreeStore } from "@/lib/stores/flattened-tree"
+import { useFlattenedTreeStore, useRankDistribution, useRootOrganismsCount } from "@/lib/stores/flattened-tree"
+
+import { type BreadcrumbEntry } from "@/components/taxonomy/floating-breadcrumb"
+import { FloatingVizStrip } from "@/components/taxonomy/floating-viz-strip"
+
 import type { TaxonRecord } from "@/lib/api/types"
 import type { FlatTreeNode } from "@/lib/api/taxons"
+import {
+  type ViewTab,
+  type TaxonomyPayload,
+  type NodeClickEvent,
+  GLASS_PANEL,
+  GLASS_PANEL_PADDING,
+} from "@/components/taxonomy/taxonomy-types"
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover"
 import { cn } from "@/lib/utils"
-import { Badge } from "@/components/ui/badge"
+import { toast } from "sonner"
 
 const EUKARYOTA_TAXID = "2759"
+const MAX_ROOT_HISTORY = 10
 
-type ViewTab = "overview" | "tree" | "constant-branch" | "gene-stack"
-
-function flatNodeToTaxonRecord(node: FlatTreeNode): TaxonRecord {
+function flatNodeToTaxon(node: FlatTreeNode): TaxonRecord {
   return {
     taxid: node.id,
     scientific_name: node.scientific_name,
@@ -39,299 +53,520 @@ function flatNodeToTaxonRecord(node: FlatTreeNode): TaxonRecord {
   }
 }
 
-export default function TaxonomyNewPage() {
-  const flatNodes = useFlattenedTreeStore((state) => state.flatNodes)
+// ─── Expandable search ───────────────────────────────────────────────────────
+
+interface ExpandableSearchProps {
+  query: string
+  results: FlatTreeNode[]
+  showResults: boolean
+  onChange: (q: string) => void
+  onSelect: (node: FlatTreeNode) => void
+  onBlur: () => void
+}
+
+function ExpandableSearch({
+  query,
+  results,
+  showResults,
+  onChange,
+  onSelect,
+  onBlur,
+}: ExpandableSearchProps) {
+  const [focused, setFocused] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!focused && !query) return
+    const handler = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setFocused(false)
+        onBlur()
+      }
+    }
+    document.addEventListener("mousedown", handler)
+    return () => document.removeEventListener("mousedown", handler)
+  }, [focused, query, onBlur])
+
+  return (
+    <div ref={containerRef} className="relative flex items-center">
+      <button
+        type="button"
+        aria-label="Search"
+        onClick={() => { setFocused(true); setTimeout(() => inputRef.current?.focus(), 10) }}
+        className={cn(
+          "flex items-center gap-2 h-8 rounded-lg px-2.5 border transition-all duration-200 text-sm",
+          focused || query
+            ? "w-52 bg-background border-border text-foreground"
+            : "w-8 bg-transparent border-transparent text-muted-foreground hover:text-foreground"
+        )}
+      >
+        <Search className="h-4 w-4 shrink-0" />
+        <input
+          ref={inputRef}
+          type="text"
+          placeholder="Search taxon…"
+          value={query}
+          onChange={(e) => onChange(e.target.value)}
+          onFocus={() => setFocused(true)}
+          className={cn(
+            "bg-transparent outline-none text-sm text-foreground placeholder:text-muted-foreground w-full transition-opacity",
+            focused || query ? "opacity-100" : "opacity-0 w-0"
+          )}
+          aria-label="Search taxon by name or ID"
+        />
+        {query && (
+          <button
+            type="button"
+            aria-label="Clear search"
+            onClick={(e) => { e.stopPropagation(); onChange(""); setFocused(false) }}
+            className="shrink-0 text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <X className="h-3 w-3" />
+          </button>
+        )}
+      </button>
+
+      {showResults && results.length > 0 && (
+        <div className="absolute right-0 top-full mt-1.5 w-64 z-50 rounded-lg shadow-lg overflow-hidden border border-border bg-popover">
+          {results.map((node) => (
+            <button
+              key={node.id}
+              type="button"
+              onClick={() => { onSelect(node); setFocused(false) }}
+              className="w-full text-left px-3 py-2.5 hover:bg-muted transition-colors border-b border-border last:border-0"
+            >
+              <div className="text-sm text-foreground truncate">
+                {node.scientific_name}
+              </div>
+              <div className="text-[10px] text-muted-foreground mt-0.5">
+                ID {node.id} · {node.annotations_count.toLocaleString()} annotations
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+
+// ─── Main page ────────────────────────────────────────────────────────────────
+
+export default function TaxonomyPage() {
+  const searchParams = useSearchParams()
+  const flatNodes = useFlattenedTreeStore((s) => s.flatNodes)
   const { fetchFlattenedTree, searchNodes } = useFlattenedTreeStore()
 
-  const [rootTaxon, setRootTaxon] = useState<{ taxid: string; taxon: TaxonRecord } | null>(null)
-  const [selectedTaxon, setSelectedTaxon] = useState<{ taxid: string; taxon: TaxonRecord } | null>(null)
-  const [activeView, setActiveView] = useState<ViewTab>("overview")
+  /** Pending root from URL before useTaxonomyUrlSync has set rootTaxon (avoids flash to Eukaryota). */
+  const urlTaxid = searchParams?.get("taxon") ?? null
 
+  // ── Core state ────────────────────────────────────────────────────────────
+  const [rootTaxon, setRootTaxon] = useState<TaxonomyPayload | null>(null)
+  const [rootHistory, setRootHistory] = useState<TaxonomyPayload[]>([])
+  const [selectedNode, setSelectedNode] = useState<NodeClickEvent | null>(null)
+  const [pinnedNode, setPinnedNode] = useState<TaxonomyPayload | null>(null)
+  const [activeTab, setActiveTab] = useState<ViewTab>("overview")
+  /** Rank slider: "show down to" this rank (null = all). */
+  const [selectedMaxRank, setSelectedMaxRank] = useState<string | null>(null)
+
+  // Search
   const [searchQuery, setSearchQuery] = useState("")
   const [searchResults, setSearchResults] = useState<FlatTreeNode[]>([])
   const [showSearchResults, setShowSearchResults] = useState(false)
-  const searchContainerRef = useRef<HTMLDivElement>(null)
 
-  const [radialWarningAcknowledged, setRadialWarningAcknowledged] = useState<Set<string>>(new Set())
+  // View options (Radial + Gene Stack): labels visibility
+  const [showLabels, setShowLabels] = useState(false)
 
+  // Radial warning
+  const [radialWarningAcknowledged, setRadialWarningAcknowledged] =
+    useState<Set<string>>(new Set())
+
+  const vizRef = useRef<HTMLDivElement>(null)
+  const radialScrollRef = useRef<HTMLDivElement>(null)
+
+  // ── URL sync (keeps rootTaxon ↔ ?taxon= in sync) ─────────────────────────
   useTaxonomyUrlSync({
     rootTaxon,
     setRootTaxon,
-    setSelectedTaxon,
-    setActiveView,
+    setSelectedTaxon: () => { },   // selection is now handled via node popover
+    setActiveView: setActiveTab,
   })
 
-  useEffect(() => {
-    fetchFlattenedTree()
-  }, [fetchFlattenedTree])
+  useEffect(() => { fetchFlattenedTree() }, [fetchFlattenedTree])
 
+  // When root changes to a taxon whose rank equals the selected leaf rank, reset rank and notify
   useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (searchContainerRef.current && !searchContainerRef.current.contains(e.target as Node)) {
-        setShowSearchResults(false)
+    if (!rootTaxon?.taxon.rank) return
+    const rootRankLower = rootTaxon.taxon.rank!.toLowerCase()
+    setSelectedMaxRank((current) => {
+      if (!current) return null
+      if (rootRankLower === current.toLowerCase()) {
+        toast.info(
+          "The rank of the root overlaps with the one currently selected. Rank selector has been reset."
+        )
+        return null
       }
-    }
-    document.addEventListener("mousedown", handleClickOutside)
-    return () => document.removeEventListener("mousedown", handleClickOutside)
-  }, [])
+      return current
+    })
+  }, [rootTaxon])
 
-  const handleSearch = useCallback(
-    (query: string) => {
-      setSearchQuery(query)
-      if (!query.trim()) {
-        setSearchResults([])
-        setShowSearchResults(false)
-        return
-      }
-      const results = searchNodes(query.trim(), 10)
-      setSearchResults(results)
-      setShowSearchResults(results.length > 0)
+  // ── Re-root helpers ───────────────────────────────────────────────────────
+
+  const handleSetRoot = useCallback(
+    (payload: TaxonomyPayload | null) => {
+      setRootTaxon((prev) => {
+        if (prev) setRootHistory((h) => [prev, ...h].slice(0, MAX_ROOT_HISTORY))
+        return payload
+      })
+      setSelectedNode(null)
     },
-    [searchNodes]
+    []
   )
 
-  const handleSelectTaxonFromSearch = useCallback((node: FlatTreeNode) => {
-    const taxon = flatNodeToTaxonRecord(node)
-    setSelectedTaxon({ taxid: node.id, taxon })
-    setShowSearchResults(false)
+  const handleBackToPreviousRoot = useCallback(() => {
+    setRootHistory((h) => {
+      const [prev, ...rest] = h
+      setRootTaxon(prev ?? null)
+      setSelectedNode(null)
+      return rest
+    })
+  }, [])
+
+  // ── Search ────────────────────────────────────────────────────────────────
+  const handleSearch = useCallback((q: string) => {
+    setSearchQuery(q)
+    if (!q.trim()) { setSearchResults([]); setShowSearchResults(false); return }
+    const r = searchNodes(q.trim(), 10)
+    setSearchResults(r)
+    setShowSearchResults(r.length > 0)
+  }, [searchNodes])
+
+  const handleSelectFromSearch = useCallback((node: FlatTreeNode) => {
+    setSelectedNode({ taxid: node.id, node, screenX: 0, screenY: 0 })
     setSearchQuery("")
+    setShowSearchResults(false)
   }, [])
 
-  const handleTaxonSelectFromComponent = useCallback((taxid: string, node: FlatTreeNode) => {
-    setSelectedTaxon({ taxid, taxon: flatNodeToTaxonRecord(node) })
-  }, [])
+  // ── Node interactions ─────────────────────────────────────────────────────
 
-  const handleExploreFrom = useCallback(() => {
-    if (!selectedTaxon) return
-    setRootTaxon(selectedTaxon)
-    setSelectedTaxon(null)
-  }, [selectedTaxon])
+  const handleNodeClick = useCallback((event: NodeClickEvent) => {
+    // If clicking the same node again, dismiss
+    if (selectedNode?.taxid === event.taxid) {
+      setSelectedNode(null)
+      return
+    }
+    setSelectedNode(event)
+  }, [selectedNode?.taxid])
 
-  const handleSelectAncestor = useCallback((ancestor: TaxonRecord) => {
-    setSelectedTaxon({ taxid: ancestor.taxid, taxon: ancestor })
-  }, [])
+  const handleDrillIn = useCallback(() => {
+    if (!selectedNode) return
+    handleSetRoot({ taxid: selectedNode.taxid, taxon: flatNodeToTaxon(selectedNode.node) })
+  }, [selectedNode, handleSetRoot])
 
-  const handleGeneStackTaxonSelect = useCallback(
-    (taxid: string) => {
-      if (selectedTaxon?.taxid === taxid) {
-        setSelectedTaxon(null)
-        return
-      }
-      const node = flatNodes.find((n) => n.id === taxid)
-      const taxon = node
-        ? flatNodeToTaxonRecord(node)
-        : ({ taxid, scientific_name: `Taxon ${taxid}` } as TaxonRecord)
-      setSelectedTaxon({ taxid, taxon })
+  const handlePinNode = useCallback(() => {
+    if (!selectedNode) return
+    setPinnedNode({ taxid: selectedNode.taxid, taxon: flatNodeToTaxon(selectedNode.node) })
+  }, [selectedNode])
+
+  // ── Dismiss popover on outside click ─────────────────────────────────────
+  useEffect(() => {
+    if (!selectedNode) return
+    const handler = (e: MouseEvent) => {
+      // Let canvas clicks handle themselves via onNodeClick
+      const target = e.target as HTMLElement
+      if (target.tagName === "CANVAS") return
+      if ((target.closest(".taxonomy-popover"))) return
+      setSelectedNode(null)
+    }
+    document.addEventListener("mousedown", handler)
+    return () => document.removeEventListener("mousedown", handler)
+  }, [selectedNode])
+
+  const handleGeneStackNodeClick = useCallback((taxid: string) => {
+    const node = flatNodes.find((n) => n.id === taxid)
+    if (!node) return
+    setSelectedNode({ taxid, node, screenX: 0, screenY: 0 })
+  }, [flatNodes])
+
+  // ── Derived state ─────────────────────────────────────────────────────────
+  // When rootTaxon is still null (before URL sync), use URL's taxon so we don't flash Eukaryota.
+
+  const currentDisplayTaxon = useMemo<TaxonomyPayload>(() => {
+    if (rootTaxon) return rootTaxon
+    const pendingTaxid = urlTaxid ?? EUKARYOTA_TAXID
+    const node = flatNodes.find((n) => n.id === pendingTaxid)
+    return {
+      taxid: pendingTaxid,
+      taxon: node
+        ? flatNodeToTaxon(node)
+        : ({
+            taxid: pendingTaxid,
+            scientific_name: pendingTaxid === EUKARYOTA_TAXID ? "Eukaryota" : "…",
+          } as TaxonRecord),
+    }
+  }, [rootTaxon, flatNodes, urlTaxid])
+
+  const currentRootTaxid = rootTaxon?.taxid ?? urlTaxid
+  const effectiveRootTaxid = currentRootTaxid ?? EUKARYOTA_TAXID
+
+  // Breadcrumb path: ancestors only (exclude current root; current root shown in center pill)
+  const breadcrumbPath = useMemo<BreadcrumbEntry[]>(() => {
+    const focalId = currentDisplayTaxon.taxid
+    const byId = new Map(flatNodes.map((n) => [n.id, n]))
+    const chain: FlatTreeNode[] = []
+    let cur = byId.get(focalId)
+    while (cur) {
+      chain.push(cur)
+      cur = cur.parentId ? byId.get(cur.parentId) : undefined
+    }
+    chain.reverse()
+    return chain.slice(0, -1).map((n) => ({ taxid: n.id, name: n.scientific_name }))
+  }, [currentDisplayTaxon, flatNodes])
+
+  // Highlight the selected node if it's inside the current subtree
+  const highlightTaxid = useMemo(() => {
+    if (!selectedNode) return null
+    const byId = new Map(flatNodes.map((n) => [n.id, n]))
+    let cur = byId.get(selectedNode.taxid)
+    while (cur) {
+      if (cur.id === effectiveRootTaxid) return selectedNode.taxid
+      cur = cur.parentId ? byId.get(cur.parentId) : undefined
+    }
+    return null
+  }, [selectedNode, effectiveRootTaxid, flatNodes])
+
+  // Depth of selected taxon from current root (for TaxonomyDetailsPanel breadcrumb)
+  const depthFromRoot = useMemo(() => {
+    if (!selectedNode) return 0
+    const byId = new Map(flatNodes.map((n) => [n.id, n]))
+    let cur = byId.get(selectedNode.taxid)
+    let depth = 0
+    while (cur && cur.id !== effectiveRootTaxid) {
+      depth++
+      cur = cur.parentId ? byId.get(cur.parentId) : undefined
+    }
+    return cur ? depth : 0
+  }, [selectedNode, effectiveRootTaxid, flatNodes])
+
+  const handleSelectAncestor = useCallback(
+    (ancestor: TaxonRecord) => {
+      const node = flatNodes.find((n) => n.id === ancestor.taxid)
+      const flatNode: FlatTreeNode =
+        node ??
+        ({
+          id: ancestor.taxid,
+          parentId: null,
+          scientific_name: ancestor.scientific_name ?? "",
+          annotations_count: ancestor.annotations_count ?? 0,
+          assemblies_count: ancestor.assemblies_count ?? 0,
+          organisms_count: ancestor.organisms_count ?? 0,
+          rank: ancestor.rank ?? null,
+          coding_count: 0,
+          non_coding_count: 0,
+          pseudogene_count: 0,
+        } as FlatTreeNode)
+      setSelectedNode({ taxid: ancestor.taxid, node: flatNode, screenX: 0, screenY: 0 })
     },
-    [flatNodes, selectedTaxon?.taxid]
+    [flatNodes]
   )
 
-  const handleAckRadialWarning = useCallback((key: string) => {
-    setRadialWarningAcknowledged((prev) => new Set(prev).add(key))
-  }, [])
-
-  const currentDisplayTaxon = useMemo(() => {
-    if (rootTaxon) return rootTaxon
-    const eukaryota = flatNodes.find((n) => n.id === EUKARYOTA_TAXID)
-    return {
-      taxid: EUKARYOTA_TAXID,
-      taxon: eukaryota
-        ? flatNodeToTaxonRecord(eukaryota)
-        : ({ taxid: EUKARYOTA_TAXID, scientific_name: "Eukaryota" } as TaxonRecord),
-    }
-  }, [rootTaxon, flatNodes])
-
-  const handleTogglePanelForCurrentTaxon = useCallback(() => {
-    const { taxid, taxon } = currentDisplayTaxon
-    setSelectedTaxon((prev) => (prev?.taxid === taxid ? null : { taxid, taxon }))
-  }, [currentDisplayTaxon])
-
-  const currentRootTaxid = rootTaxon?.taxid ?? null
-  const isPanelTaxonCurrentRoot =
-    selectedTaxon != null &&
-    selectedTaxon.taxid === (rootTaxon?.taxid ?? EUKARYOTA_TAXID)
+  const handleOpenDetailsPanelForRoot = useCallback(() => {
+    const node = flatNodes.find((n) => n.id === currentDisplayTaxon.taxid)
+    const flatNode: FlatTreeNode =
+      node ??
+      ({
+        id: currentDisplayTaxon.taxid,
+        parentId: null,
+        scientific_name: currentDisplayTaxon.taxon.scientific_name ?? "",
+        annotations_count: currentDisplayTaxon.taxon.annotations_count ?? 0,
+        assemblies_count: currentDisplayTaxon.taxon.assemblies_count ?? 0,
+        organisms_count: currentDisplayTaxon.taxon.organisms_count ?? 0,
+        rank: currentDisplayTaxon.taxon.rank ?? null,
+        coding_count: 0,
+        non_coding_count: 0,
+        pseudogene_count: 0,
+      } as FlatTreeNode)
+    setSelectedNode({
+      taxid: currentDisplayTaxon.taxid,
+      node: flatNode,
+      screenX: 0,
+      screenY: 0,
+    })
+  }, [flatNodes, currentDisplayTaxon])
 
   const viewKey = currentRootTaxid ?? EUKARYOTA_TAXID
   const organismsCount = currentDisplayTaxon.taxon.organisms_count ?? 0
 
+  const rankDistribution = useRankDistribution(currentRootTaxid)
+  const rootOrganismsCount = useRootOrganismsCount(currentRootTaxid)
+
+  // Leaf count at selected rank (used for radial warning threshold)
+  const leafCountAtSelectedRank =
+    selectedMaxRank === null
+      ? (rootOrganismsCount ?? 0)
+      : (rankDistribution.find((d) => d.rank === selectedMaxRank)?.count ?? 0)
+
   return (
-    <div className="relative flex flex-col h-[calc(100vh-4rem)] overflow-hidden bg-background">
-      <header className="flex-shrink-0 border-b border-border bg-card/50">
-        <div className="flex items-center justify-between gap-4 px-4 pt-3 pb-2">
-          <div className="flex items-center gap-2 min-w-0">
-            <Network className="h-5 w-5 text-primary shrink-0" />
-            <h1 className="text-lg font-semibold text-foreground truncate">Taxonomy Explorer</h1>
-            <Badge variant="secondary" className="text-xs px-1.5 py-0 h-5 shrink-0">
-              Beta
-            </Badge>
-            <span className="text-xs text-muted-foreground">This is still a beta feature. The UI and functionality may change in the future.</span>
-          </div>
-          <div ref={searchContainerRef} className="relative w-[200px] sm:w-[260px] shrink-0">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
-            <Input
-              type="text"
-              placeholder="Search taxon by name or ID..."
-              value={searchQuery}
-              onChange={(e) => handleSearch(e.target.value)}
-              onFocus={() => searchResults.length > 0 && setShowSearchResults(true)}
-              className="pl-9 pr-4 h-9 bg-background"
-            />
-            {showSearchResults && searchResults.length > 0 && (
-              <div className="absolute z-50 right-0 w-full min-w-[240px] mt-1 bg-card border border-border rounded-md shadow-lg max-h-56 overflow-y-auto">
-                {searchResults.map((node) => (
-                  <button
-                    key={node.id}
-                    type="button"
-                    onClick={() => handleSelectTaxonFromSearch(node)}
-                    className="w-full text-left px-3 py-2 hover:bg-muted transition-colors border-b border-border/50 last:border-0"
-                  >
-                    <div className="font-mediumassembly reports text-sm">{node.scientific_name}</div>
-                    <div className="text-xs text-muted-foreground">
-                      ID: {node.id} · {node.annotations_count.toLocaleString()} annotations
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div className="border-t border-border" role="separator" aria-hidden />
-        <div className="flex items-center justify-between gap-3 px-4 py-2">
-          <div className="flex items-center gap-1.5 min-w-0 flex-1" aria-label="View root">
-            {rootTaxon ? (
-              <button
-                type="button"
-                onClick={() => setRootTaxon(null)}
-                className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded px-1.5 py-0.5 transition-colors shrink-0"
-                title="Back to Eukaryota (root)"
-              >
-                <Home className="h-3.5 w-3.5" />
-                <span>Root</span>
-              </button>
-            ) : (
-              <span className="flex items-center gap-1 text-xs text-muted-foreground shrink-0">
-                <Home className="h-3.5 w-3.5" />
-                <span>Root</span>
-              </span>
-            )}
-            <span className="text-muted-foreground shrink-0">·</span>
-            <span className="font-semibold text-primary truncate text-sm" title="Current view root">
-              {currentDisplayTaxon.taxon.scientific_name}
-            </span>
-            {currentDisplayTaxon.taxon.rank && (
-              <span className="text-[10px] text-muted-foreground px-1 py-0.5 rounded bg-muted/50 capitalize shrink-0">
-                {currentDisplayTaxon.taxon.rank}
-              </span>
-            )}
-            <button
-              type="button"
-              onClick={handleTogglePanelForCurrentTaxon}
-              className={cn(
-                "p-0.5 rounded hover:bg-muted transition-colors shrink-0",
-                selectedTaxon?.taxid === currentDisplayTaxon.taxid && "text-primary bg-primary/10"
-              )}
-              title={selectedTaxon?.taxid === currentDisplayTaxon.taxid ? "Close details panel" : "View taxon details"}
-              aria-label={selectedTaxon?.taxid === currentDisplayTaxon.taxid ? "Close details panel" : "View taxon details"}
-            >
-              <Info className="h-3.5 w-3.5" />
-            </button>
-          </div>
-          <Tabs value={activeView} onValueChange={(v) => setActiveView(v as ViewTab)} className="shrink-0">
-            <TabsList className="w-auto inline-flex flex-wrap h-auto gap-1 p-1 bg-muted/50 justify-start">
-              <TabsTrigger value="overview" className="gap-1.5 text-xs">
-                <Network className="h-3.5 w-3.5" />
-                Overview
-              </TabsTrigger>
-              <TabsTrigger value="tree" className="gap-1.5 text-xs">
-                <LayoutList className="h-3.5 w-3.5" />
-                Tree
-              </TabsTrigger>
-              <TabsTrigger value="constant-branch" className="gap-1.5 text-xs">
-                <GitBranch className="h-3.5 w-3.5" />
-                Radial
-              </TabsTrigger>
-              <TabsTrigger value="gene-stack" className="gap-1.5 text-xs">
-                <Layers className="h-3.5 w-3.5" />
-                Gene Stack
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
-        </div>
-      </header>
-
-      <div className="flex flex-1 min-h-0 overflow-hidden">
-        <main className="flex-1 min-h-0 overflow-auto pt-2">
-          {activeView === "overview" && (
-            <div className="w-full px-4">
-              <TreeOfLifeD3New
+    <div
+      className="flex flex-col"
+      style={{ height: "calc(100vh - 4rem)" }}
+    >
+      {/* ── Viz area (full width); drawer overlays on the right when open ── */}
+      <div ref={vizRef} className="flex-1 relative flex flex-col min-h-0 bg-background overflow-hidden">
+        {/* View area (fills viz, canvas/content underneath) */}
+        <div
+          className="relative flex-1 min-h-0 flex items-center justify-center"
+          aria-label="Visualization area"
+        >
+          {activeTab === "overview" && (
+            <div className="w-full h-full flex items-center justify-center min-h-0">
+              <D3CirclePack
                 rootTaxid={currentRootTaxid}
-                onTaxonSelect={handleTaxonSelectFromComponent}
-                description={
-                  rootTaxon
-                    ? `Circle-packing view of the taxonomy under ${currentDisplayTaxon.taxon.scientific_name}. Nested circles represent parent–child relationships; size reflects annotation count.`
-                    : undefined
-                }
+                highlightTaxid={highlightTaxid}
+                selectedTaxid={selectedNode?.taxid ?? null}
+                onNodeClick={handleNodeClick}
+                controlledRank={selectedMaxRank}
               />
             </div>
           )}
-          {activeView === "tree" && (
-            <div className="w-full px-4">
+          {activeTab === "tree" && (
+            <div className="w-full h-full min-h-0 overflow-auto">
               <TaxonomyTreeCanvas
                 rootTaxid={currentRootTaxid}
-                onTaxonSelect={handleTaxonSelectFromComponent}
+                highlightTaxid={highlightTaxid}
+                selectedTaxid={selectedNode?.taxid ?? null}
+                onNodeClick={handleNodeClick}
+                controlledRank={(selectedMaxRank as TreeRankOption) ?? undefined}
                 scopeHint={rootTaxon ? currentDisplayTaxon.taxon.scientific_name : undefined}
               />
             </div>
           )}
-          {activeView === "constant-branch" && (
-            <div className="w-full px-4">
+          {activeTab === "constant-branch" && (
+            <div
+              ref={radialScrollRef}
+              className="w-full h-full flex items-start justify-center min-h-0 overflow-auto"
+            >
               <RadialTreeWithWarning
                 rootTaxid={currentRootTaxid}
+                highlightTaxid={highlightTaxid}
                 organismsCount={organismsCount}
+                leafCountAtSelectedRank={leafCountAtSelectedRank}
                 viewKey={viewKey}
                 acknowledgedKeys={radialWarningAcknowledged}
-                onAcknowledge={handleAckRadialWarning}
-                onTaxonSelect={handleTaxonSelectFromComponent}
+                onAcknowledge={(k) => setRadialWarningAcknowledged((p) => new Set(p).add(k))}
+                onNodeClick={handleNodeClick}
+                controlledRank={(selectedMaxRank as TreeRankOption) ?? undefined}
+                controlledShowLabels={showLabels}
                 scopeHint={rootTaxon ? currentDisplayTaxon.taxon.scientific_name : undefined}
               />
             </div>
           )}
-          {activeView === "gene-stack" && (
-            <div className="w-full px-4">
-              <GeneStackRadialChart
+          {activeTab === "gene-stack" && (
+            <div className="w-full h-full flex items-center justify-center min-h-0 overflow-auto">
+              <D3StackedRadialBar
                 rootTaxid={currentRootTaxid}
-                onTaxonSelect={handleGeneStackTaxonSelect}
-                description={
-                  rootTaxon
-                    ? `Gene counts by leaf taxon under ${currentDisplayTaxon.taxon.scientific_name}. Each wedge shows coding, non-coding, and pseudogene counts. Click on a wedge to explore.`
-                    : undefined
-                }
+                highlightTaxid={highlightTaxid}
+                onTaxonSelect={handleGeneStackNodeClick}
+                controlledRank={(selectedMaxRank as TreeRankOption) ?? undefined}
+                controlledShowLabels={showLabels}
               />
             </div>
           )}
-        </main>
 
-        <aside
-          className={cn(
-            "flex-shrink-0 flex flex-col border-l border-border bg-card transition-all duration-300 ease-out",
-            selectedTaxon ? "w-80 lg:w-96" : "w-0 overflow-hidden border-0",
-            selectedTaxon && isPanelTaxonCurrentRoot && "border-l-2 border-l-primary"
-          )}
-        >
-          {selectedTaxon && (
-            <div className="flex flex-col h-full w-80 lg:w-96 animate-in slide-in-from-right-5 duration-300">
-              <TaxonomyDetailsPanel
-                selectedTaxon={selectedTaxon}
-                isPanelTaxonCurrentRoot={isPanelTaxonCurrentRoot}
-                onClose={() => setSelectedTaxon(null)}
-                onExploreFrom={handleExploreFrom}
-                onSelectAncestor={handleSelectAncestor}
-              />
-            </div>
-          )}
-        </aside>
-      </div>
+        </div>
+
+        {/* Title + help on the far left; strip centered */}
+        <div className="absolute inset-0 z-20 pointer-events-none">
+          {/* Title and help (click to show description) — far left; same height (50px) and padding as strip */}
+          <div
+            className={cn(
+              GLASS_PANEL,
+              GLASS_PANEL_PADDING,
+              "pointer-events-auto absolute left-4 top-4 flex flex-wrap items-center gap-2 shadow-md h-[50px]"
+            )}
+            role="group"
+            aria-label="Taxonomy explorer"
+          >
+            <h1 className="text-sm font-medium text-foreground">
+              Taxonomy Explorer
+            </h1>
+            <Popover>
+              <PopoverTrigger asChild>
+                <button
+                  type="button"
+                  aria-label="Help: show description"
+                  className="text-muted-foreground hover:text-foreground transition-colors p-0.5 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <HelpCircle className="h-3.5 w-3.5" aria-hidden />
+                </button>
+              </PopoverTrigger>
+              <PopoverContent
+                align="start"
+                side="bottom"
+                sideOffset={6}
+                className="max-w-[260px] p-3 rounded-lg border border-border bg-popover/95 backdrop-blur-sm shadow-lg text-xs text-left"
+              >
+                Switch views, change root, filter by rank, and search.
+                Click a node in the tree to open its details.
+              </PopoverContent>
+            </Popover>
+          </div>
+          {/* Strip: draggable, centered by default */}
+          <FloatingVizStrip
+              currentDisplayTaxon={currentDisplayTaxon}
+              breadcrumbPath={breadcrumbPath}
+              flatNodes={flatNodes}
+              onNavigate={(taxid) => {
+                const node = flatNodes.find((n) => n.id === taxid)
+                if (node) handleSetRoot({ taxid, taxon: flatNodeToTaxon(node) })
+              }}
+              onOpenDrawer={handleOpenDetailsPanelForRoot}
+              distribution={rankDistribution}
+              leafCount={rootOrganismsCount}
+              selectedRank={selectedMaxRank}
+              onRankSelect={setSelectedMaxRank}
+              activeTab={activeTab}
+              onTabChange={(t) => {
+                setActiveTab(t)
+                setSelectedNode(null)
+              }}
+              searchSlot={
+                <ExpandableSearch
+                  query={searchQuery}
+                  results={searchResults}
+                  showResults={showSearchResults}
+                  onChange={handleSearch}
+                  onSelect={handleSelectFromSearch}
+                  onBlur={() => setShowSearchResults(false)}
+                />
+              }
+              showLabels={showLabels}
+              onShowLabelsChange={setShowLabels}
+            />
+        </div>
+
+        {/* Right drawer: absolute over the canvases (taxonomy-popover so outside-click does not clear selection on panel interaction) */}
+        {selectedNode && (
+          <div className="taxonomy-popover absolute right-0 top-0 bottom-0 z-30 w-80 xl:w-96 border-l border-border bg-background shadow-xl flex flex-col min-h-0">
+            <TaxonomyDetailsPanel
+              selectedTaxon={{
+                taxid: selectedNode.taxid,
+                taxon: flatNodeToTaxon(selectedNode.node),
+              }}
+              isPanelTaxonCurrentRoot={selectedNode.taxid === effectiveRootTaxid}
+              currentRootTaxon={currentDisplayTaxon.taxon}
+              depthFromRoot={depthFromRoot}
+              pinnedTaxon={pinnedNode ? { taxid: pinnedNode.taxid, taxon: pinnedNode.taxon } : null}
+              onPin={(payload) => setPinnedNode(payload)}
+              onUnpin={() => setPinnedNode(null)}
+              onClose={() => setSelectedNode(null)}
+              onExploreFrom={handleDrillIn}
+              onSelectAncestor={handleSelectAncestor}
+            />
+          </div>
+        )}
     </div>
+  </div>
   )
 }

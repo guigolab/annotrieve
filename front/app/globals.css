@@ -18,6 +18,7 @@
   --muted-foreground: oklch(0.3 0 0); /* Darker - increased contrast */
   --accent: oklch(0.6 0.18 285); /* #9333ea - Purple-600 - KEEP AS IS */
   --accent-foreground: oklch(1 0 0);
+  --highlight: oklch(0.75 0.15 75); /* #f59e0b - Amber-600, matches taxonomy selected/highlight */
   --destructive: oklch(0.58 0.2 35); /* #ea580c */
   --destructive-foreground: oklch(1 0 0);
   --border: oklch(0.85 0 0); /* Darker border - increased contrast */
@@ -54,6 +55,7 @@
   --muted-foreground: oklch(0.65 0 0);
   --accent: oklch(0.65 0.2 285); /* Purple for dark mode */
   --accent-foreground: oklch(0.15 0 0);
+  --highlight: oklch(0.8 0.16 85); /* #fbbf24 - Amber-400, matches taxonomy selected/highlight in dark */
   --destructive: oklch(0.6 0.22 35);
   --destructive-foreground: oklch(0.95 0 0);
   --border: oklch(0.25 0 0);
@@ -139,4 +141,81 @@
 
 .scrollable-svg svg {
   display: block;
+}
+
+/* Taxonomy explorer animations */
+@keyframes popover-in {
+  from { opacity: 0; transform: scale(0.92); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+@keyframes drawer-in {
+  from { transform: translateX(100%); }
+  to   { transform: translateX(0); }
+}
+
+@keyframes drawer-out {
+  from { transform: translateX(0); }
+  to   { transform: translateX(100%); }
+}
+
+@keyframes root-pill-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.88; }
+}
+
+.root-pill-pulse {
+  animation: root-pill-pulse 2s ease-in-out infinite;
+}
+
+/* Rank slider track: row bounce (scaleX) and count stagger */
+@keyframes rank-row-bounce {
+  0%   { transform: scaleX(0.97); }
+  45%  { transform: scaleX(1.01); }
+  100% { transform: scaleX(1); }
+}
+
+@keyframes rank-count-in {
+  from { opacity: 0; transform: translateY(3px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.animate-rank-row-bounce {
+  animation: rank-row-bounce 280ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+.animate-rank-count-in {
+  animation: rank-count-in 200ms ease-out forwards;
+}
+
+/* Navigate tree: slide from parent/children indent + highlight when selection changes */
+@keyframes navigate-current-in-from-top {
+  from { opacity: 0; transform: translateY(-6px) translateX(-8px); }
+  to   { opacity: 1; transform: translateY(0) translateX(0); }
+}
+@keyframes navigate-current-in-from-bottom {
+  from { opacity: 0; transform: translateY(6px) translateX(8px); }
+  to   { opacity: 1; transform: translateY(0) translateX(0); }
+}
+@keyframes navigate-current-highlight {
+  0%   { box-shadow: 0 0 0 2px var(--highlight); }
+  70%  { box-shadow: 0 0 0 2px var(--highlight); }
+  100% { box-shadow: none; }
+}
+.navigate-current-in-up {
+  animation: navigate-current-in-from-top 220ms cubic-bezier(0.22, 1, 0.36, 1) forwards,
+             navigate-current-highlight 600ms ease-out forwards;
+}
+.navigate-current-in-down {
+  animation: navigate-current-in-from-bottom 220ms cubic-bezier(0.22, 1, 0.36, 1) forwards,
+             navigate-current-highlight 600ms ease-out forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .taxonomy-popover, .taxonomy-drawer, .root-pill-pulse,
+  .animate-rank-row-bounce, .animate-rank-count-in,
+  .navigate-current-in-up, .navigate-current-in-down {
+    animation: none !important;
+    transition: none !important;
+  }
 }

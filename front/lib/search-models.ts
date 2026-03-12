@@ -4,7 +4,7 @@ import { listOrganisms } from "@/lib/api/organisms"
 import { listAssemblies } from "@/lib/api/assemblies"
 import { listTaxons } from "@/lib/api/taxons"
 import type { AssemblyRecord, TaxonRecord } from "@/lib/api/types"
-import type { SearchModelConfig } from "@/components/common-search-bar"
+import type { SearchModelConfig } from "@/components/search/common-search-bar"
 
 const formatAnnotations = (count?: number) => {
   if (typeof count !== "number" || Number.isNaN(count) || count <= 0) return undefined

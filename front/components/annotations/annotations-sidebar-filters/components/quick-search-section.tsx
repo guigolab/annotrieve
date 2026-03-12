@@ -1,8 +1,8 @@
 "use client"
 
 import { Label } from "@/components/ui/label"
-import { CommonSearchBar } from "@/components/common-search-bar"
-import type { SearchModelConfig } from "@/components/common-search-bar"
+import { CommonSearchBar } from "@/components/search/common-search-bar"
+import type { SearchModelConfig } from "@/components/search/common-search-bar"
 import { AssemblyRecord, OrganismRecord, TaxonRecord } from "@/lib/api/types"
 import { CommonSearchResult } from "@/lib/types"
 

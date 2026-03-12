@@ -1,12 +1,12 @@
 "use client"
 
-import { Hero } from "@/components/hero"
-import { LatestReleases } from "@/components/latest-releases"
-import { TopAnnotations } from "@/components/top-annotated-records"
-import { DatabaseFrequencies } from "@/components/database-frequencies"
-import { ReleaseDateChart } from "@/components/release-date-chart"
-import { FeaturesSection } from "@/components/features-section"
-import { UserAnalyticsMap } from "@/components/user-analytics-map"
+import { Hero } from "@/components/home/hero"
+import { LatestReleases } from "@/components/home/latest-releases"
+import { TopAnnotations } from "@/components/home/top-annotated-records"
+import { DatabaseFrequencies } from "@/components/home/database-frequencies"
+import { ReleaseDateChart } from "@/components/home/release-date-chart"
+import { FeaturesSection } from "@/components/home/features-section"
+import { UserAnalyticsMap } from "@/components/home/user-analytics-map"
 import { SectionWrapper } from "@/components/ui/section-wrapper"
 
 

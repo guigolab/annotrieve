@@ -39,6 +39,8 @@ export function D3CirclePack({
   const drawFunctionRef = useRef<((transform: d3.ZoomTransform) => void) | null>(null)
   const drawOrderProgressRef = useRef(1)
   const drawOrderFrameRef = useRef<number | null>(null)
+  /** Avoid restarting the draw-order animation when the effect re-runs for the same logical tree (e.g. Strict Mode or tree reference churn). */
+  const lastAnimatedTreeKeyRef = useRef<string | null>(null)
   const selectedTaxidRef = useRef<string | null>(selectedTaxid)
   selectedTaxidRef.current = selectedTaxid
   const highlightTaxidRef = useRef<string | null>(highlightTaxid ?? null)
@@ -88,7 +90,14 @@ export function D3CirclePack({
     const packNodes = packLayout(treeStructure)
     const allNodes = packNodes.descendants()
 
-    drawOrderProgressRef.current = 0
+    const treeKey = `${rootTaxid ?? "full"}-${controlledRank ?? "all"}-${treeStructure.data?.id ?? "root"}-${allNodes.length}`
+    const isSameTreeAsLastRun = lastAnimatedTreeKeyRef.current === treeKey
+    if (isSameTreeAsLastRun) {
+      drawOrderProgressRef.current = 1
+    } else {
+      lastAnimatedTreeKeyRef.current = treeKey
+      drawOrderProgressRef.current = 0
+    }
 
     const parentColor = isDark ? "#818cf8" : "#334155"
     const leafColor   = isDark ? "#34d399" : "#0f172a"
@@ -330,20 +339,24 @@ export function D3CirclePack({
     d3.select(canvas).call(zoom.transform as any, d3.zoomIdentity.translate(20, 20))
 
     const DRAW_ORDER_MS = 550
-    const startTime = performance.now()
-    const runDrawOrderTransition = (time: number) => {
-      const elapsed = time - startTime
-      const progress = Math.min(elapsed / DRAW_ORDER_MS, 1)
-      drawOrderProgressRef.current = easeInOutCubic(progress)
-      drawFunctionRef.current?.(currentTransformRef.current)
-      if (progress < 1) {
-        drawOrderFrameRef.current = requestAnimationFrame(runDrawOrderTransition)
-      } else {
-        drawOrderFrameRef.current = null
-        drawOrderProgressRef.current = 1
+    if (!isSameTreeAsLastRun) {
+      const startTime = performance.now()
+      const runDrawOrderTransition = (time: number) => {
+        const elapsed = time - startTime
+        const progress = Math.min(elapsed / DRAW_ORDER_MS, 1)
+        drawOrderProgressRef.current = easeInOutCubic(progress)
+        drawFunctionRef.current?.(currentTransformRef.current)
+        if (progress < 1) {
+          drawOrderFrameRef.current = requestAnimationFrame(runDrawOrderTransition)
+        } else {
+          drawOrderFrameRef.current = null
+          drawOrderProgressRef.current = 1
+        }
       }
+      drawOrderFrameRef.current = requestAnimationFrame(runDrawOrderTransition)
+    } else {
+      drawFunctionRef.current?.(currentTransformRef.current)
     }
-    drawOrderFrameRef.current = requestAnimationFrame(runDrawOrderTransition)
 
     return () => {
       if (animationFrameId) cancelAnimationFrame(animationFrameId)
@@ -368,8 +381,8 @@ export function D3CirclePack({
     return (
       <div className="w-full h-full flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white/30" />
-          <p className="text-sm text-white/40">Loading tree data…</p>
+          <div className="animate-spin rounded-full h-8 w-8 border-2 border-muted border-t-primary" />
+          <p className="text-sm text-muted-foreground">Loading tree data…</p>
         </div>
       </div>
     )

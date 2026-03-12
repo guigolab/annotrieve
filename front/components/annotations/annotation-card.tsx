@@ -3,7 +3,7 @@
 import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Calendar, HardDrive } from "lucide-react"
-import { AnnotationActions } from "@/components/annotation-actions"
+import { AnnotationActions } from "./annotation-actions"
 import type { Annotation } from "@/lib/types"
 
 interface AnnotationCardProps {

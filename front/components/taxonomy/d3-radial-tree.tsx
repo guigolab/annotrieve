@@ -89,7 +89,8 @@ export function D3RadialTree({
   const rootTransitionFrameRef = useRef<number | null>(null)
   const initialDrawProgressRef = useRef(0)
   const initialDrawFrameRef = useRef<number | null>(null)
-  const drawRef = useRef<(() => void) | null>(null)
+  const drawRef = useRef<((transform: d3.ZoomTransform) => void) | null>(null)
+  const currentTransformRef = useRef<d3.ZoomTransform>(d3.zoomIdentity)
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 })
   const theme = useUIStore((state) => state.theme)
   const isDark = theme === "dark"
@@ -163,6 +164,12 @@ export function D3RadialTree({
 
   useEffect(() => {
     if (!filteredTree || !canvasRef.current || !containerRef.current) return
+
+    // This effect sets up canvas, zoom, and mouse handlers. Up to three animation loops may run:
+    // 1. Rank transition: when rank filter changes, nodes interpolate from previous layout (RANK_TRANSITION_MS).
+    // 2. Root transition: when root taxon changes, old tree scales out and new tree scales in (ROOT_TRANSITION_MS).
+    // 3. Initial draw: when first mounting or after root transition, tree scales in (ROOT_TRANSITION_MS).
+    // Rank runs first if applicable; then root transition if applicable; otherwise initial draw.
 
     const canvas = canvasRef.current
     const container = containerRef.current
@@ -604,10 +611,13 @@ export function D3RadialTree({
       return { nodesArray: treeNodesArray, labelsArray: treeLabelsArray }
     }
 
-    const draw = () => {
+    const draw = (transform: d3.ZoomTransform) => {
       ctx.save()
       ctx.clearRect(0, 0, width, height)
-      ctx.translate(width / 2, height / 2)
+      // Apply zoom in the same coordinate system as d3.zoom (top-left origin) so that
+      // the tree center (width/2, height/2) stays fixed when zooming at center
+      ctx.translate((width / 2) * transform.k + transform.x, (height / 2) * transform.k + transform.y)
+      ctx.scale(transform.k, transform.k)
 
       const rootT = rootTransitionProgressRef.current
       const prevRoot = previousRootTreeRef.current
@@ -662,7 +672,7 @@ export function D3RadialTree({
         const elapsed = time - startTime
         const progress = Math.min(elapsed / RANK_TRANSITION_MS, 1)
         rankTransitionProgressRef.current = easeInOutCubic(progress)
-        drawRef.current?.()
+        drawRef.current?.(currentTransformRef.current)
         if (progress < 1) {
           rankAnimationFrameRef.current = requestAnimationFrame(runRankTransition)
         } else {
@@ -697,7 +707,7 @@ export function D3RadialTree({
         const elapsed = time - startTime
         const progress = Math.min(elapsed / ROOT_TRANSITION_MS, 1)
         rootTransitionProgressRef.current = easeInOutCubic(progress)
-        drawRef.current?.()
+        drawRef.current?.(currentTransformRef.current)
         if (progress < 1) {
           rootTransitionFrameRef.current = requestAnimationFrame(runRootTransition)
         } else {
@@ -727,7 +737,7 @@ export function D3RadialTree({
         const elapsed = time - startTime
         const progress = Math.min(elapsed / ROOT_TRANSITION_MS, 1)
         initialDrawProgressRef.current = easeInOutCubic(progress)
-        drawRef.current?.()
+        drawRef.current?.(currentTransformRef.current)
         if (progress < 1) {
           initialDrawFrameRef.current = requestAnimationFrame(runInitialDraw)
         } else {
@@ -738,7 +748,16 @@ export function D3RadialTree({
       initialDrawFrameRef.current = requestAnimationFrame(runInitialDraw)
     }
 
-    draw()
+    const zoom = d3.zoom<HTMLCanvasElement, unknown>()
+      .scaleExtent([0.1, 50])
+      .on("zoom", (event) => {
+        currentTransformRef.current = event.transform
+        drawRef.current?.(event.transform)
+      })
+
+    d3.select(canvas).call(zoom as any)
+
+    draw(currentTransformRef.current)
 
     const handleMouseMove = (event: MouseEvent) => {
       const rect = canvas.getBoundingClientRect()
@@ -748,8 +767,9 @@ export function D3RadialTree({
       const containerRect = container.getBoundingClientRect()
       const tooltipX = event.clientX - containerRect.left + container.scrollLeft
       const tooltipY = event.clientY - containerRect.top + container.scrollTop
-      const canvasX = mouseX - width / 2
-      const canvasY = mouseY - height / 2
+      const transform = currentTransformRef.current
+      const canvasX = (mouseX - (width / 2) * transform.k - transform.x) / transform.k
+      const canvasY = (mouseY - (height / 2) * transform.k - transform.y) / transform.k
       const angle = Math.atan2(canvasY, canvasX)
       const distance = Math.sqrt(canvasX * canvasX + canvasY * canvasY)
       const normalizedAngle = (angle + 2 * Math.PI) % (2 * Math.PI)
@@ -796,6 +816,7 @@ export function D3RadialTree({
         }
       }
 
+      canvas.style.cursor = foundNode ? "pointer" : "default"
       if (foundNode !== hoveredNodeRef.current) {
         hoveredNodeRef.current = foundNode
         setHoveredNode(foundNode)
@@ -804,7 +825,7 @@ export function D3RadialTree({
         } else {
           setTooltipPos(null)
         }
-        draw()
+        drawRef.current?.(currentTransformRef.current)
       } else if (foundNode) {
         setTooltipPos({ x: tooltipX, y: tooltipY })
       }
@@ -830,9 +851,9 @@ export function D3RadialTree({
 
     canvas.addEventListener("mousemove", handleMouseMove)
     canvas.addEventListener("click", handleClick)
-    canvas.style.cursor = "pointer"
 
     return () => {
+      d3.select(canvas).on(".zoom", null)
       if (rankAnimationFrameRef.current !== null) {
         cancelAnimationFrame(rankAnimationFrameRef.current)
         rankAnimationFrameRef.current = null
@@ -865,8 +886,8 @@ export function D3RadialTree({
     return (
       <div className="w-full flex items-center justify-center py-16">
         <div className="flex flex-col items-center gap-4">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
-          <p className="text-muted-foreground">Loading tree data...</p>
+          <div className="animate-spin rounded-full h-8 w-8 border-2 border-muted border-t-primary" />
+          <p className="text-sm text-muted-foreground">Loading tree data…</p>
         </div>
       </div>
     )
@@ -876,7 +897,7 @@ export function D3RadialTree({
     return (
       <div className="w-full flex items-center justify-center py-16">
         <div className="text-center space-y-4">
-          <div className="rounded-full bg-destructive/10 p-4 w-fit mx-auto">
+          <div className="rounded-full bg-destructive/10 px-4 py-4 w-fit mx-auto">
             <Network className="h-8 w-8 text-destructive" />
           </div>
           <div>

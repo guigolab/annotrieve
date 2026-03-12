@@ -1,6 +1,6 @@
 "use client"
 
-import { INSDCSearchModal } from "@/components/insdc-search-sidebar"
+import { INSDCSearchModal } from "@/components/search/insdc-search-sidebar"
 import { useUIStore } from "@/lib/stores/ui"
 
 export function InsdcModalProvider() {

@@ -1,26 +1,21 @@
 "use client"
 
-import {
-  useState,
-  useEffect,
-  useRef,
-  useCallback,
-  useMemo,
-} from "react"
-import { useSearchParams } from "next/navigation"
-import { Search, X, HelpCircle } from "lucide-react"
+import { useState, useEffect, useRef, useCallback, useMemo } from "react"
+import { useRouter, useSearchParams } from "next/navigation"
+import { HelpCircle } from "lucide-react"
 
 import { D3CirclePack } from "@/components/taxonomy/d3-circle-pack"
-import { TaxonomyTreeCanvas } from "@/components/taxonomy/taxonomy-tree-canvas"
 import type { TreeRankOption } from "@/components/taxonomy/taxonomy-tree-controls"
 import { D3StackedRadialBar } from "@/components/taxonomy/d3-stacked-radial-bar"
 import { TaxonomyDetailsPanel } from "@/components/taxonomy/taxonomy-details-panel"
 import { RadialTreeWithWarning } from "@/components/taxonomy/radial-tree-with-warning"
+import { ExpandableSearch } from "@/components/taxonomy/expandable-search"
 import { useTaxonomyUrlSync } from "./use-taxonomy-url-sync"
-import { useFlattenedTreeStore, useRankDistribution, useRootOrganismsCount } from "@/lib/stores/flattened-tree"
+import { useFlattenedTreeStore, useRankDistribution, useRootOrganismsCount, getRankIndex } from "@/lib/stores/flattened-tree"
 
 import { type BreadcrumbEntry } from "@/components/taxonomy/floating-breadcrumb"
 import { FloatingVizStrip } from "@/components/taxonomy/floating-viz-strip"
+import { RankResetToast } from "@/components/taxonomy/rank-reset-toast"
 
 import type { TaxonRecord } from "@/lib/api/types"
 import type { FlatTreeNode } from "@/lib/api/taxons"
@@ -31,13 +26,8 @@ import {
   GLASS_PANEL,
   GLASS_PANEL_PADDING,
 } from "@/components/taxonomy/taxonomy-types"
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover"
+import { TaxonomyHelpDialog } from "@/components/taxonomy/taxonomy-help-dialog"
 import { cn } from "@/lib/utils"
-import { toast } from "sonner"
 
 const EUKARYOTA_TAXID = "2759"
 const MAX_ROOT_HISTORY = 10
@@ -53,115 +43,46 @@ function flatNodeToTaxon(node: FlatTreeNode): TaxonRecord {
   }
 }
 
-// ─── Expandable search ───────────────────────────────────────────────────────
-
-interface ExpandableSearchProps {
-  query: string
-  results: FlatTreeNode[]
-  showResults: boolean
-  onChange: (q: string) => void
-  onSelect: (node: FlatTreeNode) => void
-  onBlur: () => void
+/** Ancestor chain from node up to root (node first, then parent, …). */
+function getAncestorChain(taxid: string, flatNodes: FlatTreeNode[]): FlatTreeNode[] {
+  const byId = new Map(flatNodes.map((n) => [n.id, n]))
+  const chain: FlatTreeNode[] = []
+  let cur = byId.get(taxid)
+  while (cur) {
+    chain.push(cur)
+    cur = cur.parentId ? byId.get(cur.parentId) : undefined
+  }
+  return chain
 }
 
-function ExpandableSearch({
-  query,
-  results,
-  showResults,
-  onChange,
-  onSelect,
-  onBlur,
-}: ExpandableSearchProps) {
-  const [focused, setFocused] = useState(false)
-  const inputRef = useRef<HTMLInputElement>(null)
-  const containerRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!focused && !query) return
-    const handler = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setFocused(false)
-        onBlur()
-      }
-    }
-    document.addEventListener("mousedown", handler)
-    return () => document.removeEventListener("mousedown", handler)
-  }, [focused, query, onBlur])
-
-  return (
-    <div ref={containerRef} className="relative flex items-center">
-      <button
-        type="button"
-        aria-label="Search"
-        onClick={() => { setFocused(true); setTimeout(() => inputRef.current?.focus(), 10) }}
-        className={cn(
-          "flex items-center gap-2 h-8 rounded-lg px-2.5 border transition-all duration-200 text-sm",
-          focused || query
-            ? "w-52 bg-background border-border text-foreground"
-            : "w-8 bg-transparent border-transparent text-muted-foreground hover:text-foreground"
-        )}
-      >
-        <Search className="h-4 w-4 shrink-0" />
-        <input
-          ref={inputRef}
-          type="text"
-          placeholder="Search taxon…"
-          value={query}
-          onChange={(e) => onChange(e.target.value)}
-          onFocus={() => setFocused(true)}
-          className={cn(
-            "bg-transparent outline-none text-sm text-foreground placeholder:text-muted-foreground w-full transition-opacity",
-            focused || query ? "opacity-100" : "opacity-0 w-0"
-          )}
-          aria-label="Search taxon by name or ID"
-        />
-        {query && (
-          <button
-            type="button"
-            aria-label="Clear search"
-            onClick={(e) => { e.stopPropagation(); onChange(""); setFocused(false) }}
-            className="shrink-0 text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <X className="h-3 w-3" />
-          </button>
-        )}
-      </button>
-
-      {showResults && results.length > 0 && (
-        <div className="absolute right-0 top-full mt-1.5 w-64 z-50 rounded-lg shadow-lg overflow-hidden border border-border bg-popover">
-          {results.map((node) => (
-            <button
-              key={node.id}
-              type="button"
-              onClick={() => { onSelect(node); setFocused(false) }}
-              className="w-full text-left px-3 py-2.5 hover:bg-muted transition-colors border-b border-border last:border-0"
-            >
-              <div className="text-sm text-foreground truncate">
-                {node.scientific_name}
-              </div>
-              <div className="text-[10px] text-muted-foreground mt-0.5">
-                ID {node.id} · {node.annotations_count.toLocaleString()} annotations
-              </div>
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  )
+/** True if descendantTaxid is under rootTaxid in the tree. */
+function isDescendantOf(
+  descendantTaxid: string,
+  rootTaxid: string,
+  flatNodes: FlatTreeNode[]
+): boolean {
+  const byId = new Map(flatNodes.map((n) => [n.id, n]))
+  let cur = byId.get(descendantTaxid)
+  while (cur) {
+    if (cur.id === rootTaxid) return true
+    cur = cur.parentId ? byId.get(cur.parentId) : undefined
+  }
+  return false
 }
-
 
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function TaxonomyPage() {
+  const router = useRouter()
   const searchParams = useSearchParams()
   const flatNodes = useFlattenedTreeStore((s) => s.flatNodes)
   const { fetchFlattenedTree, searchNodes } = useFlattenedTreeStore()
 
-  /** Pending root from URL before useTaxonomyUrlSync has set rootTaxon (avoids flash to Eukaryota). */
-  const urlTaxid = searchParams?.get("taxon") ?? null
+  /** URL is the source of truth for current root taxid (middleware ensures ?taxon= is always set). */
+  const currentRootTaxidFromUrl = searchParams?.get("taxon") ?? EUKARYOTA_TAXID
 
   // ── Core state ────────────────────────────────────────────────────────────
+  /** Loaded payload for the current URL taxid; updated by URL sync (on load) and by handleSetRoot (on navigate). */
   const [rootTaxon, setRootTaxon] = useState<TaxonomyPayload | null>(null)
   const [rootHistory, setRootHistory] = useState<TaxonomyPayload[]>([])
   const [selectedNode, setSelectedNode] = useState<NodeClickEvent | null>(null)
@@ -181,37 +102,44 @@ export default function TaxonomyPage() {
   // Radial warning
   const [radialWarningAcknowledged, setRadialWarningAcknowledged] =
     useState<Set<string>>(new Set())
+  // Rank reset toast (shown when root moves below selected rank)
+  const [rankResetToastOpen, setRankResetToastOpen] = useState(false)
+  const [helpDialogOpen, setHelpDialogOpen] = useState(false)
 
   const vizRef = useRef<HTMLDivElement>(null)
   const radialScrollRef = useRef<HTMLDivElement>(null)
+  const selectedNodeRef = useRef<NodeClickEvent | null>(null)
+  selectedNodeRef.current = selectedNode
 
-  // ── URL sync (keeps rootTaxon ↔ ?taxon= in sync) ─────────────────────────
+  // ── URL as source of truth: sync hook loads root payload when URL taxid changes ─────────────────────────
   useTaxonomyUrlSync({
-    rootTaxon,
-    setRootTaxon,
-    setSelectedTaxon: () => { },   // selection is now handled via node popover
+    rootPayload: rootTaxon,
+    setRootPayload: setRootTaxon,
     setActiveView: setActiveTab,
   })
 
   useEffect(() => { fetchFlattenedTree() }, [fetchFlattenedTree])
 
-  // When root changes to a taxon whose rank equals the selected leaf rank, reset rank and notify
+  const selectedMaxRankRef = useRef(selectedMaxRank)
+  selectedMaxRankRef.current = selectedMaxRank
+
+  // When root changes: reset selected leaf rank if it's at or above the new root (e.g. root=class, selected=phylum)
   useEffect(() => {
     if (!rootTaxon?.taxon.rank) return
-    const rootRankLower = rootTaxon.taxon.rank!.toLowerCase()
-    setSelectedMaxRank((current) => {
-      if (!current) return null
-      if (rootRankLower === current.toLowerCase()) {
-        toast.info(
-          "The rank of the root overlaps with the one currently selected. Rank selector has been reset."
-        )
-        return null
-      }
-      return current
-    })
+    const rootIdx = getRankIndex(rootTaxon.taxon.rank)
+    if (rootIdx < 0) return
+    const current = selectedMaxRankRef.current
+    if (!current) return
+    const currentIdx = getRankIndex(current)
+    if (currentIdx < 0) return
+    // Selected rank is valid only when it's below the root (e.g. root=class → order/family/genus ok; phylum not ok)
+    if (currentIdx <= rootIdx) {
+      setSelectedMaxRank(null)
+      setRankResetToastOpen(true)
+    }
   }, [rootTaxon])
 
-  // ── Re-root helpers ───────────────────────────────────────────────────────
+  // ── Re-root helpers: update state and URL together (URL is source of truth; we write it only on navigate) ─────
 
   const handleSetRoot = useCallback(
     (payload: TaxonomyPayload | null) => {
@@ -220,18 +148,22 @@ export default function TaxonomyPage() {
         return payload
       })
       setSelectedNode(null)
+      if (payload) router.replace(`/taxonomy?taxon=${payload.taxid}`, { scroll: false })
     },
-    []
+    [router]
   )
 
   const handleBackToPreviousRoot = useCallback(() => {
     setRootHistory((h) => {
       const [prev, ...rest] = h
-      setRootTaxon(prev ?? null)
-      setSelectedNode(null)
+      if (prev != null) {
+        router.replace(`/taxonomy?taxon=${prev.taxid}`, { scroll: false })
+        setRootTaxon(prev)
+        setSelectedNode(null)
+      }
       return rest
     })
-  }, [])
+  }, [router])
 
   // ── Search ────────────────────────────────────────────────────────────────
   const handleSearch = useCallback((q: string) => {
@@ -251,23 +183,20 @@ export default function TaxonomyPage() {
   // ── Node interactions ─────────────────────────────────────────────────────
 
   const handleNodeClick = useCallback((event: NodeClickEvent) => {
-    // If clicking the same node again, dismiss
-    if (selectedNode?.taxid === event.taxid) {
-      setSelectedNode(null)
-      return
-    }
-    setSelectedNode(event)
-  }, [selectedNode?.taxid])
+    setSelectedNode((prev) => (prev?.taxid === event.taxid ? null : event))
+  }, [])
 
   const handleDrillIn = useCallback(() => {
-    if (!selectedNode) return
-    handleSetRoot({ taxid: selectedNode.taxid, taxon: flatNodeToTaxon(selectedNode.node) })
-  }, [selectedNode, handleSetRoot])
+    const node = selectedNodeRef.current
+    if (!node) return
+    handleSetRoot({ taxid: node.taxid, taxon: flatNodeToTaxon(node.node) })
+  }, [handleSetRoot])
 
   const handlePinNode = useCallback(() => {
-    if (!selectedNode) return
-    setPinnedNode({ taxid: selectedNode.taxid, taxon: flatNodeToTaxon(selectedNode.node) })
-  }, [selectedNode])
+    const node = selectedNodeRef.current
+    if (!node) return
+    setPinnedNode({ taxid: node.taxid, taxon: flatNodeToTaxon(node.node) })
+  }, [])
 
   // ── Dismiss popover on outside click ─────────────────────────────────────
   useEffect(() => {
@@ -289,64 +218,42 @@ export default function TaxonomyPage() {
     setSelectedNode({ taxid, node, screenX: 0, screenY: 0 })
   }, [flatNodes])
 
-  // ── Derived state ─────────────────────────────────────────────────────────
-  // When rootTaxon is still null (before URL sync), use URL's taxon so we don't flash Eukaryota.
+  // ── Derived state: effective root taxid from URL; display payload from state or flatNodes ─────────────────────
+
+  const effectiveRootTaxid = currentRootTaxidFromUrl
 
   const currentDisplayTaxon = useMemo<TaxonomyPayload>(() => {
-    if (rootTaxon) return rootTaxon
-    const pendingTaxid = urlTaxid ?? EUKARYOTA_TAXID
-    const node = flatNodes.find((n) => n.id === pendingTaxid)
+    if (rootTaxon?.taxid === effectiveRootTaxid) return rootTaxon
+    const node = flatNodes.find((n) => n.id === effectiveRootTaxid)
     return {
-      taxid: pendingTaxid,
+      taxid: effectiveRootTaxid,
       taxon: node
         ? flatNodeToTaxon(node)
         : ({
-            taxid: pendingTaxid,
-            scientific_name: pendingTaxid === EUKARYOTA_TAXID ? "Eukaryota" : "…",
+            taxid: effectiveRootTaxid,
+            scientific_name: effectiveRootTaxid === EUKARYOTA_TAXID ? "Eukaryota" : "…",
           } as TaxonRecord),
     }
-  }, [rootTaxon, flatNodes, urlTaxid])
-
-  const currentRootTaxid = rootTaxon?.taxid ?? urlTaxid
-  const effectiveRootTaxid = currentRootTaxid ?? EUKARYOTA_TAXID
+  }, [rootTaxon, flatNodes, effectiveRootTaxid])
 
   // Breadcrumb path: ancestors only (exclude current root; current root shown in center pill)
   const breadcrumbPath = useMemo<BreadcrumbEntry[]>(() => {
-    const focalId = currentDisplayTaxon.taxid
-    const byId = new Map(flatNodes.map((n) => [n.id, n]))
-    const chain: FlatTreeNode[] = []
-    let cur = byId.get(focalId)
-    while (cur) {
-      chain.push(cur)
-      cur = cur.parentId ? byId.get(cur.parentId) : undefined
-    }
-    chain.reverse()
-    return chain.slice(0, -1).map((n) => ({ taxid: n.id, name: n.scientific_name }))
-  }, [currentDisplayTaxon, flatNodes])
+    const chain = getAncestorChain(currentDisplayTaxon.taxid, flatNodes)
+    return chain.reverse().slice(0, -1).map((n) => ({ taxid: n.id, name: n.scientific_name }))
+  }, [currentDisplayTaxon.taxid, flatNodes])
 
-  // Highlight the selected node if it's inside the current subtree
+  // Highlight the selected node only if it's inside the current subtree
   const highlightTaxid = useMemo(() => {
     if (!selectedNode) return null
-    const byId = new Map(flatNodes.map((n) => [n.id, n]))
-    let cur = byId.get(selectedNode.taxid)
-    while (cur) {
-      if (cur.id === effectiveRootTaxid) return selectedNode.taxid
-      cur = cur.parentId ? byId.get(cur.parentId) : undefined
-    }
-    return null
+    return isDescendantOf(selectedNode.taxid, effectiveRootTaxid, flatNodes) ? selectedNode.taxid : null
   }, [selectedNode, effectiveRootTaxid, flatNodes])
 
   // Depth of selected taxon from current root (for TaxonomyDetailsPanel breadcrumb)
   const depthFromRoot = useMemo(() => {
     if (!selectedNode) return 0
-    const byId = new Map(flatNodes.map((n) => [n.id, n]))
-    let cur = byId.get(selectedNode.taxid)
-    let depth = 0
-    while (cur && cur.id !== effectiveRootTaxid) {
-      depth++
-      cur = cur.parentId ? byId.get(cur.parentId) : undefined
-    }
-    return cur ? depth : 0
+    const chain = getAncestorChain(selectedNode.taxid, flatNodes)
+    const rootIndex = chain.findIndex((n) => n.id === effectiveRootTaxid)
+    return rootIndex >= 0 ? rootIndex : 0
   }, [selectedNode, effectiveRootTaxid, flatNodes])
 
   const handleSelectAncestor = useCallback(
@@ -395,11 +302,11 @@ export default function TaxonomyPage() {
     })
   }, [flatNodes, currentDisplayTaxon])
 
-  const viewKey = currentRootTaxid ?? EUKARYOTA_TAXID
+  const viewKey = effectiveRootTaxid
   const organismsCount = currentDisplayTaxon.taxon.organisms_count ?? 0
 
-  const rankDistribution = useRankDistribution(currentRootTaxid)
-  const rootOrganismsCount = useRootOrganismsCount(currentRootTaxid)
+  const rankDistribution = useRankDistribution(effectiveRootTaxid)
+  const rootOrganismsCount = useRootOrganismsCount(effectiveRootTaxid)
 
   // Leaf count at selected rank (used for radial warning threshold)
   const leafCountAtSelectedRank =
@@ -422,23 +329,11 @@ export default function TaxonomyPage() {
           {activeTab === "overview" && (
             <div className="w-full h-full flex items-center justify-center min-h-0">
               <D3CirclePack
-                rootTaxid={currentRootTaxid}
+                rootTaxid={effectiveRootTaxid}
                 highlightTaxid={highlightTaxid}
                 selectedTaxid={selectedNode?.taxid ?? null}
                 onNodeClick={handleNodeClick}
                 controlledRank={selectedMaxRank}
-              />
-            </div>
-          )}
-          {activeTab === "tree" && (
-            <div className="w-full h-full min-h-0 overflow-auto">
-              <TaxonomyTreeCanvas
-                rootTaxid={currentRootTaxid}
-                highlightTaxid={highlightTaxid}
-                selectedTaxid={selectedNode?.taxid ?? null}
-                onNodeClick={handleNodeClick}
-                controlledRank={(selectedMaxRank as TreeRankOption) ?? undefined}
-                scopeHint={rootTaxon ? currentDisplayTaxon.taxon.scientific_name : undefined}
               />
             </div>
           )}
@@ -448,7 +343,7 @@ export default function TaxonomyPage() {
               className="w-full h-full flex items-start justify-center min-h-0 overflow-auto"
             >
               <RadialTreeWithWarning
-                rootTaxid={currentRootTaxid}
+                rootTaxid={effectiveRootTaxid}
                 highlightTaxid={highlightTaxid}
                 organismsCount={organismsCount}
                 leafCountAtSelectedRank={leafCountAtSelectedRank}
@@ -465,7 +360,7 @@ export default function TaxonomyPage() {
           {activeTab === "gene-stack" && (
             <div className="w-full h-full flex items-center justify-center min-h-0 overflow-auto">
               <D3StackedRadialBar
-                rootTaxid={currentRootTaxid}
+                rootTaxid={effectiveRootTaxid}
                 highlightTaxid={highlightTaxid}
                 onTaxonSelect={handleGeneStackNodeClick}
                 controlledRank={(selectedMaxRank as TreeRankOption) ?? undefined}
@@ -491,27 +386,22 @@ export default function TaxonomyPage() {
             <h1 className="text-sm font-medium text-foreground">
               Taxonomy Explorer
             </h1>
-            <Popover>
-              <PopoverTrigger asChild>
-                <button
-                  type="button"
-                  aria-label="Help: show description"
-                  className="text-muted-foreground hover:text-foreground transition-colors p-0.5 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                >
-                  <HelpCircle className="h-3.5 w-3.5" aria-hidden />
-                </button>
-              </PopoverTrigger>
-              <PopoverContent
-                align="start"
-                side="bottom"
-                sideOffset={6}
-                className="max-w-[260px] p-3 rounded-lg border border-border bg-popover/95 backdrop-blur-sm shadow-lg text-xs text-left"
-              >
-                Switch views, change root, filter by rank, and search.
-                Click a node in the tree to open its details.
-              </PopoverContent>
-            </Popover>
+            <button
+              type="button"
+              aria-label="Help: how to use the Taxonomy Explorer"
+              className="text-muted-foreground hover:text-foreground transition-colors p-0.5 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              onClick={() => setHelpDialogOpen(true)}
+            >
+              <HelpCircle className="h-3.5 w-3.5" aria-hidden />
+            </button>
+            <TaxonomyHelpDialog open={helpDialogOpen} onOpenChange={setHelpDialogOpen} />
           </div>
+          {/* Rank reset toast: far right of strip row (same vertical alignment) */}
+          <RankResetToast
+            open={rankResetToastOpen}
+            onClose={() => setRankResetToastOpen(false)}
+            className="absolute right-4 top-4"
+          />
           {/* Strip: draggable, centered by default */}
           <FloatingVizStrip
               currentDisplayTaxon={currentDisplayTaxon}
@@ -546,9 +436,9 @@ export default function TaxonomyPage() {
             />
         </div>
 
-        {/* Right drawer: absolute over the canvases (taxonomy-popover so outside-click does not clear selection on panel interaction) */}
+        {/* Right drawer: absolute over the canvases (taxonomy-popover so outside-click does not clear selection on panel interaction). overflow-hidden clips the panel slide-in so no partial overlay. */}
         {selectedNode && (
-          <div className="taxonomy-popover absolute right-0 top-0 bottom-0 z-30 w-80 xl:w-96 border-l border-border bg-background shadow-xl flex flex-col min-h-0">
+          <div className="taxonomy-popover absolute right-0 top-0 bottom-0 z-30 w-80 xl:w-96 border-l border-border bg-background shadow-xl flex flex-col min-h-0 overflow-hidden">
             <TaxonomyDetailsPanel
               selectedTaxon={{
                 taxid: selectedNode.taxid,

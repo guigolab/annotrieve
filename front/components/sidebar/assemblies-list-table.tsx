@@ -17,8 +17,8 @@ import { useUIStore } from '@/lib/stores/ui'
 import { Loader2, Database, FileText, Star, Layers, CheckCircle, XCircle, Calendar, Building2, Eye, Filter, X, Search, SlidersHorizontal, ChevronDown, ChevronUp } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { cn, buildEntityDetailsUrl } from "@/lib/utils"
-import { SelectedEntity, assemblyToEntity } from './taxonomic-tree-table/selected-entity'
-import { useRouter } from 'next/navigation'
+import { useRouter } from "next/navigation"
+import { SelectedEntity, assemblyToEntity } from "@/components/selected-entity"
 
 interface AssembliesListTableProps {
   taxid?: string
@@ -456,8 +456,8 @@ export function AssembliesListTable({ taxid }: AssembliesListTableProps) {
           title="Selected Assemblies"
           entities={selectedAssemblyEntities}
           onClear={() => setSelectedAssemblies([])}
-          onRemove={(accession) => {
-            setSelectedAssemblies(selectedAssemblies.filter(a => a.assembly_accession !== accession))
+          onRemove={(accession: string) => {
+            setSelectedAssemblies(selectedAssemblies.filter((a) => a.assembly_accession !== accession))
           }}
           onAction={handleViewAnnotations}
           actionLabel="View Related Annotations"

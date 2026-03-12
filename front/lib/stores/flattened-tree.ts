@@ -8,10 +8,56 @@ export const RANK_ORDER = ['kingdom', 'phylum', 'class', 'order', 'family', 'gen
 
 export type RankDistributionEntry = { rank: string; count: number }
 
-function getRankIndex(rank: string | null): number {
+/** Index in RANK_ORDER (0 = kingdom, 1 = phylum, …). -1 if unknown. */
+export function getRankIndex(rank: string | null | undefined): number {
   if (!rank) return -1
   const index = (RANK_ORDER as readonly string[]).indexOf(rank.toLowerCase())
   return index >= 0 ? index : -1
+}
+
+/** Build flat node list from hierarchy for nodes in nodesToInclude; parentId is first included ancestor. */
+function buildFlatNodesFromHierarchy(
+  treeRoot: d3.HierarchyNode<FlatTreeNode>,
+  nodesToInclude: Set<string>
+): FlatTreeNode[] {
+  const result: FlatTreeNode[] = []
+  treeRoot.each((node) => {
+    if (!node.data || !nodesToInclude.has(node.data.id)) return
+    let parentId: string | null = null
+    let current = node.parent
+    while (current) {
+      if (current.data && nodesToInclude.has(current.data.id)) {
+        parentId = current.data.id
+        break
+      }
+      current = current.parent
+    }
+    result.push({
+      id: node.data.id,
+      parentId,
+      scientific_name: node.data.scientific_name,
+      annotations_count: node.data.annotations_count,
+      assemblies_count: node.data.assemblies_count,
+      organisms_count: node.data.organisms_count,
+      rank: node.data.rank,
+      coding_count: node.data.coding_count,
+      non_coding_count: node.data.non_coding_count,
+      pseudogene_count: node.data.pseudogene_count,
+    })
+  })
+  return result
+}
+
+/** Rebuild hierarchy from flat node list; returns null on failure. */
+function stratifyFlatNodes(flatNodes: FlatTreeNode[]): d3.HierarchyNode<FlatTreeNode> | null {
+  if (flatNodes.length === 0) return null
+  try {
+    const stratify = d3.stratify<FlatTreeNode>().id((d) => d.id).parentId((d) => d.parentId)
+    const rebuilt = stratify(flatNodes)
+    return rebuilt && rebuilt.data ? rebuilt : null
+  } catch {
+    return null
+  }
 }
 
 /** Applies rank filter to any tree root (same logic as filterTreeByRank). Returns filtered tree or original if invalid. */
@@ -42,40 +88,10 @@ function applyRankFilterToTree(
     }
   })
 
-  const filteredFlatNodes: FlatTreeNode[] = []
-  treeRoot.each((node) => {
-    if (!node.data || !nodesToInclude.has(node.data.id)) return
-    let parentId: string | null = null
-    let current = node.parent
-    while (current) {
-      if (current.data && nodesToInclude.has(current.data.id)) {
-        parentId = current.data.id
-        break
-      }
-      current = current.parent
-    }
-    filteredFlatNodes.push({
-      id: node.data.id,
-      parentId,
-      scientific_name: node.data.scientific_name,
-      annotations_count: node.data.annotations_count,
-      assemblies_count: node.data.assemblies_count,
-      organisms_count: node.data.organisms_count,
-      rank: node.data.rank,
-      coding_count: node.data.coding_count,
-      non_coding_count: node.data.non_coding_count,
-      pseudogene_count: node.data.pseudogene_count,
-    })
-  })
-
+  const filteredFlatNodes = buildFlatNodesFromHierarchy(treeRoot, nodesToInclude)
   if (filteredFlatNodes.length === 0) return treeRoot
-  try {
-    const stratify = d3.stratify<FlatTreeNode>().id((d) => d.id).parentId((d) => d.parentId)
-    const rebuilt = stratify(filteredFlatNodes)
-    return rebuilt && rebuilt.data ? rebuilt : treeRoot
-  } catch {
-    return treeRoot
-  }
+  const rebuilt = stratifyFlatNodes(filteredFlatNodes)
+  return rebuilt ?? treeRoot
 }
 
 interface FlattenedTreeState {
@@ -127,24 +143,23 @@ export const useFlattenedTreeStore = create<FlattenedTreeState>((set, get) => ({
     
     try {
       // Request TSV format for streaming; getFlattenedTree('tsv') returns FlatTreeNode[]
-      const flatNodes = await getFlattenedTree('tsv') as FlatTreeNode[]
+      const fetched = await getFlattenedTree('tsv') as FlatTreeNode[]
       
       // Find nodes without parents in the dataset
-      const idsSet = new Set(flatNodes.map(n => n.id))
-      const rootCandidates = flatNodes.filter(n => 
+      const idsSet = new Set(fetched.map(n => n.id))
+      const rootCandidates = fetched.filter(n =>
         !n.parentId || !idsSet.has(n.parentId)
       )
-      
-      // If multiple roots, create synthetic root
+
+      let flatNodes: FlatTreeNode[]
       if (rootCandidates.length > 1) {
-        // Set all root candidates to have synthetic root as parent
-        flatNodes.forEach(node => {
+        // Build new array: root candidates get parentId 'root'; add synthetic root (no mutation of fetched)
+        flatNodes = fetched.map(node => {
           if (!node.parentId || !idsSet.has(node.parentId)) {
-            node.parentId = 'root'
+            return { ...node, parentId: 'root' as string | null }
           }
+          return node
         })
-        
-        // Add synthetic root
         flatNodes.push({
           id: 'root',
           parentId: null,
@@ -157,9 +172,11 @@ export const useFlattenedTreeStore = create<FlattenedTreeState>((set, get) => ({
           non_coding_count: rootCandidates.reduce((sum, n) => sum + n.non_coding_count, 0),
           pseudogene_count: rootCandidates.reduce((sum, n) => sum + n.pseudogene_count, 0),
         })
+      } else {
+        flatNodes = fetched
       }
-      
-      set({ 
+
+      set({
         flatNodes,
         isLoading: false,
         error: null
@@ -191,22 +208,16 @@ export const useFlattenedTreeStore = create<FlattenedTreeState>((set, get) => ({
     }
   },
   
-  // Get leaf nodes (nodes without children)
+  // Get leaf nodes (nodes without children). Calls getTreeStructure() once and uses it for the "nodes with children" set.
   getLeafNodes: () => {
     const { flatNodes, getTreeStructure } = get()
     const treeStructure = getTreeStructure()
     if (!treeStructure) return []
-    
-    // Find all nodes that have children
     const nodesWithChildren = new Set<string>()
     treeStructure.each((node) => {
-      if (node.children && node.children.length > 0) {
-        nodesWithChildren.add(node.data.id)
-      }
+      if (node.children && node.children.length > 0) nodesWithChildren.add(node.data.id)
     })
-    
-    // Return flat nodes that don't have children
-    return flatNodes.filter(node => !nodesWithChildren.has(node.id))
+    return flatNodes.filter((node) => !nodesWithChildren.has(node.id))
   },
   
   // Search nodes by query (name or ID)
@@ -226,117 +237,45 @@ export const useFlattenedTreeStore = create<FlattenedTreeState>((set, get) => ({
   
   // Filter tree structure by rank (returns filtered tree structure)
   filterTreeByRank: (rank: string | null) => {
-    const { flatNodes, getTreeStructure } = get()
+    const { getTreeStructure } = get()
     const treeStructure = getTreeStructure()
     if (!treeStructure) return null
-    
+
     try {
       const maxRankIndex = getRankIndex(rank)
       if (maxRankIndex < 0) return treeStructure
-      
-      // Collect all nodes that should be included (up to selected rank)
+
       const nodesToInclude = new Set<string>()
-      
-      // Always include root node
-      if (treeStructure.data && treeStructure.data.id) {
-        nodesToInclude.add(treeStructure.data.id)
-      }
-      
-      // First pass: identify all nodes up to the selected rank
+      if (treeStructure.data?.id) nodesToInclude.add(treeStructure.data.id)
+
       treeStructure.each((node) => {
         if (!node.data) return
-        
         const nodeRank = node.data.rank
         const rankIndex = getRankIndex(nodeRank)
-        
-        // Include node if it's at or below the selected rank, or has no rank (structural nodes)
-        if (rankIndex >= 0 && rankIndex <= maxRankIndex) {
-          nodesToInclude.add(node.data.id)
-        } else if (!nodeRank) {
-          // Include nodes without rank (they might be important structural nodes)
-          nodesToInclude.add(node.data.id)
-        }
+        if (rankIndex >= 0 && rankIndex <= maxRankIndex) nodesToInclude.add(node.data.id)
+        else if (!nodeRank) nodesToInclude.add(node.data.id)
       })
-      
-      // Ensure all ancestors of included nodes are also included
+
       treeStructure.each((node) => {
         if (!node.data || !nodesToInclude.has(node.data.id)) return
-        
-        // Walk up the tree and include all ancestors
         let current = node.parent
         while (current && current.data) {
           nodesToInclude.add(current.data.id)
           current = current.parent
         }
       })
-      
-      // Second pass: build parent-child relationships for included nodes
-      const filteredFlatNodes: FlatTreeNode[] = []
-      treeStructure.each((node) => {
-        if (!node.data || !nodesToInclude.has(node.data.id)) return
-        
-        // Find parent that is also included
-        let parentId: string | null = null
-        let current = node.parent
-        while (current) {
-          if (current.data && nodesToInclude.has(current.data.id)) {
-            parentId = current.data.id
-            break
-          }
-          current = current.parent
-        }
-        
-        filteredFlatNodes.push({
-          id: node.data.id,
-          parentId: parentId,
-          scientific_name: node.data.scientific_name,
-          annotations_count: node.data.annotations_count,
-          assemblies_count: node.data.assemblies_count,
-          organisms_count: node.data.organisms_count,
-          rank: node.data.rank,
-          coding_count: node.data.coding_count,
-          non_coding_count: node.data.non_coding_count,
-          pseudogene_count: node.data.pseudogene_count,
-        })
-      })
-      
+
+      const filteredFlatNodes = buildFlatNodesFromHierarchy(treeStructure, nodesToInclude)
       if (filteredFlatNodes.length === 0) {
         console.warn('No nodes found after filtering')
         return treeStructure
       }
-      
-      // Rebuild tree structure from filtered flat nodes using d3.stratify
-      const stratify = d3.stratify<FlatTreeNode>()
-        .id((d) => d.id)
-        .parentId((d) => d.parentId)
-      
-      try {
-        const rebuiltRoot = stratify(filteredFlatNodes)
-        
-        // Ensure the rebuilt root is valid
-        if (!rebuiltRoot || !rebuiltRoot.data) {
-          console.warn('Rebuilt root is invalid, returning original')
-          return treeStructure
-        }
-        
-        // Validate that all nodes have proper structure
-        let isValid = true
-        rebuiltRoot.each((node) => {
-          if (!node || !node.data) {
-            isValid = false
-          }
-        })
-        
-        if (!isValid) {
-          console.warn('Rebuilt tree has invalid nodes, returning original')
-          return treeStructure
-        }
-        
-        return rebuiltRoot
-      } catch (error) {
-        console.error('Error rebuilding tree with stratify:', error)
+      const rebuilt = stratifyFlatNodes(filteredFlatNodes)
+      if (!rebuilt?.data) {
+        console.warn('Rebuilt root is invalid, returning original')
         return treeStructure
       }
+      return rebuilt
     } catch (error) {
       console.error('Error filtering tree structure:', error)
       return treeStructure
@@ -345,82 +284,36 @@ export const useFlattenedTreeStore = create<FlattenedTreeState>((set, get) => ({
   
   // Filter tree structure by root taxon (returns subtree starting from rootTaxid)
   filterTreeByRootTaxon: (rootTaxid: string | null) => {
-    const { flatNodes, getTreeStructure } = get()
+    const { getTreeStructure } = get()
     const treeStructure = getTreeStructure()
     if (!treeStructure || !rootTaxid) return treeStructure
-    
+
     try {
-      // Find the root taxon node in the tree
       let rootNode: d3.HierarchyNode<FlatTreeNode> | null = null
       treeStructure.each((node) => {
-        if (node.data && node.data.id === rootTaxid) {
-          rootNode = node
-        }
+        if (node.data && node.data.id === rootTaxid) rootNode = node
       })
-      
       if (!rootNode) {
         console.warn(`Root taxon ${rootTaxid} not found in tree`)
         return treeStructure
       }
-      
-      // Collect all descendants of the root taxon
+
+      const subtreeRoot: d3.HierarchyNode<FlatTreeNode> = rootNode
       const nodesToInclude = new Set<string>()
-      const targetRootNode: d3.HierarchyNode<FlatTreeNode> = rootNode
-      targetRootNode.each((node) => {
-        if (node.data) {
-          nodesToInclude.add(node.data.id)
-        }
+      subtreeRoot.each((node) => {
+        if (node.data) nodesToInclude.add(node.data.id)
       })
-      
-      // Build filtered flat nodes with the root taxon as the new root
-      const filteredFlatNodes: FlatTreeNode[] = []
-      targetRootNode.each((node) => {
-        if (!node.data) return
-        
-        // For the root node, set parentId to null
-        // For other nodes, find their parent within the subtree
-        let parentId: string | null = null
-        if (node.parent && node.parent.data && nodesToInclude.has(node.parent.data.id)) {
-          parentId = node.parent.data.id
-        }
-        
-        filteredFlatNodes.push({
-          id: node.data.id,
-          parentId: parentId,
-          scientific_name: node.data.scientific_name,
-          annotations_count: node.data.annotations_count,
-          assemblies_count: node.data.assemblies_count,
-          organisms_count: node.data.organisms_count,
-          rank: node.data.rank,
-          coding_count: node.data.coding_count,
-          non_coding_count: node.data.non_coding_count,
-          pseudogene_count: node.data.pseudogene_count,
-        })
-      })
-      
+      const filteredFlatNodes = buildFlatNodesFromHierarchy(subtreeRoot, nodesToInclude)
       if (filteredFlatNodes.length === 0) {
         console.warn('No nodes found after filtering by root taxon')
         return treeStructure
       }
-      
-      // Rebuild tree structure from filtered flat nodes
-      const stratify = d3.stratify<FlatTreeNode>()
-        .id((d) => d.id)
-        .parentId((d) => d.parentId)
-      
-      try {
-        const rebuiltRoot = stratify(filteredFlatNodes)
-        
-        if (!rebuiltRoot || !rebuiltRoot.data) {
-          console.warn('Rebuilt root is invalid, returning original')
-          return treeStructure
-        }
-        
-        return rebuiltRoot
-      } catch (error) {
-        console.error('Error rebuilding tree with root taxon:', error)
+      const rebuilt = stratifyFlatNodes(filteredFlatNodes)
+      if (!rebuilt?.data) {
+        console.warn('Rebuilt root is invalid, returning original')
         return treeStructure
       }
+      return rebuilt
     } catch (error) {
       console.error('Error filtering tree by root taxon:', error)
       return treeStructure
@@ -553,24 +446,20 @@ export const useLeafNodes = () => {
   }, [getLeafNodes])
 }
 
-// Selector hook for filtered tree structure by root taxon
+// Selector hook for filtered tree structure by root taxon. Getter is stable; we depend on flatNodes/rootTaxid for invalidation.
 export const useFilteredTreeByRootTaxon = (rootTaxid: string | null) => {
   const flatNodes = useFlattenedTreeStore((state) => state.flatNodes)
   const filterTreeByRootTaxon = useFlattenedTreeStore((state) => state.filterTreeByRootTaxon)
 
-  return useMemo(() => {
-    return filterTreeByRootTaxon(rootTaxid)
-  }, [flatNodes, filterTreeByRootTaxon, rootTaxid])
+  return useMemo(() => filterTreeByRootTaxon(rootTaxid), [flatNodes, filterTreeByRootTaxon, rootTaxid])
 }
 
-// Selector hook: tree filtered by root and optionally by rank (for rank slider + root)
+// Selector hook: tree filtered by root and optionally by rank. Getter is stable; we depend on flatNodes/rootTaxid/rank for invalidation.
 export const useFilteredTreeByRootAndRank = (rootTaxid: string | null, rank: string | null) => {
   const flatNodes = useFlattenedTreeStore((state) => state.flatNodes)
   const getFilteredTreeByRootAndRank = useFlattenedTreeStore((state) => state.getFilteredTreeByRootAndRank)
 
-  return useMemo(() => {
-    return getFilteredTreeByRootAndRank(rootTaxid, rank)
-  }, [flatNodes, getFilteredTreeByRootAndRank, rootTaxid, rank])
+  return useMemo(() => getFilteredTreeByRootAndRank(rootTaxid, rank), [flatNodes, getFilteredTreeByRootAndRank, rootTaxid, rank])
 }
 
 // Selector hook for leaf count under a root

@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Loader2, Search, X } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { INSDCSearchResults } from "@/components/insdc-search-results"
+import { INSDCSearchResults } from "./insdc-search-results"
 import { CommonSearchResult } from "@/lib/types"
 
 const DEFAULT_DEBOUNCE = 400

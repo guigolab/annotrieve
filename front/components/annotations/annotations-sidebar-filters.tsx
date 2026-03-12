@@ -13,13 +13,13 @@ import { useAnnotationsFiltersStore } from "@/lib/stores/annotations-filters"
 import { AssemblyRecord, OrganismRecord, TaxonRecord, BioProjectRecord } from "@/lib/api/types"
 import { listBioprojects } from "@/lib/api/bioprojects"
 import { cn } from "@/lib/utils"
-import { CompactTaxonomicTree } from "@/components/compact-taxonomic-tree"
+import { CompactTaxonomicTree } from "@/components/taxonomy/compact-taxonomic-tree"
 import { createAssemblySearchModel, createOrganismSearchModel, createTaxonSearchModel } from "@/lib/search-models"
-import { QuickSearchSection } from "@/components/annotations-sidebar-filters/components/quick-search-section"
-import { FilterAccordionSection } from "@/components/annotations-sidebar-filters/components/filter-accordion-section"
-import { sortRanks, formatRankLabel } from "@/components/annotations-sidebar-filters/utils"
+import { QuickSearchSection } from "./annotations-sidebar-filters/components/quick-search-section"
+import { FilterAccordionSection } from "./annotations-sidebar-filters/components/filter-accordion-section"
+import { sortRanks, formatRankLabel } from "./annotations-sidebar-filters/utils"
 import { CommonSearchResult } from "@/lib/types"
-import { FilterSubsetsManager } from "@/components/annotations-sidebar-filters/filter-subsets-manager"
+import { FilterSubsetsManager } from "./annotations-sidebar-filters/filter-subsets-manager"
 
 const FILTER_PARAM_EXCLUDE_MAP: Record<string, string> = {
   'biotype': 'biotypes',

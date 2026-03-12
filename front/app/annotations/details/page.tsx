@@ -31,17 +31,6 @@ export default function AnnotationsDetailsPage() {
   return (
     <div className="min-h-full overflow-y-auto bg-background">
       <div className="mx-auto w-full max-w-6xl px-4 py-6 space-y-4">
-        <div className="flex items-center justify-between">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleBack}
-            className="gap-2"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            Back to annotations
-          </Button>
-        </div>
 
         {activeView === "taxon" && taxonId && (
           <TaxonDetailsView taxid={taxonId} onClose={handleBack} />

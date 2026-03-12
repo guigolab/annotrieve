@@ -30,9 +30,9 @@ import {
   Legend,
   ArcElement,
 } from 'chart.js'
-import { SourceFileOverview } from './file-overview-dialog/source-file-overview'
-import { FeaturesSummary } from './file-overview-dialog/features-summary'
-import { OverviewSection } from './file-overview-dialog/overview-section'
+import { SourceFileOverview } from "./file-overview-dialog/source-file-overview"
+import { FeaturesSummary } from "./file-overview-dialog/features-summary"
+import { OverviewSection } from "./file-overview-dialog/overview-section"
 
 // Register Chart.js components
 ChartJS.register(

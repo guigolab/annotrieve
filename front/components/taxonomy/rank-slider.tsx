@@ -3,7 +3,7 @@
 import { useMemo, useEffect, useRef, useState } from "react"
 import { AlertTriangle } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { RANK_ORDER } from "@/lib/stores/flattened-tree"
+import { RANK_ORDER, getRankIndex } from "@/lib/stores/flattened-tree"
 import type { RankDistributionEntry } from "@/lib/stores/flattened-tree"
 import { LARGE_TAXON_THRESHOLD } from "./taxonomy-types"
 
@@ -12,12 +12,6 @@ export const RANK_SLIDER_ALL = "__all__" as const
 const RANK_DISPLAY_ORDER = RANK_ORDER.filter((r) => r !== "species")
 const DOT_SIZE = 7
 const SPINE_LEFT = DOT_SIZE / 2
-
-function getRankIndex(rank: string | null | undefined): number {
-  if (!rank) return -1
-  const index = (RANK_ORDER as readonly string[]).indexOf(rank.toLowerCase())
-  return index >= 0 ? index : -1
-}
 
 /** Ranks that are strictly below (more specific than) the given root rank. */
 function ranksAfterRoot(rootRank: string | null | undefined): readonly string[] {
@@ -94,7 +88,9 @@ export function RankSlider({
     const idx = rows.findIndex(
       (r) => (r.rank === RANK_SLIDER_ALL && selectedRank === null) || r.rank === selectedRank
     )
-    return idx >= 0 ? idx : 0
+    // When selected rank is not in the list (e.g. root moved below it: root=class, selected=phylum), show "All leaves"
+    if (idx >= 0) return idx
+    return rows.length - 1
   }, [rows, selectedRank])
 
   const [justSelectedIndex, setJustSelectedIndex] = useState<number | null>(null)

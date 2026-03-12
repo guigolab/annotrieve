@@ -10,6 +10,7 @@ import { useAnnotationsFiltersStore } from "@/lib/stores/annotations-filters"
 import { useFlattenedTreeStore } from "@/lib/stores/flattened-tree"
 import { buildEntityDetailsUrl } from "@/lib/utils"
 import { getTreeGeneColors } from "./taxonomy-tree-controls"
+import { TAXONOMY_HIGHLIGHT_COLOR } from "./taxonomy-types"
 import { useUIStore } from "@/lib/stores/ui"
 import type { TaxonRecord } from "@/lib/api/types"
 import { cn } from "@/lib/utils"
@@ -76,8 +77,7 @@ export function TaxonomyDetailsPanel({
   const theme = useUIStore((s) => s.theme)
   const isDark = theme === "dark"
   const geneColors = getTreeGeneColors(isDark)
-  /** Same highlight/selected taxon color as d3-radial-tree, d3-circle-pack, d3-stacked-radial-bar */
-  const highlightColor = isDark ? "#fbbf24" : "#f59e0b"
+  const highlightColor = TAXONOMY_HIGHLIGHT_COLOR[isDark ? "dark" : "light"]
 
   const geneCounts = useMemo((): { coding: number; non_coding: number; pseudogene: number } | null => {
     const node = treeContext.node
@@ -122,7 +122,7 @@ export function TaxonomyDetailsPanel({
   return (
     <div
       className={cn(
-        "flex flex-col h-full w-80 xl:w-96 animate-in fade-in-0 slide-in-from-end-4 duration-200",
+        "flex flex-col h-full w-full min-w-0 animate-in fade-in-0 slide-in-from-end-4 duration-200 bg-background",
         isPanelTaxonCurrentRoot && "bg-primary/5"
       )}
     >
@@ -142,17 +142,13 @@ export function TaxonomyDetailsPanel({
         </div>
       </div>
 
-      {/* Navigate: compact tree (parent → current → children) with hierarchy padding and slide transitions */}
+      {/* Navigate: compact tree (parent → current → children) with hierarchy padding and slide transitions. overflow-visible so row slide animation is not clipped. */}
       <div className="flex-shrink-0 border-b border-border/50 bg-muted/20">
         <div className="px-2.5 pt-2 pb-1.5">
           <h4 className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/90 mb-1.5 px-0.5">
             Navigate
           </h4>
-          <div
-            className={cn(
-              "flex overflow-hidden",
-            )}
-          >
+          <div className="flex overflow-visible">
             <div className="flex-1 min-w-0 flex flex-col">
               {/* Parent row — default padding */}
               {directParent && (

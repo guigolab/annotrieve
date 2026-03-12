@@ -210,9 +210,7 @@ export function AssemblyDetailsView({ accession: accessionProp, onClose }: Assem
                             </Button>
                         )}
                         <Button
-                            disabled={selectedAssemblies.some(a => a.assembly_accession === assembly.assembly_accession)}
-                            variant="accent" className="gap-2" onClick={handleViewAnnotations}>Add to filters </Button>
-
+                            variant="accent" className="gap-2" onClick={handleViewAnnotations}>View annotations </Button>
                     </div>
                 </div>
 

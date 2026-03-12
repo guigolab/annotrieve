@@ -2,12 +2,12 @@ import type { Metadata } from "next";
 import localFont from "next/font/local";
 import { Fraunces, DM_Mono } from "next/font/google";
 import "./globals.css";
-import { AppHeader } from "@/components/app-header";
-import { FavoritesFloatingButton } from "@/components/favorites-floating-button";
-import { BetaBannerProvider } from "@/components/beta-banner-provider";
-import { ReactQueryProvider } from "@/components/providers/react-query-provider";
-import { ThemeProvider } from "@/components/theme-provider";
-import { InsdcModalProvider } from "@/components/providers/insdc-modal-provider"
+import { AppHeader } from "@/components/layout/app-header";
+import { FavoritesFloatingButton } from "@/components/layout/favorites-floating-button";
+import { BetaBannerProvider } from "@/components/layout/beta-banner-provider";
+import { ReactQueryProvider } from "@/components/layout/providers/react-query-provider";
+import { ThemeProvider } from "@/components/layout/theme-provider";
+import { InsdcModalProvider } from "@/components/layout/providers/insdc-modal-provider"
 import { Toaster } from "sonner";
 
 const geistSans = localFont({

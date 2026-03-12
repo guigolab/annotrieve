@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { getTaxon, getTaxonChildren, getTaxonAncestors, getTaxonRankFrequencies, listTaxons } from '@/lib/api/taxons'
 import type { TaxonRecord } from '@/lib/api/types'
-import type { TaxonSearchResult } from '@/components/taxon-search-bar'
+import type { TaxonSearchResult } from "@/components/search/taxon-search-bar"
 
 export interface TreeNode {
   taxid: string

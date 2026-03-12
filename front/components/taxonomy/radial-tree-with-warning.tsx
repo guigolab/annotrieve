@@ -54,27 +54,27 @@ export function RadialTreeWithWarning({
           <div className="flex items-start gap-3">
             <AlertTriangle className="h-6 w-6 text-amber-500 shrink-0 mt-0.5" />
             <div className="space-y-2">
-              <h3 className="font-semibold text-white/80">Large taxonomy — performance warning</h3>
+              <h3 className="font-semibold text-foreground">Large taxonomy — performance warning</h3>
               {scopeHint && (
-                <p className="text-xs text-white/50">
+                <p className="text-xs text-muted-foreground">
                   Viewing subtree under{" "}
-                  <span className="font-medium text-white/70">{scopeHint}</span>.
+                  <span className="font-medium text-foreground">{scopeHint}</span>.
                 </p>
               )}
-              <p className="text-sm text-white/50">
+              <p className="text-sm text-muted-foreground">
                 The selected leaf rank would show{" "}
-                <span className="font-semibold text-white/80">{leafCountAtSelectedRank.toLocaleString()} leaves</span>.
+                <span className="font-semibold text-foreground">{leafCountAtSelectedRank.toLocaleString()} leaves</span>.
                 Rendering the radial tree may freeze or crash the browser.
               </p>
-              <p className="text-sm text-white/50">
-                Try selecting a <span className="font-medium text-white/70">higher rank</span> in the Leaf rank menu
+              <p className="text-sm text-muted-foreground">
+                Try selecting a <span className="font-medium text-amber-600 dark:text-amber-400">higher rank</span> in the Leaf rank menu
                 (e.g. Class, Order, or Family) to reduce the number of leaves, or choose another rank from the rank
                 selector.
               </p>
               <Button
                 variant="outline"
                 size="sm"
-                className="border-amber-500/40 text-amber-400 hover:bg-amber-500/20"
+                className="border-amber-500/40 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20"
                 onClick={() => onAcknowledge(viewKey)}
               >
                 Show tree anyway

@@ -370,12 +370,12 @@ export function TaxonDetailsView({ taxid: taxidProp, onClose }: TaxonDetailsView
                 >
                   <Link href={`/taxonomy?taxon=${encodeURIComponent(taxon.taxid)}`}>
                     <Compass className="h-4 w-4" />
-                    Explore in Taxonomy
+                    Explore lineage
                   </Link>
                 </Button>
               )}
-              <Button disabled={selectedTaxons.some(t => t.taxid === taxon.taxid)} variant="accent" className="gap-2" onClick={handleViewAnnotations}>
-                Add to filters
+              <Button variant="accent" className="gap-2" onClick={handleViewAnnotations}>
+                View annotations
               </Button>
             </div>
           </div>

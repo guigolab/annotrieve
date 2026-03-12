@@ -2,14 +2,14 @@
 
 import { useState, useEffect, useRef } from "react"
 import { useSearchParams, useRouter } from "next/navigation"
-import { AnnotationsList } from "@/components/annotations-list"
-import { AnnotationsSidebarFilters } from "@/components/annotations-sidebar-filters"
-import { ActiveFilters } from "@/components/active-filters"
+import { AnnotationsList } from "@/components/annotations/annotations-list"
+import { AnnotationsSidebarFilters } from "@/components/annotations/annotations-sidebar-filters"
+import { ActiveFilters } from "@/components/annotations/active-filters"
 import { useUIStore } from "@/lib/stores/ui"
 import { useAnnotationsFiltersStore } from "@/lib/stores/annotations-filters"
 import { listAnnotations } from "@/lib/api/annotations"
 import type { AnnotationRecord } from "@/lib/api/types"
-import { RightSidebar } from "@/components/right-sidebar"
+import { RightSidebar } from "@/components/sidebar/right-sidebar"
 import { buildEntityDetailsUrl } from "@/lib/utils"
 
 export default function AnnotationsPage() {

@@ -4,11 +4,11 @@ import { useState, useEffect, useMemo, type ReactNode } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
-import { AnnotationsCompare } from "@/components/annotations-compare"
+import { AnnotationsCompare } from "@/components/annotations-compare/annotations-compare"
 import { listAnnotations } from "@/lib/api/annotations"
 import { useSelectedAnnotationsStore } from "@/lib/stores/selected-annotations"
 import type { Annotation } from "@/lib/types"
-import { RightSidebar } from "@/components/right-sidebar"
+import { RightSidebar } from "@/components/sidebar/right-sidebar"
 import { AlertCircle, ArrowLeft, GitCompare, Loader2, RefreshCw, Star } from "lucide-react"
 
 export default function FavoritesComparePage() {

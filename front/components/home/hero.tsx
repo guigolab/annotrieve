@@ -4,7 +4,7 @@ import { Globe, Network } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { useRouter } from "next/navigation"
-import { CommonSearchBar } from "@/components/common-search-bar"
+import { CommonSearchBar } from "@/components/search/common-search-bar"
 import type { CommonSearchResult } from "@/lib/types"
 import { listTaxons } from "@/lib/api/taxons"
 import { listAssemblies } from "@/lib/api/assemblies"
@@ -288,4 +288,3 @@ export function Hero() {
         </section>
     )
 }
-

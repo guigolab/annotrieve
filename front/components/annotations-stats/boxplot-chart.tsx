@@ -17,6 +17,12 @@ interface BoxplotChartProps {
   yAxisLabel?: string
   height?: number
   useLogScale?: boolean
+  /** Optional single horizontal reference line (legacy) */
+  referenceLine?: number | null
+  referenceColor?: string
+  referenceLabel?: string
+  /** Multiple reference lines (e.g. one per selected favorite) */
+  referenceLines?: { value: number; color: string; label: string }[]
 }
 
 interface BoxplotStats {
@@ -29,6 +35,7 @@ interface BoxplotStats {
   max: number
   outliers: number[]
   values: number[]
+  rawValues: number[] // always the original (pre-transform) values for tooltip display
 }
 
 export function BoxplotChart({
@@ -38,6 +45,10 @@ export function BoxplotChart({
   yAxisLabel = 'Value',
   height = 400,
   useLogScale = false,
+  referenceLine,
+  referenceColor = '#f59e0b',
+  referenceLabel = 'Favorites median',
+  referenceLines,
 }: BoxplotChartProps) {
   const svgRef = useRef<SVGSVGElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -91,15 +102,20 @@ export function BoxplotChart({
       return
     }
 
-    // Calculate statistics for each dataset
+    // Calculate statistics — when useLogScale, apply log₁₀ transform to the values
+    // so the y-axis stays linear but the distribution is shown in log space.
     const boxplotStats: BoxplotStats[] = validData.map(d => {
-      const sorted = [...d.values].sort((a, b) => a - b)
+      const rawValues = d.values
+      const processed = useLogScale
+        ? rawValues.filter(v => v > 0).map(v => Math.log10(v))
+        : rawValues
+      const sorted = [...processed].sort((a, b) => a - b)
       const q1 = d3.quantile(sorted, 0.25) || 0
-      const q2 = d3.quantile(sorted, 0.5) || 0 // median
+      const q2 = d3.quantile(sorted, 0.5) || 0
       const q3 = d3.quantile(sorted, 0.75) || 0
       const iqr = q3 - q1
-      const min = Math.max(sorted[0], q1 - 1.5 * iqr) // Lower whisker
-      const max = Math.min(sorted[sorted.length - 1], q3 + 1.5 * iqr) // Upper whisker
+      const min = Math.max(sorted[0], q1 - 1.5 * iqr)
+      const max = Math.min(sorted[sorted.length - 1], q3 + 1.5 * iqr)
       const outliers = sorted.filter(v => v < min || v > max)
 
       return {
@@ -111,11 +127,12 @@ export function BoxplotChart({
         q3,
         max,
         outliers,
-        values: d.values
+        values: processed,
+        rawValues,
       }
     })
 
-    // Get overall domain for y-axis
+    // Get overall domain for y-axis (always linear, over the processed values)
     const allValues = boxplotStats.flatMap(d => d.values)
     const yDomain = d3.extent(allValues) as [number, number]
 
@@ -148,15 +165,11 @@ export function BoxplotChart({
 
     const boxWidth = xScale.bandwidth()
 
-    const yScale = useLogScale
-      ? d3.scaleLog()
-          .domain([Math.max(yDomain[0], 0.001), yDomain[1]])
-          .range([chartHeight, 0])
-          .nice()
-      : d3.scaleLinear()
-          .domain(yDomain)
-          .range([chartHeight, 0])
-          .nice()
+    // Always linear — log is already baked into the values when useLogScale=true
+    const yScale = d3.scaleLinear()
+      .domain(yDomain)
+      .range([chartHeight, 0])
+      .nice()
 
     // Update or create grid
     let gridGroup = g.select<SVGGElement>('g.grid')
@@ -296,6 +309,7 @@ export function BoxplotChart({
       .ticks(5)
       .tickFormat((d) => {
         const value = d as number
+        if (useLogScale) return value.toFixed(1)
         if (value >= 1000000) return `${(value / 1000000).toFixed(1)}M`
         if (value >= 1000) return `${(value / 1000).toFixed(1)}k`
         return value.toFixed(0)
@@ -327,7 +341,7 @@ export function BoxplotChart({
         .attr("font-size", "12px")
         .attr("font-weight", "500")
     }
-    yAxisLabelEl.text(yAxisLabel)
+    yAxisLabelEl.text(useLogScale ? `log₁₀(${yAxisLabel})` : yAxisLabel)
 
     // Get or create boxplots container
     let boxplotsGroup = g.select<SVGGElement>('g.boxplots')
@@ -543,6 +557,38 @@ export function BoxplotChart({
         .attr("cy", (d: number) => yScale(d))
     })
 
+    // Horizontal reference line(s) — apply same transform
+    const linesToDraw = (referenceLines && referenceLines.length > 0)
+      ? referenceLines.map(({ value, color, label }) => ({
+          value: useLogScale && value > 0 ? Math.log10(value) : value,
+          color,
+          label,
+        }))
+      : referenceLine != null
+        ? [{ value: useLogScale && referenceLine > 0 ? Math.log10(referenceLine) : referenceLine, color: referenceColor, label: referenceLabel }]
+        : []
+    g.select("g.reference-lines").remove()
+    const refG = g.append("g").attr("class", "reference-lines")
+    linesToDraw.forEach(({ value, color, label }) => {
+      if (!isFinite(value)) return
+      const refY = yScale(value)
+      if (!isFinite(refY)) return
+      refG.append("line")
+        .attr("x1", 0).attr("x2", width)
+        .attr("y1", refY).attr("y2", refY)
+        .attr("stroke", color)
+        .attr("stroke-width", 1.5)
+        .attr("stroke-dasharray", "6,4")
+        .style("opacity", 0.85)
+      refG.append("text")
+        .attr("x", width - 4)
+        .attr("y", refY - 5)
+        .attr("text-anchor", "end")
+        .attr("fill", color)
+        .attr("font-size", "10px")
+        .text(label)
+    })
+
     // Tooltip - create once and reuse
     let tooltip = d3.select("body").select<HTMLDivElement>("div.boxplot-tooltip")
     if (tooltip.empty()) {
@@ -561,6 +607,13 @@ export function BoxplotChart({
     }
 
     // Add hover interactions
+    const fmtVal = (v: number) => {
+      // If log scale, back-transform to original value for display
+      const orig = useLogScale ? Math.pow(10, v) : v
+      if (orig >= 1_000_000) return `${(orig / 1_000_000).toFixed(2)}M`
+      if (orig >= 1_000) return `${(orig / 1_000).toFixed(2)}k`
+      return orig.toFixed(2)
+    }
     boxplotUpdate.selectAll("rect.box, line.median, line.lower-whisker, line.upper-whisker")
       .on("mouseover", function(event, d) {
         const stats = d as BoxplotStats
@@ -570,16 +623,16 @@ export function BoxplotChart({
 
         tooltip.html(`
           <div style="font-weight: 600; color: ${textColor}; margin-bottom: 4px;">
-            ${stats.label}
+            ${stats.label}${useLogScale ? ' <span style="font-weight:400;font-size:10px">(log₁₀ scale)</span>' : ''}
           </div>
           <div style="color: ${axisColor};">
-            <strong>Min:</strong> ${stats.min.toFixed(2)}<br/>
-            <strong>Q1:</strong> ${stats.q1.toFixed(2)}<br/>
-            <strong>Median:</strong> ${stats.median.toFixed(2)}<br/>
-            <strong>Q3:</strong> ${stats.q3.toFixed(2)}<br/>
-            <strong>Max:</strong> ${stats.max.toFixed(2)}<br/>
+            <strong>Min:</strong> ${fmtVal(stats.min)}<br/>
+            <strong>Q1:</strong> ${fmtVal(stats.q1)}<br/>
+            <strong>Median:</strong> ${fmtVal(stats.median)}<br/>
+            <strong>Q3:</strong> ${fmtVal(stats.q3)}<br/>
+            <strong>Max:</strong> ${fmtVal(stats.max)}<br/>
             <strong>Outliers:</strong> ${stats.outliers.length}<br/>
-            <strong>Count:</strong> ${stats.values.length}
+            <strong>Count:</strong> ${stats.rawValues.length}
           </div>
         `)
           .style("left", (event.pageX + 10) + "px")
@@ -591,7 +644,7 @@ export function BoxplotChart({
           .style("opacity", 0)
       })
 
-  }, [data, containerWidth, height, textColor, axisColor, gridColor, backgroundColor, xAxisLabel, yAxisLabel, title, isDark, useLogScale])
+  }, [data, containerWidth, height, textColor, axisColor, gridColor, backgroundColor, xAxisLabel, yAxisLabel, title, isDark, useLogScale, referenceLine, referenceColor, referenceLabel, referenceLines])
 
   // Cleanup tooltip on unmount
   useEffect(() => {

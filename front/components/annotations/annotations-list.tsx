@@ -263,13 +263,13 @@ export function AnnotationsList({ annotations, totalAnnotations, loading }: Anno
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => router.push('/annotations/stats')}
+                onClick={() => router.push('/annotations/analytics')}
                 className="h-9 px-2 sm:px-3 gap-1.5 sm:gap-2 shrink-0 relative"
-                title="View gene and transcript statistics"
+                title="Explore gene and transcript statistics, compare filter sets and favorites"
               >
                 <BarChart3 className="h-4 w-4 shrink-0" />
-                <span className="hidden md:inline">Stats</span>
-                <span className="md:hidden">Stats</span>
+                <span className="hidden md:inline">Analytics</span>
+                <span className="md:hidden">Analytics</span>
               </Button>
               <Button
                 variant="outline"

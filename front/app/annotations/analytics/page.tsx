@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useCallback } from "react"
 import { useRouter } from "next/navigation"
-import { ArrowLeft, TrendingUp, HelpCircle } from "lucide-react"
+import { ArrowLeft, TrendingUp, HelpCircle, ChevronDown } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { useAnnotationsFiltersStore } from "@/lib/stores/annotations-filters"
@@ -18,6 +18,8 @@ import {
 } from "@/components/annotations-analytics/analytics-sidebar"
 import { AnalyticsChartArea } from "@/components/annotations-analytics/analytics-chart-area"
 import { cn } from "@/lib/utils"
+import { formatLabel } from "@/lib/annotations-formatting"
+import type { FiltersState } from "@/lib/stores/annotations-filters"
 
 const MAX_SELECTED = 5
 const ANALYTICS_DESCRIPTION =
@@ -116,6 +118,16 @@ export default function AnnotationsAnalyticsPage() {
     [allEntries, selectedIdsSet]
   )
 
+  const getFiltersForEntry = useCallback(
+    (entryId: string): FiltersState | undefined => {
+      if (entryId === CURRENT_ENTRY_ID) {
+        return useAnnotationsFiltersStore.getState() as unknown as FiltersState
+      }
+      return subsets.find(s => s.id === entryId)?.filters as FiltersState | undefined
+    },
+    [subsets]
+  )
+
   // ── Params builders ──────────────────────────────────────────────────────────
   const buildCurrentParams = useCallback((): Record<string, any> => {
     const params = buildAnnotationsParams(false, [])
@@ -171,23 +183,16 @@ export default function AnnotationsAnalyticsPage() {
           </Popover>
         </div>
 
-        {/* Active filter set pills: current/all highlighted; others dot + neutral border */}
+        {/* Active filter set pills: toggleable to show filter content */}
         {selectedEntries.length > 0 && (
           <div className="flex flex-wrap items-center gap-2">
             {selectedEntries.map((entry) => (
-              <span
+              <FilterPill
                 key={entry.id}
-                className={cn(
-                  "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium",
-                  entry.isVirtual
-                    ? "border-dashed"
-                    : "border-border bg-muted/30"
-                )}
-                style={entry.isVirtual ? { borderColor: entry.color, backgroundColor: `${entry.color}18` } : undefined}
-              >
-                <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: entry.color }} />
-                <span className="truncate max-w-[120px]">{entry.name}</span>
-              </span>
+                entry={entry}
+                getFilters={getFiltersForEntry}
+                formatLabel={formatLabel}
+              />
             ))}
           </div>
         )}
@@ -219,6 +224,96 @@ export default function AnnotationsAnalyticsPage() {
           />
         </main>
       </div>
+    </div>
+  )
+}
+
+// ─── Filter pill with expandable filter details ──────────────────────────────
+
+function FilterPill({
+  entry,
+  getFilters,
+  formatLabel,
+}: {
+  entry: AnalyticsEntry
+  getFilters: (entryId: string) => FiltersState | undefined
+  formatLabel: (s: string) => string
+}) {
+  const filters = getFilters(entry.id)
+
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className={cn(
+            "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+            entry.isVirtual ? "border-dashed" : "border-border bg-muted/30"
+          )}
+          style={entry.isVirtual ? { borderColor: entry.color, backgroundColor: `${entry.color}18` } : undefined}
+          aria-label={`View filters for ${entry.name}`}
+        >
+          <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: entry.color }} />
+          <span className="truncate max-w-[120px]">{entry.name}</span>
+          <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-80 max-h-72 overflow-y-auto p-3 text-left" align="start">
+        <div className="text-xs font-semibold mb-2" style={{ color: entry.color }}>
+          {entry.name}
+        </div>
+        <CompactFilterList filters={filters} formatLabel={formatLabel} />
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+function CompactFilterList({
+  filters,
+  formatLabel,
+}: {
+  filters: FiltersState | undefined
+  formatLabel: (s: string) => string
+}) {
+  if (!filters) return <p className="text-xs text-muted-foreground">No filter details</p>
+  const parts: { label: string; items: string[] }[] = []
+  if (filters.selectedTaxons?.length)
+    parts.push({
+      label: "Taxons",
+      items: filters.selectedTaxons.map((t: { scientific_name?: string; taxid?: string }) => t.scientific_name || String(t.taxid ?? t)),
+    })
+  if (filters.selectedOrganisms?.length)
+    parts.push({
+      label: "Organisms",
+      items: filters.selectedOrganisms.map((o) => o.organism_name ?? o.taxid ?? String(o)),
+    })
+  if (filters.selectedBioprojects?.length)
+    parts.push({ label: "Bioprojects", items: filters.selectedBioprojects.map((b: { accession?: string }) => b.accession ?? String(b)) })
+  if (filters.selectedAssemblies?.length)
+    parts.push({ label: "Assemblies", items: filters.selectedAssemblies.map((a: { assembly_accession?: string }) => a.assembly_accession ?? String(a)) })
+  if (filters.selectedAssemblyLevels?.length)
+    parts.push({ label: "Levels", items: filters.selectedAssemblyLevels.map(formatLabel) })
+  if (filters.selectedAssemblyStatuses?.length)
+    parts.push({ label: "Statuses", items: filters.selectedAssemblyStatuses.map(formatLabel) })
+  if (filters.onlyRefGenomes) parts.push({ label: "RefSeq", items: ["Only"] })
+  if (filters.biotypes?.length) parts.push({ label: "Biotypes", items: filters.biotypes.map(formatLabel) })
+  if (filters.featureTypes?.length) parts.push({ label: "Feature types", items: filters.featureTypes.map(formatLabel) })
+  if (filters.featureSources?.length) parts.push({ label: "Sources", items: filters.featureSources.map(formatLabel) })
+  if (filters.pipelines?.length) parts.push({ label: "Pipelines", items: filters.pipelines.map(formatLabel) })
+  if (filters.providers?.length) parts.push({ label: "Providers", items: filters.providers.map(formatLabel) })
+  if (filters.databaseSources?.length) parts.push({ label: "Databases", items: filters.databaseSources.map(formatLabel) })
+  if (parts.length === 0) return <p className="text-xs text-muted-foreground">No filters applied</p>
+  return (
+    <div className="space-y-2 text-xs">
+      {parts.map(({ label, items }) => (
+        <div key={label}>
+          <span className="font-medium text-muted-foreground">{label}: </span>
+          <span className="text-foreground">
+            {items.slice(0, 5).join(", ")}
+            {items.length > 5 ? ` +${items.length - 5}` : ""}
+          </span>
+        </div>
+      ))}
     </div>
   )
 }

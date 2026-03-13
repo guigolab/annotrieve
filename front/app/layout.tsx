@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import localFont from "next/font/local";
 import { Fraunces, DM_Mono } from "next/font/google";
 import "./globals.css";
-import { AppHeader } from "@/components/layout/app-header";
+import { AppNavbar } from "@/components/layout/app-navbar";
 import { FavoritesFloatingButton } from "@/components/layout/favorites-floating-button";
 import { BetaBannerProvider } from "@/components/layout/beta-banner-provider";
 import { ReactQueryProvider } from "@/components/layout/providers/react-query-provider";
@@ -78,8 +78,8 @@ export default function RootLayout({
             <BetaBannerProvider>
               <InsdcModalProvider />
               <div className="min-h-screen flex flex-col h-full">
-                <AppHeader />
-                <main className="flex-1 overflow-y-auto">
+                <AppNavbar />
+                <main id="main-content" className="flex-1 overflow-y-auto">
                   {children}
                 </main>
                 <FavoritesFloatingButton />

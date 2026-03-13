@@ -89,7 +89,7 @@ function JBrowseContent() {
   if (!accession) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
+        <header className="text-center">
           <h1 className="text-2xl font-bold text-red-600 mb-4">Invalid Accession</h1>
           <p className="text-gray-600 mb-4">No assembly accession provided in URL parameters.</p>
           <Link href="/">
@@ -98,17 +98,20 @@ function JBrowseContent() {
               Back to Home
             </Button>
           </Link>
-        </div>
+        </header>
       </div>
     )
   }
 
   return (
     <div className="container mx-auto px-4 py-6 space-y-6">
-      <Button variant="ghost" className="gap-2" onClick={() => router.back()}>
-        <ArrowLeft className="h-4 w-4" />
-        Back
-      </Button>
+      <header className="flex flex-col gap-2">
+        <h1 className="sr-only">Genome Browser</h1>
+        <Button variant="ghost" className="gap-2 self-start" onClick={() => router.back()}>
+          <ArrowLeft className="h-4 w-4" />
+          Back
+        </Button>
+      </header>
         {/* Assembly and Annotations Info */}
         <Card className="overflow-hidden">
           <div 

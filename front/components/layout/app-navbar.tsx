@@ -12,18 +12,18 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { useUIStore } from "@/lib/stores/ui"
 
-export function AppHeader() {
+export function AppNavbar() {
   const theme = useUIStore((state) => state.theme)
   const toggleTheme = useUIStore((state) => state.toggleTheme)
 
   return (
-    <header className="border-b bg-card sticky top-0 z-10">
+    <nav aria-label="Main" className="border-b bg-card sticky top-0 z-10">
       <div className="flex items-center justify-center lg:justify-between flex-wrap px-6 py-4 gap-4">
         <Link href="/" className="flex items-center gap-2 hover:opacity-80 transition-opacity">
-          <h1 className="text-2xl font-bold text-foreground whitespace-nowrap">Annotrieve</h1>
+          <span className="text-2xl font-bold text-foreground whitespace-nowrap">Annotrieve</span>
         </Link>
 
-        <nav className="flex items-center gap-2">
+        <div className="flex items-center gap-2">
           <Button
             variant="ghost"
             size="icon"
@@ -37,7 +37,7 @@ export function AppHeader() {
               <Moon className="h-5 w-5" />
             )}
           </Button>
-          
+
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="icon" className="h-9 w-9">
@@ -88,8 +88,8 @@ export function AppHeader() {
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-        </nav>
+        </div>
       </div>
-    </header>
+    </nav>
   )
 }

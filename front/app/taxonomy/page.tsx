@@ -374,13 +374,12 @@ export default function TaxonomyPage() {
         {/* Title + help on the far left; strip centered */}
         <div className="absolute inset-0 z-20 pointer-events-none">
           {/* Title and help (click to show description) — far left; same height (50px) and padding as strip */}
-          <div
+          <header
             className={cn(
               GLASS_PANEL,
               GLASS_PANEL_PADDING,
               "pointer-events-auto absolute left-4 top-4 flex flex-wrap items-center gap-2 shadow-md h-[50px]"
             )}
-            role="group"
             aria-label="Taxonomy explorer"
           >
             <h1 className="text-sm font-medium text-foreground">
@@ -395,7 +394,7 @@ export default function TaxonomyPage() {
               <HelpCircle className="h-3.5 w-3.5" aria-hidden />
             </button>
             <TaxonomyHelpDialog open={helpDialogOpen} onOpenChange={setHelpDialogOpen} />
-          </div>
+          </header>
           {/* Rank reset toast: far right of strip row (same vertical alignment) */}
           <RankResetToast
             open={rankResetToastOpen}

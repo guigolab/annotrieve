@@ -246,9 +246,9 @@ export function AnnotationsList({ annotations, totalAnnotations, loading }: Anno
             <div className="flex items-center gap-2 sm:gap-3 flex-1 min-w-0 w-full md:w-auto">
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
-                  <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-foreground">
+                  <h2 className="text-xl sm:text-2xl font-semibold tracking-tight text-foreground">
                     Annotations
-                  </h1>
+                  </h2>
                 </div>
                 <p className="text-xs sm:text-sm text-muted-foreground">
                   {loading

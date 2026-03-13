@@ -349,9 +349,9 @@ export function TaxonDetailsView({ taxid: taxidProp, onClose }: TaxonDetailsView
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div className="flex items-center gap-3 flex-1 min-w-0">
             <div className="flex-1 min-w-0">
-              <h1 className="text-3xl font-bold text-foreground truncate">
+              <h2 className="text-3xl font-bold text-foreground truncate">
                 {taxon.scientific_name}
-              </h1>
+              </h2>
               <p className="text-base text-muted-foreground italic mt-1">
                 {taxon.rank}
               </p>

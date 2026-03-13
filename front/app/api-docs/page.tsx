@@ -209,6 +209,9 @@ export default function ApiDocsPage() {
 
   return (
     <div className="w-full min-h-full overflow-y-auto">
+      <header>
+        <h1 className="sr-only">API Documentation</h1>
+      </header>
       <div className="overflow-hidden" style={{ minHeight: '600px', backgroundColor: COLORS.background, borderColor: COLORS.border }}>
         <RedocStandalone
           spec={spec}

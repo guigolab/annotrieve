@@ -171,9 +171,9 @@ export function AssemblyDetailsView({ accession: accessionProp, onClose }: Assem
                 <div className="flex items-center justify-between gap-4 flex-wrap">
                     <div className="flex items-center gap-3 flex-1 min-w-0">
                         <div className="flex-1 min-w-0">
-                            <h1 className="text-3xl font-bold text-foreground truncate">
+                            <h2 className="text-3xl font-bold text-foreground truncate">
                                 {assembly.assembly_name || assembly.assembly_accession}
-                            </h1>
+                            </h2>
                             <p className="text-base text-muted-foreground mt-1">
                                 {assembly.assembly_accession}
                             </p>

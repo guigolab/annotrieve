@@ -170,10 +170,11 @@ export default function AnnotationsPage() {
         {/* Main Content */}
         <div className="flex-1 overflow-y-auto min-w-0 w-full">
           <div className="w-full flex flex-col">
-            {/* Active Filters */}
-            <div className="px-6 pt-6 pb-2">
+            {/* Page header and active filters */}
+            <header className="px-6 pt-6 pb-2">
+              <h1 className="sr-only">Annotations</h1>
               <ActiveFilters />
-            </div>
+            </header>
             {/* AnnotationsList - header aligns with sidebar header at pt-6 from top */}
             <AnnotationsList
               annotations={annotations}

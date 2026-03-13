@@ -31,6 +31,9 @@ export default function AnnotationsDetailsPage() {
   return (
     <div className="min-h-full overflow-y-auto bg-background">
       <div className="mx-auto w-full max-w-6xl px-4 py-6 space-y-4">
+        <header>
+          <h1 className="sr-only">Annotation details</h1>
+        </header>
 
         {activeView === "taxon" && taxonId && (
           <TaxonDetailsView taxid={taxonId} onClose={handleBack} />

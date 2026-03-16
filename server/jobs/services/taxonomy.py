@@ -9,6 +9,8 @@ import gzip
 from itertools import chain
 from pymongo.operations import UpdateOne
 
+
+
 def get_existing_lineages_dict(annotations: list[AnnotationToProcess])->dict[str, list[str]]:
     """
     Get the existing lineages for the taxids in the annotations. return a dict of taxid:lineage (from species to root)

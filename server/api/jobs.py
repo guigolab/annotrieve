@@ -47,3 +47,21 @@ async def trigger_update_analytics(x_auth_key: str = Header(..., alias="X-Auth-K
     Requires X-Auth-Key header for authentication.
     """
     return jobs_service.trigger_track_unique_users_by_country(x_auth_key)
+
+@router.post("/jobs/update/annotations/busco")
+async def trigger_update_annotations_busco(x_auth_key: str = Header(..., alias="X-Auth-Key")):
+    """
+    Trigger update annotations busco scores job
+    
+    Requires X-Auth-Key header for authentication.
+    """
+    return jobs_service.trigger_update_busco_scores(x_auth_key)
+
+@router.post("/jobs/update/taxons/busco")
+async def trigger_update_taxons_busco_scores(x_auth_key: str = Header(..., alias="X-Auth-Key")):
+    """
+    Trigger update taxons busco scores job
+    
+    Requires X-Auth-Key header for authentication.
+    """
+    return jobs_service.trigger_update_taxons_busco_scores(x_auth_key)

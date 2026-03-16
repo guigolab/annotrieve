@@ -1,5 +1,5 @@
 from datetime import datetime
-from .embedded_documents import AssemblyStats, SourceFileInfo, IndexedFileInfo, FeatureOverview, GFFStats, TaxonAnnotationStats
+from .embedded_documents import AssemblyStats, SourceFileInfo, IndexedFileInfo, FeatureOverview, GFFStats, TaxonAnnotationStats, BuscoScore
 from mongoengine import (
     Document,
     DynamicDocument,
@@ -7,6 +7,7 @@ from mongoengine import (
     ListField,
     IntField,
     EmbeddedDocumentField,
+    EmbeddedDocumentListField,
     URLField,
     DateTimeField,
 )
@@ -90,7 +91,6 @@ class BioProject(DynamicDocument):
         ]
     }
 
-
 class Organism(DynamicDocument):
     taxid = StringField(required=True, unique=True)
     organism_name = StringField(required=True)
@@ -121,7 +121,7 @@ class GenomicSequence(DynamicDocument):
     assembly_accession = StringField(required=True)
     assembly_name = StringField(required=True)
 
-    #SEQUENCE IDENTIFIERS
+    #SEQUENCE IDENTIFIERShttps://genome.crg.es/annotrieve/api/v0/annotations/frequencies/biotype?biotypes
     ucsc_style_name = StringField()
     genbank_accession = StringField()
     refseq_accession = StringField()
@@ -166,6 +166,10 @@ class GenomeAnnotation(DynamicDocument):
     organism_name = StringField(required=True)
     taxid = StringField(required=True)
     taxon_lineage = ListField(StringField(), required=True)
+
+    #BUSCO SCORE
+    busco = EmbeddedDocumentField(BuscoScore)
+
     #MAPPED REGIONS
     mapped_regions = ListField(StringField()) #Mapped seqid of the gff file (AnnotationSequenceMap ids)
 
@@ -198,6 +202,11 @@ class GenomeAnnotation(DynamicDocument):
             "source_file_info.release_date",
             "source_file_info.last_modified",
             "source_file_info.pipeline.name",
+            "busco.complete",
+            "busco.single_copy",
+            "busco.duplicated",
+            "busco.fragmented",
+            "busco.missing",  
         ]
     }
     def parse_iso_date(iso_date: str) -> datetime:
@@ -206,12 +215,6 @@ class GenomeAnnotation(DynamicDocument):
         """
         return datetime.fromisoformat(iso_date)
 
-    def to_iso_date(self, date: datetime) -> str:
-        """
-        Convert a datetime object to an ISO date string
-        """
-        return date.isoformat().split('T')[0]
-
 class TaxonNode(Document):
     children = ListField(StringField())
     scientific_name = StringField(required=True)
@@ -219,7 +222,7 @@ class TaxonNode(Document):
     rank = StringField()
     assemblies_count = IntField()
     annotations_count = IntField()
-    organisms_count = IntField() #how many leaves are down from this node
+    organisms_count = IntField() #how many leaves under this node
     stats = EmbeddedDocumentField(TaxonAnnotationStats)
     meta = {
         'indexes': [

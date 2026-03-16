@@ -1,15 +1,24 @@
 from celery import shared_task
 from db.models import GenomeAssembly, GenomeAnnotation,  Organism
 import os
+from db.embedded_documents import BuscoScore
 from .services import assembly as assembly_service
 from .services.utils import create_batches
 from .services import stats as stats_service
 from .services import annotation as annotation_service
 from .services import taxonomy as taxonomy_service
+import requests
+import csv
 
 TMP_DIR = "/tmp"
 
 ANNOTATIONS_PATH = os.getenv('LOCAL_ANNOTATIONS_DIR')
+
+BUSCO_VERSION = os.getenv('BUSCO_VERSION', '6.0.0')
+BUSCO_LINEAGE = os.getenv('BUSCO_LINEAGE', 'eukaryota_odb12')
+BUSCO_TSV_PATH = f"https://raw.githubusercontent.com/guigolab/BUSCO-tracker/refs/heads/main/BUSCO/{BUSCO_LINEAGE}/BUSCO.tsv"
+BUSCO_COUNT = os.getenv('BUSCO_COUNT', 129)
+
 
 @shared_task(name='update_taxon_stats', ignore_result=False)
 def update_taxon_stats():
@@ -17,7 +26,7 @@ def update_taxon_stats():
     Update the taxon stats for the annotations, nice and slow operation.
     Currently only gene counts are computed
     """
-    stats_service.update_taxon_gene_stats()
+    stats_service.update_taxon_gene_and_transcript_stats()
 
 
 def fetch_new_organisms_from_assembly_taxids(assembly_taxids: list[str]):
@@ -190,4 +199,72 @@ def update_records():
     # 2. Delete taxons without annotations
     # 3. Update parent taxons to remove deleted taxids from their children lists (via pull_all__children)
     stats_service.update_db_stats()
-    stats_service.update_taxon_gene_stats()
+    stats_service.update_taxon_gene_and_transcript_stats()
+
+
+@shared_task(name='update_busco_scores', ignore_result=False)
+def update_busco_scores():
+    """
+    Update the busco scores for the eukaryota_odb12 lineage
+    """
+
+
+    #fetch busco scores from the tsv
+    busco_scores: dict[str, BuscoScore] = {}
+    #fetch annotations without busco scores
+    annotations_without_busco_scores = set(
+        GenomeAnnotation.objects(busco__exists=False).scalar('annotation_id')
+    )
+    if not annotations_without_busco_scores:
+        print("No annotations without busco scores found, skipping busco scores update")
+        return
+    #
+    try:
+        with requests.get(BUSCO_TSV_PATH, stream=True) as r:
+            r.raise_for_status()
+            lines = (line.decode("utf-8") for line in r.iter_lines() if line)
+            reader = csv.DictReader(lines, delimiter="\t")
+            for row in reader:
+                annotation_id = row['annotation_id']
+                if annotation_id not in annotations_without_busco_scores:
+                    continue
+                busco_scores[annotation_id] = BuscoScore(
+                    busco_lineage=BUSCO_LINEAGE,
+                    busco_version=BUSCO_VERSION,
+                    total_count=BUSCO_COUNT,
+                    complete=row['complete'],
+                    single_copy=row['single'],
+                    duplicated=row['duplicated'],
+                    fragmented=row['fragmented'],
+                    missing=row['missing']
+                )
+    except Exception as e:
+        print(f"Unexpected error occurred while fetching TSV file: {e}")
+        return
+    
+    ann_ids = list(busco_scores.keys())
+    if not ann_ids:
+        print("No annotations found, skipping busco scores update")
+        return
+    coll = GenomeAnnotation.objects(annotation_id__in=ann_ids)
+    taxa_lineages_set = set()
+    updated_count = 0
+    for ann in coll:
+        busco_score = busco_scores.get(ann.annotation_id)
+        if not busco_score:
+            continue
+        taxa_lineages_set.update(ann.taxon_lineage)
+        ann.modify(busco=busco_score)
+        updated_count += 1
+
+    stats_service.update_taxons_busco_scores(BUSCO_LINEAGE, BUSCO_COUNT)
+
+    print(f"Busco scores updated for {updated_count} annotations")
+
+
+@shared_task(name='update_taxons_busco_scores', ignore_result=False)
+def update_taxons_busco_scores_job():
+    """
+    Update the taxons busco scores
+    """
+    stats_service.update_taxons_busco_scores(BUSCO_LINEAGE, BUSCO_COUNT)

@@ -74,7 +74,15 @@ def get_flattened_tree(format: str = "json"):
         "rank",
         "coding_mean_count",
         "non_coding_mean_count",
-        "pseudogene_mean_count"
+        "pseudogene_mean_count",
+        "mRNA_mean_count",
+        "lncRNA_mean_count",
+        "tRNA_mean_count",
+        "miRNA_mean_count",
+        "busco_single_copy_mean",
+        "busco_duplicated_mean",
+        "busco_fragmented_mean",
+        "busco_missing_mean",
     ]
 
     pipeline = [
@@ -89,6 +97,14 @@ def get_flattened_tree(format: str = "json"):
             "coding_mean_count": {"$ifNull": ["$stats.genes.coding.count.mean", 0]},
             "non_coding_mean_count": {"$ifNull": ["$stats.genes.non_coding.count.mean", 0]},
             "pseudogene_mean_count": {"$ifNull": ["$stats.genes.pseudogene.count.mean", 0]},
+            "mRNA_mean_count": {"$ifNull": ["$stats.transcripts.mRNA.count.mean", 0]},
+            "lncRNA_mean_count": {"$ifNull": ["$stats.transcripts.lncRNA.count.mean", 0]},
+            "tRNA_mean_count": {"$ifNull": ["$stats.transcripts.tRNA.count.mean", 0]},
+            "miRNA_mean_count": {"$ifNull": ["$stats.transcripts.miRNA.count.mean", 0]},
+            "busco_single_copy_mean": {"$ifNull": ["$stats.busco.single_copy.mean", 0]},
+            "busco_duplicated_mean": {"$ifNull": ["$stats.busco.duplicated.mean", 0]},
+            "busco_fragmented_mean": {"$ifNull": ["$stats.busco.fragmented.mean", 0]},
+            "busco_missing_mean": {"$ifNull": ["$stats.busco.missing.mean", 0]},
             "_id": 0
         }}
     ]
@@ -112,7 +128,15 @@ def get_flattened_tree(format: str = "json"):
                     str(doc.get("rank", "")).replace("\t", " ").replace("\n", " "),
                     str(doc.get("coding_mean_count", 0)),
                     str(doc.get("non_coding_mean_count", 0)),
-                    str(doc.get("pseudogene_mean_count", 0))
+                    str(doc.get("pseudogene_mean_count", 0)),
+                    str(doc.get("mRNA_mean_count", 0)),
+                    str(doc.get("lncRNA_mean_count", 0)),
+                    str(doc.get("tRNA_mean_count", 0)),
+                    str(doc.get("miRNA_mean_count", 0)),
+                    str(doc.get("busco_single_copy_mean", 0)),
+                    str(doc.get("busco_duplicated_mean", 0)),
+                    str(doc.get("busco_fragmented_mean", 0)),
+                    str(doc.get("busco_missing_mean", 0)),
                 ]
                 buffer.append("\t".join(row_values) + "\n")
                 if len(buffer) >= TSV_BUFFER_SIZE:
@@ -144,6 +168,14 @@ def get_flattened_tree(format: str = "json"):
             doc.get("rank"),
             doc.get("coding_mean_count", 0),
             doc.get("non_coding_mean_count", 0),
-            doc.get("pseudogene_mean_count", 0)
+            doc.get("pseudogene_mean_count", 0),
+            doc.get("mRNA_mean_count", 0),
+            doc.get("lncRNA_mean_count", 0),
+            doc.get("tRNA_mean_count", 0),
+            doc.get("miRNA_mean_count", 0),
+            doc.get("busco_single_copy_mean", 0),
+            doc.get("busco_duplicated_mean", 0),
+            doc.get("busco_fragmented_mean", 0),
+            doc.get("busco_missing_mean", 0),
         ])
     return {"fields": fields, "rows": rows}

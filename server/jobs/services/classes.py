@@ -1,6 +1,6 @@
 from array import array
-from db.models import GenomeAnnotation, AnnotationError, Organism, TaxonNode, GenomicSequence, GenomeAssembly, BioProject   
-from db.embedded_documents import SourceFileInfo, PipelineInfo, AssemblyStats
+from db.models import GenomeAnnotation, AnnotationError, Organism, TaxonNode, GenomicSequence, GenomeAssembly   
+from db.embedded_documents import SourceFileInfo, PipelineInfo, AssemblyStats, BuscoScore
 import re
 
 class AnnotationToProcess:
@@ -399,3 +399,27 @@ class MiscFeature:
         self.mean = (self.mean * (self.count - 1) + length) / self.count
         self.min = min(self.min, length)
         self.max = max(self.max, length)
+
+    __slots__ = ("annotation_id",  "complete", "single_copy", "duplicated", "fragmented", "missing")
+    def __init__(self, annotation_id: str, lineage: str, complete: float, single_copy: float, duplicated: float, fragmented: float, missing: float, busco_count: int):
+        self.annotation_id = annotation_id
+        self.complete = complete
+        self.single_copy = single_copy
+        self.duplicated = duplicated
+        self.fragmented = fragmented
+        self.missing = missing
+
+    def to_busco_score(self, busco_version: str, busco_lineage: str, busco_count: int) -> BuscoScore:
+        """
+        Convert the BuscoScoreToProcess object to a BuscoScore document
+        """
+        return BuscoScore(
+            busco_lineage=busco_lineage,
+            busco_version=busco_version,
+            total_count=busco_count,
+            complete=self.complete,
+            single_copy=self.single_copy,
+            duplicated=self.duplicated,
+            fragmented=self.fragmented,
+            missing=self.missing,
+        )

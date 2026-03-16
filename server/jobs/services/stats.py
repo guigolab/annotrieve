@@ -1,5 +1,5 @@
 from db.models import GenomeAssembly, GenomeAnnotation, Organism, TaxonNode, BioProject
-from db.embedded_documents import DistributionStats, TaxonAnnotationStats, TaxonGeneStats, TaxonGeneCategoryStats
+from db.embedded_documents import DistributionStats, TaxonAnnotationStats, TaxonGeneStats, TaxonGeneCategoryStats, TranscriptTypeStats, TaxonTranscriptTypeStats, TaxonBuscoScore
 import math
 from typing import List
 from collections import defaultdict
@@ -172,62 +172,144 @@ def compute_distribution_stats(values: List[int]) -> DistributionStats:
         n=n,
     )
 
-def update_taxon_gene_stats():
+def _extract_transcript_counts(transcript_type_stats, taxid, taxon_transcript_counts):
+    """Extract total_count per transcript type; supports lnc_RNA variant for lncRNA."""
+    if not transcript_type_stats:
+        return
+    for t_type in ['mRNA', 'lncRNA', 'miRNA', 'tRNA']:
+        #merge the 2 lncRNA types into one
+        if t_type == 'lncRNA':
+            type_stats = transcript_type_stats.get('lnc_RNA') or transcript_type_stats.get('lncRNA')
+        else:
+            type_stats = transcript_type_stats.get(t_type)
+        if type_stats and type_stats.get('total_count') is not None:
+            taxon_transcript_counts[taxid][t_type].append(type_stats['total_count'])
+
+def _extract_busco_scores(busco_score, taxid, taxon_busco_scores):
+    """Extract scores for single_copy, duplicated, fragmented and missing"""
+    if not busco_score:
+        return
+    for busco_type in [ 'single_copy', 'duplicated', 'fragmented', 'missing', 'complete']:
+        type_stats = busco_score.get(busco_type)
+        taxon_busco_scores[taxid][busco_type].append(type_stats)
+
+
+
+def update_taxon_gene_and_transcript_stats():
     """
-    Update the taxon gene stats for the taxon nodes.
-    Uses MongoDB aggregation to efficiently collect all gene stats in a single pass.
+    Update both gene and transcript stats for taxon nodes in one pass.
+    Single aggregation over GenomeAnnotation and single batched update over TaxonNode.
     """
-    print("Updating taxon gene stats")
-    
-    # Use aggregation to collect all gene category counts grouped by taxid
-    # This avoids O(n) queries where n is the number of taxons
-    taxon_counts = defaultdict(lambda: {"coding": [], "non_coding": [], "pseudogene": []})
-    
-    # Aggregation pipeline to unwind taxon_lineage and extract gene_category_stats
+    print("Updating taxon gene and transcript stats")
+
+    gene_categories = ("coding", "non_coding", "pseudogene")
+    transcript_types = ("mRNA", "lncRNA", "miRNA", "tRNA")
+
+    taxon_gene_counts = defaultdict(lambda: {c: [] for c in gene_categories})
+    taxon_transcript_counts = defaultdict(lambda: {t: [] for t in transcript_types})
+
     pipeline = [
         {"$match": {
             "taxon_lineage": {"$ne": [], "$exists": True},
-            "features_statistics.gene_category_stats": {"$exists": True}
+            "$or": [
+                {"features_statistics.gene_category_stats": {"$exists": True}},
+                {"features_statistics.transcript_type_stats": {"$exists": True}}
+            ]
         }},
         {"$unwind": "$taxon_lineage"},
         {"$project": {
             "taxid": "$taxon_lineage",
-            "gene_category_stats": "$features_statistics.gene_category_stats"
+            "gene_category_stats": "$features_statistics.gene_category_stats",
+            "transcript_type_stats": "$features_statistics.transcript_type_stats"
         }},
-        {"$match": {"gene_category_stats": {"$ne": None}}}
+        {"$match": {
+            "$or": [
+                {"gene_category_stats": {"$ne": None}},
+                {"transcript_type_stats": {"$ne": None}}
+            ]
+        }}
     ]
-    
-    # Process annotations and collect counts by taxid
+
     for doc in GenomeAnnotation.objects.aggregate(*pipeline):
         taxid = doc.get("taxid")
-        gene_stats = doc.get("gene_category_stats")
-        
-        if not taxid or not gene_stats:
+        if not taxid:
             continue
-        
-        # Extract total_count for each category
-        for category in ['coding', 'non_coding', 'pseudogene']:
-            category_stats = gene_stats.get(category)
-            if category_stats and category_stats.get('total_count'):
-                taxon_counts[taxid][category].append(category_stats['total_count'])
-    
-    # Update taxon nodes in batches
+        gene_stats = doc.get("gene_category_stats")
+        if gene_stats:
+            for category in gene_categories:
+                cat_stats = gene_stats.get(category)
+                if cat_stats and cat_stats.get("total_count") is not None:
+                    taxon_gene_counts[taxid][category].append(cat_stats["total_count"])
+        _extract_transcript_counts(
+            doc.get("transcript_type_stats"), taxid, taxon_transcript_counts
+        )
+
     batch_size = 1000
-    
-    # Also get all taxon taxids that might not have any annotations
-    all_taxon_taxids = set(TaxonNode.objects().scalar('taxid'))
-    
-    for batch_taxids in create_batches(list(all_taxon_taxids), batch_size):
+    all_taxon_taxids = list(TaxonNode.objects().scalar("taxid"))
+
+    for batch_taxids in create_batches(all_taxon_taxids, batch_size):
         taxon_nodes_batch = TaxonNode.objects(taxid__in=batch_taxids)
         for taxon in taxon_nodes_batch:
-            counts = taxon_counts.get(taxon.taxid, {"coding": [], "non_coding": [], "pseudogene": []})
-            
-            coding = TaxonGeneCategoryStats(count=compute_distribution_stats(counts.get("coding", [])))
-            non_coding = TaxonGeneCategoryStats(count=compute_distribution_stats(counts.get("non_coding", [])))
-            pseudogene = TaxonGeneCategoryStats(count=compute_distribution_stats(counts.get("pseudogene", [])))
-            
-            taxon.modify(stats=TaxonAnnotationStats(
-                genes=TaxonGeneStats(coding=coding, non_coding=non_coding, pseudogene=pseudogene)
-            ))
+            g = taxon_gene_counts.get(taxon.taxid, {c: [] for c in gene_categories})
+            genes = TaxonGeneStats(
+                coding=TaxonGeneCategoryStats(count=compute_distribution_stats(g.get("coding", []))),
+                non_coding=TaxonGeneCategoryStats(count=compute_distribution_stats(g.get("non_coding", []))),
+                pseudogene=TaxonGeneCategoryStats(count=compute_distribution_stats(g.get("pseudogene", []))),
+            )
+            t = taxon_transcript_counts.get(taxon.taxid, {ty: [] for ty in transcript_types})
+            transcripts = TranscriptTypeStats(
+                mRNA=TaxonTranscriptTypeStats(count=compute_distribution_stats(t.get("mRNA", []))),
+                lncRNA=TaxonTranscriptTypeStats(count=compute_distribution_stats(t.get("lncRNA", []))),
+                miRNA=TaxonTranscriptTypeStats(count=compute_distribution_stats(t.get("miRNA", []))),
+                tRNA=TaxonTranscriptTypeStats(count=compute_distribution_stats(t.get("tRNA", []))),
+            )
+            taxon.modify(stats=TaxonAnnotationStats(genes=genes, transcripts=transcripts))
 
-    print("Taxon gene stats updated")
+    print("Taxon gene and transcript stats updated")
+
+
+def update_taxons_busco_scores(busco_lineage: str, busco_count: int) -> None:
+    """
+    Update the busco scores from the taxids (lineages) of the annotations
+    
+    """
+    taxon_busco_scores = defaultdict(lambda: {t: [] for t in ['single_copy', 'duplicated', 'fragmented', 'missing', 'complete']})
+    pipeline = [
+        {"$match": {
+            "busco": {
+                "$exists": True
+            }
+        }},
+        {"$unwind": "$taxon_lineage"},
+        {"$project": {
+            "taxid": "$taxon_lineage",
+            "busco": "$busco"
+        }},
+    ]
+
+    for doc in GenomeAnnotation.objects.aggregate(*pipeline):
+        taxid = doc.get("taxid")
+        if not taxid:
+            continue
+        busco = doc.get("busco")
+        if not busco:
+            continue
+        _extract_busco_scores(busco, taxid, taxon_busco_scores)
+
+    print(f"Found {len(taxon_busco_scores)} taxon busco scores")
+    for taxon_node in TaxonNode.objects():
+        taxid = taxon_node.taxid
+        busco_score = taxon_busco_scores.get(taxid)
+        if not busco_score:
+            continue
+        busco_score_doc = TaxonBuscoScore(single_copy=compute_distribution_stats(busco_score.get("single_copy", [])),
+            duplicated=compute_distribution_stats(busco_score.get("duplicated", [])),
+            fragmented=compute_distribution_stats(busco_score.get("fragmented", [])),
+            missing=compute_distribution_stats(busco_score.get("missing", [])),
+            complete=compute_distribution_stats(busco_score.get("complete", [])),
+            busco_lineage=busco_lineage,
+            total_count=busco_count,
+            )
+
+        taxon_node.modify(stats__busco=busco_score_doc)
+    print("Taxon busco scores updated")

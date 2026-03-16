@@ -45,7 +45,8 @@ def import_annotations():
         new_annotations.extend(filtered_annotations)
     
     if DEV:
-        new_annotations = random.sample(new_annotations, 1000)
+        #GenomeAnnotation.drop_collection()
+        new_annotations = random.sample(new_annotations, 30)
     print(f"Found {len(new_annotations)} new annotations to process")
     # LINEAGE HANDLING STEP
     valid_lineages = taxonomy_service.handle_taxonomy(new_annotations, TMP_DIR) #lineages saved in the database, return a dict of taxid:lineage
@@ -86,7 +87,7 @@ def import_annotations():
     
     #UPDATE DB AND TAXON GENE STATS
     stats_service.update_db_stats()
-    stats_service.update_taxon_gene_stats()
+    stats_service.update_taxon_gene_and_transcript_stats()
     print("Import annotations job successfully finished")
 
 def process_annotations_pipeline(annotations: list[AnnotationToProcess], valid_lineages: dict[str, list[str]], existing_annotation_md5s: list[str]) -> list[GenomeAnnotation]:

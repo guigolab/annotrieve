@@ -18,4 +18,9 @@ beat_schedule = {
         'schedule': crontab(hour=0, minute=0),  # Every day at midnight
         'options': {'expires': 3600}  # Expire after 1 hour if not started
     },
+    'update-busco-scores': {
+        'task': 'update_busco_scores',  # Task name as defined in @shared_task decorator
+        'schedule': crontab(day_of_week=0, hour=4, minute=0),  # Every Sunday at 04:00
+        'options': {'expires': 3600}  # Expire after 1 hour if not started
+    },
 } 

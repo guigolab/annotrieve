@@ -33,6 +33,20 @@ class AssemblyStats(EmbeddedDocument):
     number_of_organelles = IntField()
 
 
+class BuscoScore(EmbeddedDocument):
+    """
+    This class is used to store the busco score of the assembly.
+    """
+    busco_lineage = StringField() #lineage of the busco genes (eukaryota_odb12, etc.)
+    busco_version = StringField() #version of busco used
+    total_count = IntField() #number of busco genes in the lineage
+    complete = FloatField() #percentage of complete genes
+    single_copy = FloatField() #percentage of single copy genes
+    duplicated = FloatField() #percentage of duplicated genes
+    fragmented = FloatField() #percentage of fragmented genes
+    missing = FloatField() #percentage of missing genes
+
+
 class PipelineInfo(EmbeddedDocument):
     name = StringField()
     version = StringField()
@@ -158,10 +172,46 @@ class DistributionStats(EmbeddedDocument):
 class TaxonGeneCategoryStats(EmbeddedDocument):
     count = EmbeddedDocumentField(DistributionStats)
 
+class TaxonTranscriptTypeStats(EmbeddedDocument):
+    count = EmbeddedDocumentField(DistributionStats)
+
+class TaxonBuscoScore(EmbeddedDocument):
+    """
+    This class is used to store the busco distribution stats of the taxon.
+    """
+    single_copy = EmbeddedDocumentField(DistributionStats)
+    duplicated = EmbeddedDocumentField(DistributionStats)
+    fragmented = EmbeddedDocumentField(DistributionStats)
+    missing = EmbeddedDocumentField(DistributionStats)
+    complete = EmbeddedDocumentField(DistributionStats)
+    busco_lineage = StringField()
+    busco_version = StringField()
+    total_count = IntField()
+
+
+
 class TaxonGeneStats(EmbeddedDocument):
+    # coding genes
     coding = EmbeddedDocumentField(TaxonGeneCategoryStats)
+    # non-coding genes
     non_coding = EmbeddedDocumentField(TaxonGeneCategoryStats)
+    # pseudogenes
     pseudogene = EmbeddedDocumentField(TaxonGeneCategoryStats)
+
+class TranscriptTypeStats(EmbeddedDocument):
+    """
+    we hard code them (yes I know it's not ideal)
+    """
+    #messenger RNA
+    mRNA = EmbeddedDocumentField(TaxonTranscriptTypeStats)
+    #long non-coding transcripts
+    lncRNA = EmbeddedDocumentField(TaxonTranscriptTypeStats)
+    #small nuclear RNA
+    tRNA = EmbeddedDocumentField(TaxonTranscriptTypeStats)
+    #microRNA
+    miRNA = EmbeddedDocumentField(TaxonTranscriptTypeStats)
 
 class TaxonAnnotationStats(EmbeddedDocument):
     genes = EmbeddedDocumentField(TaxonGeneStats)
+    transcripts = EmbeddedDocumentField(TranscriptTypeStats)
+    busco = EmbeddedDocumentField(TaxonBuscoScore)

@@ -2,7 +2,7 @@ from fastapi import HTTPException
 import os
 import secrets
 from jobs.import_annotations import import_annotations
-from jobs.updates import update_taxon_stats, update_records
+from jobs.updates import update_taxon_stats, update_records, update_busco_scores, update_taxons_busco_scores_job
 from jobs.track_users import track_unique_users_by_country
 
 
@@ -47,3 +47,20 @@ def trigger_update_taxonomy_stats(auth_key: str):
     _validate_auth_key(auth_key)
     update_taxon_stats.delay()
     return {"message": "Update taxonomy stats task triggered"}
+
+def trigger_update_busco_scores(auth_key: str):
+    """
+    Update the busco scores for the eukaryota_odb12 lineage
+    """
+    _validate_auth_key(auth_key)
+    update_busco_scores.delay()
+    return {"message": "Update busco scores task triggered"}
+
+
+def trigger_update_taxons_busco_scores(auth_key: str):
+    """
+    Update the taxons busco scores
+    """
+    _validate_auth_key(auth_key)
+    update_taxons_busco_scores_job.delay()
+    return {"message": "Update taxons busco scores task triggered"}

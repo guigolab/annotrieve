@@ -15,6 +15,7 @@ import { useFlattenedTreeStore, useRankDistribution, useRootOrganismsCount, getR
 
 import { type BreadcrumbEntry } from "@/components/taxonomy/floating-breadcrumb"
 import { FloatingVizStrip } from "@/components/taxonomy/floating-viz-strip"
+import { BottomStackVizStrip } from "@/components/taxonomy/bottom-stack-viz-strip"
 import { RankResetToast } from "@/components/taxonomy/rank-reset-toast"
 
 import type { TaxonRecord } from "@/lib/api/types"
@@ -401,6 +402,12 @@ export default function TaxonomyPage() {
             onClose={() => setRankResetToastOpen(false)}
             className="absolute right-4 top-4"
           />
+          {/* Bottom strip: stack chart options (Tree + Outliers views only) */}
+          <BottomStackVizStrip
+            visible={activeTab === "constant-branch" || activeTab === "gene-stack"}
+            showLabels={showLabels}
+            onShowLabelsChange={setShowLabels}
+          />
           {/* Strip: draggable, centered by default */}
           <FloatingVizStrip
               currentDisplayTaxon={currentDisplayTaxon}
@@ -430,14 +437,12 @@ export default function TaxonomyPage() {
                   onBlur={() => setShowSearchResults(false)}
                 />
               }
-              showLabels={showLabels}
-              onShowLabelsChange={setShowLabels}
             />
         </div>
 
-        {/* Right drawer: absolute over the canvases (taxonomy-popover so outside-click does not clear selection on panel interaction). overflow-hidden clips the panel slide-in so no partial overlay. */}
+        {/* Right drawer: absolute over the canvases (taxonomy-popover so outside-click does not clear selection on panel interaction). */}
         {selectedNode && (
-          <div className="taxonomy-popover absolute right-0 top-0 bottom-0 z-30 w-80 xl:w-96 border-l border-border bg-background shadow-xl flex flex-col min-h-0 overflow-hidden">
+          <div className="taxonomy-popover absolute right-0 top-0 bottom-0 z-30 w-80 xl:w-96 min-w-0 border-l border-border bg-background shadow-xl flex flex-col min-h-0 overflow-hidden">
             <TaxonomyDetailsPanel
               selectedTaxon={{
                 taxid: selectedNode.taxid,

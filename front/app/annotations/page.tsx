@@ -10,6 +10,7 @@ import { useAnnotationsFiltersStore } from "@/lib/stores/annotations-filters"
 import { listAnnotations } from "@/lib/api/annotations"
 import type { AnnotationRecord } from "@/lib/api/types"
 import { RightSidebar } from "@/components/sidebar/right-sidebar"
+import { FavoritesFloatingButton } from "@/components/layout/favorites-floating-button"
 import { buildEntityDetailsUrl } from "@/lib/utils"
 
 export default function AnnotationsPage() {
@@ -129,6 +130,7 @@ export default function AnnotationsPage() {
 
   return (
     <>
+      <FavoritesFloatingButton />
       <RightSidebar />
       <div className="relative flex h-[calc(100vh-4rem)] overflow-hidden">
         {/* Overlay - visible when sidebar is open on mobile */}

@@ -43,6 +43,14 @@ function buildFlatNodesFromHierarchy(
       coding_count: node.data.coding_count,
       non_coding_count: node.data.non_coding_count,
       pseudogene_count: node.data.pseudogene_count,
+      mrna_count: node.data.mrna_count ?? 0,
+      lncrna_count: node.data.lncrna_count ?? 0,
+      trna_count: node.data.trna_count ?? 0,
+      mirna_count: node.data.mirna_count ?? 0,
+      busco_single_copy_mean: node.data.busco_single_copy_mean ?? 0,
+      busco_duplicated_mean: node.data.busco_duplicated_mean ?? 0,
+      busco_fragmented_mean: node.data.busco_fragmented_mean ?? 0,
+      busco_missing_mean: node.data.busco_missing_mean ?? 0,
     })
   })
   return result
@@ -171,6 +179,14 @@ export const useFlattenedTreeStore = create<FlattenedTreeState>((set, get) => ({
           coding_count: rootCandidates.reduce((sum, n) => sum + n.coding_count, 0),
           non_coding_count: rootCandidates.reduce((sum, n) => sum + n.non_coding_count, 0),
           pseudogene_count: rootCandidates.reduce((sum, n) => sum + n.pseudogene_count, 0),
+          mrna_count: rootCandidates.reduce((sum, n) => sum + (n.mrna_count ?? 0), 0),
+          lncrna_count: rootCandidates.reduce((sum, n) => sum + (n.lncrna_count ?? 0), 0),
+          trna_count: rootCandidates.reduce((sum, n) => sum + (n.trna_count ?? 0), 0),
+          mirna_count: rootCandidates.reduce((sum, n) => sum + (n.mirna_count ?? 0), 0),
+          busco_single_copy_mean: 0,
+          busco_duplicated_mean: 0,
+          busco_fragmented_mean: 0,
+          busco_missing_mean: 0,
         })
       } else {
         flatNodes = fetched

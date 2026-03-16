@@ -35,6 +35,17 @@ export interface Pagination<T> {
   results: T[]
 }
 
+export interface BuscoScore {
+  busco_lineage?: string
+  busco_version?: string
+  total_count?: number
+  complete?: number
+  single_copy?: number
+  duplicated?: number
+  fragmented?: number
+  missing?: number
+}
+
 export interface AnnotationRecord {
   md5_checksum?: string
   annotation_id: string
@@ -43,6 +54,7 @@ export interface AnnotationRecord {
   assembly_accession?: string
   assembly_name?: string
   taxid?: string
+  busco?: BuscoScore
   source_file_info?: SourceFileInfo
   features_statistics?: {
     // New structure - primary fields to use

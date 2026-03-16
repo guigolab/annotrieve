@@ -59,7 +59,9 @@ export function AssemblyDetailsView({ accession: accessionProp, onClose }: Assem
 
     const handleViewAnnotations = () => {
         if (!assembly) return
-        setSelectedAssemblies([...selectedAssemblies, assembly])
+        if(!selectedAssemblies.some(a => a.assembly_accession === assembly.assembly_accession)) {
+            setSelectedAssemblies([...selectedAssemblies, assembly])
+        }
         router.push('/annotations')
         onClose?.()
     }

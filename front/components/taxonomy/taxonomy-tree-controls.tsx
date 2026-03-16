@@ -32,6 +32,25 @@ export function getTreeGeneColors(isDark: boolean) {
   }
 }
 
+export function getTreeTranscriptColors(isDark: boolean) {
+  return {
+    mRNA: isDark ? "#34d399" : "#10b981",
+    lncRNA: isDark ? "#f472b6" : "#ec4899",
+    tRNA: isDark ? "#38bdf8" : "#0ea5e9",
+    miRNA: isDark ? "#a78bfa" : "#8b5cf6",
+  }
+}
+
+// Canonical BUSCO score colors (matches file-overview-dialog/busco-score-section.tsx)
+export function getTreeBuscoColors(_isDark?: boolean) {
+  return {
+    single_copy: "#56A0D3",   // Complete (C) & single-copy (S)
+    duplicated: "#1E88B4",   // Complete (C) & duplicated (D)
+    fragmented: "#F4C63D",   // Fragmented (F)
+    missing: "#D64545",      // Missing (M)
+  }
+}
+
 interface TaxonomyTreeControlsProps {
   rootTaxid?: string | null
   selectedRank: TreeRankOption

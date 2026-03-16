@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useRef, useCallback } from "react"
-import { ChevronDown, Network, BookOpen, SlidersHorizontal, GripVertical, LayoutDashboard, AlertTriangle } from "lucide-react"
+import { ChevronDown, Network, BookOpen, SlidersHorizontal, GripVertical, LayoutDashboard, BarChart2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   Popover,
@@ -9,7 +9,9 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover"
 import { useUIStore } from "@/lib/stores/ui"
-import { getTreeGeneColors } from "./taxonomy-tree-controls"
+import { useTaxonomyGeneTypesStore } from "@/lib/stores/taxonomy-gene-types"
+import { getTreeGeneColors, getTreeTranscriptColors, getTreeBuscoColors } from "./taxonomy-tree-controls"
+import type { FeatureCountCategory } from "./taxonomy-node-tooltip"
 import { GLASS_PANEL, GLASS_PANEL_PADDING, TAXONOMY_LINK_MUTED } from "./taxonomy-types"
 import type { TaxonomyPayload } from "./taxonomy-types"
 import type { ViewTab } from "./taxonomy-types"
@@ -17,21 +19,13 @@ import type { BreadcrumbEntry } from "./floating-breadcrumb"
 import type { FlatTreeNode } from "@/lib/api/taxons"
 import type { RankDistributionEntry } from "@/lib/stores/flattened-tree"
 import { RankSlider } from "./rank-slider"
-import { useTaxonomyGeneTypesStore, type GeneType } from "@/lib/stores/taxonomy-gene-types"
-import { Checkbox } from "@/components/ui/checkbox"
-import { Switch } from "@/components/ui/switch"
+import { StackChartOptionsContent } from "./stack-chart-options-content"
 import { cn } from "@/lib/utils"
-
-const GENE_TYPE_LABELS: Record<GeneType, string> = {
-  coding: "Coding",
-  non_coding: "Non-coding",
-  pseudogene: "Pseudogene",
-}
 
 const TABS: { id: ViewTab; label: string; Icon: React.ElementType }[] = [
   { id: "overview", label: "Overview", Icon: LayoutDashboard },
   { id: "constant-branch", label: "Tree", Icon: Network },
-  { id: "gene-stack", label: "Outliers", Icon: AlertTriangle },
+  { id: "gene-stack", label: "Top 50", Icon: BarChart2 },
 ]
 
 function formatCount(n: number): string {
@@ -69,8 +63,6 @@ export interface FloatingVizStripProps {
   onTabChange: (tab: ViewTab) => void
   /** Slot for search (ExpandableSearch) so it stays in page and can use page state */
   searchSlot: React.ReactNode
-  showLabels: boolean
-  onShowLabelsChange: (show: boolean) => void
 }
 
 export function FloatingVizStrip({
@@ -86,8 +78,6 @@ export function FloatingVizStrip({
   activeTab,
   onTabChange,
   searchSlot,
-  showLabels,
-  onShowLabelsChange,
 }: FloatingVizStripProps) {
   const [rootOpen, setRootOpen] = useState(false)
   const [leafRankOpen, setLeafRankOpen] = useState(false)
@@ -96,7 +86,6 @@ export function FloatingVizStrip({
   const stripRef = useRef<HTMLDivElement>(null)
   const dragStartRef = useRef<{ clientX: number; clientY: number; x: number; y: number } | null>(null)
 
-  const { selectedGeneTypes, toggleGeneType } = useTaxonomyGeneTypesStore()
 
   const handleDragEnd = useCallback(() => {
     dragStartRef.current = null
@@ -150,6 +139,8 @@ export function FloatingVizStrip({
   const theme = useUIStore((s) => s.theme)
   const isDark = theme === "dark"
   const geneColors = getTreeGeneColors(isDark)
+  const transcriptColors = getTreeTranscriptColors(isDark)
+  const buscoColors = getTreeBuscoColors(isDark)
 
   const rootTitle = currentDisplayTaxon.taxon.scientific_name ?? "Eukaryota"
   const currentNode = flatNodes.find((n) => n.id === currentDisplayTaxon.taxid)
@@ -161,8 +152,22 @@ export function FloatingVizStrip({
   const nonCoding = currentNode?.non_coding_count ?? 0
   const pseudo = currentNode?.pseudogene_count ?? 0
   const geneTotal = coding + nonCoding + pseudo
+  const transcriptTotal = (currentNode?.mrna_count ?? 0) + (currentNode?.lncrna_count ?? 0) + (currentNode?.trna_count ?? 0) + (currentNode?.mirna_count ?? 0)
+  const buscoTotal = (currentNode?.busco_single_copy_mean ?? 0) + (currentNode?.busco_duplicated_mean ?? 0) + (currentNode?.busco_fragmented_mean ?? 0) + (currentNode?.busco_missing_mean ?? 0)
   const hasRecordCounts = organismsCount > 0 || assembliesCount > 0 || annotationsCount > 0
   const hasGeneCounts = geneTotal > 0
+  const hasTranscriptCounts = transcriptTotal > 0
+  const hasBuscoCounts = buscoTotal > 0
+  const featureCategories: FeatureCountCategory[] = [
+    ...(hasGeneCounts ? (["genes"] as const) : []),
+    ...(hasTranscriptCounts ? (["transcripts"] as const) : []),
+    ...(hasBuscoCounts ? (["busco"] as const) : []),
+  ]
+  const stackMode = useTaxonomyGeneTypesStore((s) => s.stackMode)
+  const setStackMode = useTaxonomyGeneTypesStore((s) => s.setStackMode)
+  /** Default to bottom-strip selected category; fallback to first available. */
+  const rootFeatureCategory: FeatureCountCategory =
+    featureCategories.includes(stackMode) ? stackMode : (featureCategories[0] ?? "genes")
 
   const leafDisplay = getLeafRankDisplay(selectedRank, distribution, leafCount)
 
@@ -285,60 +290,75 @@ export function FloatingVizStrip({
                 </div>
               </div>
             )}
-            {hasGeneCounts && (
+            {(hasGeneCounts || hasTranscriptCounts || hasBuscoCounts) && (
               <div className="space-y-1.5">
-                <div className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/90">
-                  Gene counts
-                </div>
-                <div className="flex h-2.5 w-full min-w-32 max-w-44 rounded overflow-hidden bg-muted/50 border border-border/30">
-                  {coding > 0 && (
-                    <div
-                      className="h-full min-w-[2px] transition-colors"
-                      style={{
-                        width: `${(coding / geneTotal) * 100}%`,
-                        backgroundColor: geneColors.coding,
-                      }}
-                      title={`Coding: ${coding.toLocaleString()}`}
-                    />
-                  )}
-                  {nonCoding > 0 && (
-                    <div
-                      className="h-full min-w-[2px] transition-colors"
-                      style={{
-                        width: `${(nonCoding / geneTotal) * 100}%`,
-                        backgroundColor: geneColors.non_coding,
-                      }}
-                      title={`Non-coding: ${nonCoding.toLocaleString()}`}
-                    />
-                  )}
-                  {pseudo > 0 && (
-                    <div
-                      className="h-full min-w-[2px] transition-colors"
-                      style={{
-                        width: `${(pseudo / geneTotal) * 100}%`,
-                        backgroundColor: geneColors.pseudogene,
-                      }}
-                      title={`Pseudogene: ${pseudo.toLocaleString()}`}
-                    />
-                  )}
-                </div>
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground tabular-nums">
-                  <span className="flex items-center gap-1.5">
-                    <span className="w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: geneColors.coding }} />
-                    <span>Coding</span>
-                    <span>{coding.toLocaleString()}</span>
-                  </span>
-                  <span className="flex items-center gap-1.5">
-                    <span className="w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: geneColors.non_coding }} />
-                    <span>Non-cod</span>
-                    <span>{nonCoding.toLocaleString()}</span>
-                  </span>
-                  <span className="flex items-center gap-1.5">
-                    <span className="w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: geneColors.pseudogene }} />
-                    <span>Pseudo</span>
-                    <span>{pseudo.toLocaleString()}</span>
-                  </span>
-                </div>
+                {featureCategories.length > 1 ? (
+                  <div className="flex gap-0.5">
+                    {featureCategories.map((cat) => (
+                      <button
+                        key={cat}
+                        type="button"
+                        onClick={() => setStackMode(cat)}
+                        className={cn(
+                          "px-2 py-0.5 rounded text-[10px] font-medium uppercase tracking-wider transition-colors",
+                          rootFeatureCategory === cat ? "bg-primary/15 text-primary" : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                        )}
+                      >
+                        {cat === "genes" ? "Genes" : cat === "transcripts" ? "Transcripts" : "BUSCO"}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/90">
+                    {rootFeatureCategory === "genes" ? "Gene counts" : rootFeatureCategory === "transcripts" ? "Transcript counts" : "BUSCO"}
+                  </div>
+                )}
+                {rootFeatureCategory === "genes" && hasGeneCounts && (
+                  <>
+                    <div className="flex h-2.5 w-full min-w-32 max-w-44 rounded overflow-hidden bg-muted/50 border border-border/30">
+                      {coding > 0 && <div className="h-full min-w-[2px] transition-colors" style={{ width: `${(coding / geneTotal) * 100}%`, backgroundColor: geneColors.coding }} title={`Coding: ${coding.toLocaleString()}`} />}
+                      {nonCoding > 0 && <div className="h-full min-w-[2px] transition-colors" style={{ width: `${(nonCoding / geneTotal) * 100}%`, backgroundColor: geneColors.non_coding }} title={`Non-coding: ${nonCoding.toLocaleString()}`} />}
+                      {pseudo > 0 && <div className="h-full min-w-[2px] transition-colors" style={{ width: `${(pseudo / geneTotal) * 100}%`, backgroundColor: geneColors.pseudogene }} title={`Pseudogene: ${pseudo.toLocaleString()}`} />}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground tabular-nums">
+                      <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: geneColors.coding }} />Coding <span>{coding.toLocaleString()}</span></span>
+                      <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: geneColors.non_coding }} />Non-cod <span>{nonCoding.toLocaleString()}</span></span>
+                      <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: geneColors.pseudogene }} />Pseudo <span>{pseudo.toLocaleString()}</span></span>
+                    </div>
+                  </>
+                )}
+                {rootFeatureCategory === "transcripts" && hasTranscriptCounts && currentNode && (
+                  <>
+                    <div className="flex h-2.5 w-full min-w-32 max-w-44 rounded overflow-hidden bg-muted/50 border border-border/30">
+                      {(currentNode.mrna_count ?? 0) > 0 && <div className="h-full min-w-[2px] transition-colors" style={{ width: `${((currentNode.mrna_count ?? 0) / transcriptTotal) * 100}%`, backgroundColor: transcriptColors.mRNA }} />}
+                      {(currentNode.lncrna_count ?? 0) > 0 && <div className="h-full min-w-[2px] transition-colors" style={{ width: `${((currentNode.lncrna_count ?? 0) / transcriptTotal) * 100}%`, backgroundColor: transcriptColors.lncRNA }} />}
+                      {(currentNode.trna_count ?? 0) > 0 && <div className="h-full min-w-[2px] transition-colors" style={{ width: `${((currentNode.trna_count ?? 0) / transcriptTotal) * 100}%`, backgroundColor: transcriptColors.tRNA }} />}
+                      {(currentNode.mirna_count ?? 0) > 0 && <div className="h-full min-w-[2px] transition-colors" style={{ width: `${((currentNode.mirna_count ?? 0) / transcriptTotal) * 100}%`, backgroundColor: transcriptColors.miRNA }} />}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground tabular-nums">
+                      {(currentNode.mrna_count ?? 0) > 0 && <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: transcriptColors.mRNA }} />mRNA <span>{(currentNode.mrna_count ?? 0).toLocaleString()}</span></span>}
+                      {(currentNode.lncrna_count ?? 0) > 0 && <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: transcriptColors.lncRNA }} />lncRNA <span>{(currentNode.lncrna_count ?? 0).toLocaleString()}</span></span>}
+                      {(currentNode.trna_count ?? 0) > 0 && <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: transcriptColors.tRNA }} />tRNA <span>{(currentNode.trna_count ?? 0).toLocaleString()}</span></span>}
+                      {(currentNode.mirna_count ?? 0) > 0 && <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: transcriptColors.miRNA }} />miRNA <span>{(currentNode.mirna_count ?? 0).toLocaleString()}</span></span>}
+                    </div>
+                  </>
+                )}
+                {rootFeatureCategory === "busco" && hasBuscoCounts && currentNode && (
+                  <>
+                    <div className="flex h-2.5 w-full min-w-32 max-w-44 rounded overflow-hidden bg-muted/50 border border-border/30">
+                      {(currentNode.busco_single_copy_mean ?? 0) > 0 && <div className="h-full min-w-[2px] transition-colors" style={{ width: `${((currentNode.busco_single_copy_mean ?? 0) / buscoTotal) * 100}%`, backgroundColor: buscoColors.single_copy }} />}
+                      {(currentNode.busco_duplicated_mean ?? 0) > 0 && <div className="h-full min-w-[2px] transition-colors" style={{ width: `${((currentNode.busco_duplicated_mean ?? 0) / buscoTotal) * 100}%`, backgroundColor: buscoColors.duplicated }} />}
+                      {(currentNode.busco_fragmented_mean ?? 0) > 0 && <div className="h-full min-w-[2px] transition-colors" style={{ width: `${((currentNode.busco_fragmented_mean ?? 0) / buscoTotal) * 100}%`, backgroundColor: buscoColors.fragmented }} />}
+                      {(currentNode.busco_missing_mean ?? 0) > 0 && <div className="h-full min-w-[2px] transition-colors" style={{ width: `${((currentNode.busco_missing_mean ?? 0) / buscoTotal) * 100}%`, backgroundColor: buscoColors.missing }} />}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground tabular-nums">
+                      {(currentNode.busco_single_copy_mean ?? 0) > 0 && <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: buscoColors.single_copy }} />C+S <span>{(currentNode.busco_single_copy_mean ?? 0).toLocaleString()}</span></span>}
+                      {(currentNode.busco_duplicated_mean ?? 0) > 0 && <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: buscoColors.duplicated }} />C+D <span>{(currentNode.busco_duplicated_mean ?? 0).toLocaleString()}</span></span>}
+                      {(currentNode.busco_fragmented_mean ?? 0) > 0 && <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: buscoColors.fragmented }} />F <span>{(currentNode.busco_fragmented_mean ?? 0).toLocaleString()}</span></span>}
+                      {(currentNode.busco_missing_mean ?? 0) > 0 && <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: buscoColors.missing }} />M <span>{(currentNode.busco_missing_mean ?? 0).toLocaleString()}</span></span>}
+                    </div>
+                  </>
+                )}
               </div>
             )}
           </div>
@@ -450,76 +470,6 @@ export function FloatingVizStrip({
             rootRank={rootRank}
           />
         </PopoverContent>
-      </Popover>
-
-      {/* View options: icon only, disabled in Overview (D3CirclePack) view */}
-      <div className="w-px h-5 bg-border/60 shrink-0" aria-hidden />
-      <Popover
-        open={viewOptionsOpen && activeTab !== "overview"}
-        onOpenChange={(open) => {
-          if (activeTab !== "overview") setViewOptionsOpen(open)
-        }}
-      >
-        <PopoverTrigger asChild>
-          <button
-            type="button"
-            disabled={activeTab === "overview"}
-            className={cn(
-              "flex items-center justify-center rounded-md p-[5px] text-xs transition-colors",
-              "text-muted-foreground hover:text-foreground hover:bg-muted",
-              "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-              "disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
-            )}
-            aria-label="View options"
-            aria-expanded={viewOptionsOpen}
-          >
-            <SlidersHorizontal className="h-3.5 w-3.5 shrink-0" />
-          </button>
-        </PopoverTrigger>
-            <PopoverContent
-              align="start"
-              side="bottom"
-              sideOffset={6}
-              className={cn("w-52 p-2 rounded-lg border border-border bg-popover/95 backdrop-blur-sm shadow-lg")}
-              onOpenAutoFocus={(e) => e.preventDefault()}
-            >
-              <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/90 mb-2 px-1">
-                Features (gene counts)
-              </p>
-              <div className="space-y-1.5 mb-3">
-                {(["coding", "non_coding", "pseudogene"] as const).map((type) => (
-                  <label
-                    key={type}
-                    className={cn(
-                      "flex items-center gap-2.5 rounded-md py-1.5 px-2 cursor-pointer hover:bg-muted/80 transition-colors",
-                      "focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-1"
-                    )}
-                  >
-                    <Checkbox
-                      checked={selectedGeneTypes.has(type)}
-                      onCheckedChange={() => toggleGeneType(type)}
-                      onKeyDown={(e) => e.stopPropagation()}
-                    />
-                    <span className="text-xs">{GENE_TYPE_LABELS[type]}</span>
-                  </label>
-                ))}
-              </div>
-              <div className="pt-2 border-t border-border/50">
-                <label
-                  className={cn(
-                    "flex items-center justify-between gap-3 rounded-md py-1.5 px-2 cursor-pointer hover:bg-muted/80 transition-colors",
-                    "focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-1"
-                  )}
-                >
-                  <span className="text-xs">Show labels</span>
-                  <Switch
-                    checked={showLabels}
-                    onCheckedChange={onShowLabelsChange}
-                    className="scale-75"
-                  />
-                </label>
-              </div>
-            </PopoverContent>
       </Popover>
 
       {/* Divider */}

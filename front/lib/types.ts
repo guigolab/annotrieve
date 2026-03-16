@@ -68,6 +68,16 @@ export interface Annotation {
   assembly_accession: string
   assembly_name: string
   annotation_id: string
+  busco?: {
+    busco_lineage?: string
+    busco_version?: string
+    total_count?: number
+    complete?: number
+    single_copy?: number
+    duplicated?: number
+    fragmented?: number
+    missing?: number
+  }
   source_file_info: {
     database: string
     provider: string

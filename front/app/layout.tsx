@@ -3,7 +3,6 @@ import localFont from "next/font/local";
 import { Fraunces, DM_Mono } from "next/font/google";
 import "./globals.css";
 import { AppNavbar } from "@/components/layout/app-navbar";
-import { FavoritesFloatingButton } from "@/components/layout/favorites-floating-button";
 import { BetaBannerProvider } from "@/components/layout/beta-banner-provider";
 import { ReactQueryProvider } from "@/components/layout/providers/react-query-provider";
 import { ThemeProvider } from "@/components/layout/theme-provider";
@@ -82,7 +81,6 @@ export default function RootLayout({
                 <main id="main-content" className="flex-1 overflow-y-auto">
                   {children}
                 </main>
-                <FavoritesFloatingButton />
               </div>
             </BetaBannerProvider>
           </ReactQueryProvider>

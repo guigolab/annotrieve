@@ -8,8 +8,10 @@ import { WikiSummary } from "@/components/wiki-summary"
 import type { FlatTreeNode } from "@/lib/api/taxons"
 import { useAnnotationsFiltersStore } from "@/lib/stores/annotations-filters"
 import { useFlattenedTreeStore } from "@/lib/stores/flattened-tree"
+import { useTaxonomyGeneTypesStore } from "@/lib/stores/taxonomy-gene-types"
 import { buildEntityDetailsUrl } from "@/lib/utils"
-import { getTreeGeneColors } from "./taxonomy-tree-controls"
+import { getTreeGeneColors, getTreeTranscriptColors, getTreeBuscoColors } from "./taxonomy-tree-controls"
+import type { FeatureCountCategory } from "./taxonomy-node-tooltip"
 import { TAXONOMY_HIGHLIGHT_COLOR } from "./taxonomy-types"
 import { useUIStore } from "@/lib/stores/ui"
 import type { TaxonRecord } from "@/lib/api/types"
@@ -77,6 +79,8 @@ export function TaxonomyDetailsPanel({
   const theme = useUIStore((s) => s.theme)
   const isDark = theme === "dark"
   const geneColors = getTreeGeneColors(isDark)
+  const transcriptColors = getTreeTranscriptColors(isDark)
+  const buscoColors = getTreeBuscoColors(isDark)
   const highlightColor = TAXONOMY_HIGHLIGHT_COLOR[isDark ? "dark" : "light"]
 
   const geneCounts = useMemo((): { coding: number; non_coding: number; pseudogene: number } | null => {
@@ -88,6 +92,39 @@ export function TaxonomyDetailsPanel({
     if (coding === 0 && non_coding === 0 && pseudogene === 0) return null
     return { coding, non_coding, pseudogene }
   }, [treeContext.node])
+
+  const transcriptCounts = useMemo((): { mRNA: number; lncRNA: number; tRNA: number; miRNA: number } | null => {
+    const node = treeContext.node
+    if (!node) return null
+    const mRNA = node.mrna_count ?? 0
+    const lncRNA = node.lncrna_count ?? 0
+    const tRNA = node.trna_count ?? 0
+    const miRNA = node.mirna_count ?? 0
+    if (mRNA === 0 && lncRNA === 0 && tRNA === 0 && miRNA === 0) return null
+    return { mRNA, lncRNA, tRNA, miRNA }
+  }, [treeContext.node])
+
+  const buscoCounts = useMemo((): { single_copy: number; duplicated: number; fragmented: number; missing: number } | null => {
+    const node = treeContext.node
+    if (!node) return null
+    const single_copy = node.busco_single_copy_mean ?? 0
+    const duplicated = node.busco_duplicated_mean ?? 0
+    const fragmented = node.busco_fragmented_mean ?? 0
+    const missing = node.busco_missing_mean ?? 0
+    if (single_copy === 0 && duplicated === 0 && fragmented === 0 && missing === 0) return null
+    return { single_copy, duplicated, fragmented, missing }
+  }, [treeContext.node])
+
+  const featureCategories: FeatureCountCategory[] = [
+    ...(geneCounts ? (["genes"] as const) : []),
+    ...(transcriptCounts ? (["transcripts"] as const) : []),
+    ...(buscoCounts ? (["busco"] as const) : []),
+  ]
+  const stackMode = useTaxonomyGeneTypesStore((s) => s.stackMode)
+  const setStackMode = useTaxonomyGeneTypesStore((s) => s.setStackMode)
+  /** Default to bottom-strip selected category; fallback to first available. */
+  const featureCategory: FeatureCountCategory =
+    featureCategories.includes(stackMode) ? stackMode : (featureCategories[0] ?? "genes")
 
   const handleViewFullDetails = useCallback(() => {
     router.push(buildEntityDetailsUrl("taxon", selectedTaxon.taxid))
@@ -122,7 +159,7 @@ export function TaxonomyDetailsPanel({
   return (
     <div
       className={cn(
-        "flex flex-col h-full w-full min-w-0 animate-in fade-in-0 slide-in-from-end-4 duration-200 bg-background",
+        "flex flex-col h-full w-full min-w-0 animate-in fade-in duration-200 bg-background",
         isPanelTaxonCurrentRoot && "bg-primary/5"
       )}
     >
@@ -240,7 +277,7 @@ export function TaxonomyDetailsPanel({
         </div>
       </div>
 
-      <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-4">
+      <div className="flex-1 min-h-0 min-w-0 overflow-auto p-3 space-y-4">
         <>
           {/* 1. Identity: name + rank left, small link buttons right */}
           <div className="flex items-end gap-2">
@@ -303,7 +340,7 @@ export function TaxonomyDetailsPanel({
 
             </div>
 
-            {/* 3. Counts (tooltip-style: record counts + gene counts bar) */}
+            {/* 3. Counts: record counts + feature counts (Genes | Transcripts | BUSCO, one at a time) */}
             <div className="space-y-2.5 pt-2 border-t border-border/50">
               <div className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/90">
                 Record counts
@@ -322,67 +359,92 @@ export function TaxonomyDetailsPanel({
                   <span>{(selectedTaxon.taxon.organisms_count ?? 0).toLocaleString()}</span>
                 </div>
               </div>
-              {geneCounts && (() => {
-                const total = geneCounts.coding + geneCounts.non_coding + geneCounts.pseudogene
-                if (total <= 0) return null
-                const formatGene = (n: number) => (Number.isInteger(n) ? n.toLocaleString() : n.toFixed(1))
-                return (
-                  <div className="space-y-1.5 pt-2 border-t border-border/50">
+              {(geneCounts || transcriptCounts || buscoCounts) && (
+                <div className="space-y-1.5 pt-2 border-t border-border/50">
+                  {featureCategories.length > 1 ? (
+                    <div className="flex gap-0.5">
+                      {featureCategories.map((cat) => (
+                        <button
+                          key={cat}
+                          type="button"
+                          onClick={() => setStackMode(cat)}
+                          className={cn(
+                            "px-2 py-0.5 rounded text-[10px] font-medium uppercase tracking-wider transition-colors",
+                            featureCategory === cat ? "bg-primary/15 text-primary" : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                          )}
+                        >
+                          {cat === "genes" ? "Genes" : cat === "transcripts" ? "Transcripts" : "BUSCO"}
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
                     <div className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/90">
-                      Gene counts
+                      {featureCategory === "genes" ? "Gene counts" : featureCategory === "transcripts" ? "Transcript counts" : "BUSCO"}
                     </div>
-                    <div className="flex h-2.5 w-full min-w-32 rounded overflow-hidden bg-muted/50 border border-border/30">
-                      {geneCounts.coding > 0 && (
-                        <div
-                          className="h-full min-w-[2px] transition-colors"
-                          style={{
-                            width: `${(geneCounts.coding / total) * 100}%`,
-                            backgroundColor: geneColors.coding,
-                          }}
-                          title={`Coding: ${formatGene(geneCounts.coding)}`}
-                        />
-                      )}
-                      {geneCounts.non_coding > 0 && (
-                        <div
-                          className="h-full min-w-[2px] transition-colors"
-                          style={{
-                            width: `${(geneCounts.non_coding / total) * 100}%`,
-                            backgroundColor: geneColors.non_coding,
-                          }}
-                          title={`Non-coding: ${formatGene(geneCounts.non_coding)}`}
-                        />
-                      )}
-                      {geneCounts.pseudogene > 0 && (
-                        <div
-                          className="h-full min-w-[2px] transition-colors"
-                          style={{
-                            width: `${(geneCounts.pseudogene / total) * 100}%`,
-                            backgroundColor: geneColors.pseudogene,
-                          }}
-                          title={`Pseudogene: ${formatGene(geneCounts.pseudogene)}`}
-                        />
-                      )}
-                    </div>
-                    <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground tabular-nums">
-                      <span className="flex items-center gap-1.5">
-                        <span className="w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: geneColors.coding }} />
-                        <span>{GENE_COUNT_LABELS.coding}</span>
-                        <span>{formatGene(geneCounts.coding)}</span>
-                      </span>
-                      <span className="flex items-center gap-1.5">
-                        <span className="w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: geneColors.non_coding }} />
-                        <span>{GENE_COUNT_LABELS.non_coding}</span>
-                        <span>{formatGene(geneCounts.non_coding)}</span>
-                      </span>
-                      <span className="flex items-center gap-1.5">
-                        <span className="w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: geneColors.pseudogene }} />
-                        <span>{GENE_COUNT_LABELS.pseudogene}</span>
-                        <span>{formatGene(geneCounts.pseudogene)}</span>
-                      </span>
-                    </div>
-                  </div>
-                )
-              })()}
+                  )}
+                  {featureCategory === "genes" && geneCounts && (() => {
+                    const total = geneCounts.coding + geneCounts.non_coding + geneCounts.pseudogene
+                    if (total <= 0) return null
+                    const formatN = (n: number) => (Number.isInteger(n) ? n.toLocaleString() : n.toFixed(1))
+                    return (
+                      <>
+                        <div className="flex h-2.5 w-full min-w-32 rounded overflow-hidden bg-muted/50 border border-border/30">
+                          {geneCounts.coding > 0 && <div className="h-full min-w-[2px] transition-colors" style={{ width: `${(geneCounts.coding / total) * 100}%`, backgroundColor: geneColors.coding }} />}
+                          {geneCounts.non_coding > 0 && <div className="h-full min-w-[2px] transition-colors" style={{ width: `${(geneCounts.non_coding / total) * 100}%`, backgroundColor: geneColors.non_coding }} />}
+                          {geneCounts.pseudogene > 0 && <div className="h-full min-w-[2px] transition-colors" style={{ width: `${(geneCounts.pseudogene / total) * 100}%`, backgroundColor: geneColors.pseudogene }} />}
+                        </div>
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground tabular-nums">
+                          <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: geneColors.coding }} />{GENE_COUNT_LABELS.coding} <span>{formatN(geneCounts.coding)}</span></span>
+                          <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: geneColors.non_coding }} />{GENE_COUNT_LABELS.non_coding} <span>{formatN(geneCounts.non_coding)}</span></span>
+                          <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: geneColors.pseudogene }} />{GENE_COUNT_LABELS.pseudogene} <span>{formatN(geneCounts.pseudogene)}</span></span>
+                        </div>
+                      </>
+                    )
+                  })()}
+                  {featureCategory === "transcripts" && transcriptCounts && (() => {
+                    const total = transcriptCounts.mRNA + transcriptCounts.lncRNA + transcriptCounts.tRNA + transcriptCounts.miRNA
+                    if (total <= 0) return null
+                    const formatN = (n: number) => (Number.isInteger(n) ? n.toLocaleString() : n.toFixed(1))
+                    return (
+                      <>
+                        <div className="flex h-2.5 w-full min-w-32 rounded overflow-hidden bg-muted/50 border border-border/30">
+                          {transcriptCounts.mRNA > 0 && <div className="h-full min-w-[2px] transition-colors" style={{ width: `${(transcriptCounts.mRNA / total) * 100}%`, backgroundColor: transcriptColors.mRNA }} />}
+                          {transcriptCounts.lncRNA > 0 && <div className="h-full min-w-[2px] transition-colors" style={{ width: `${(transcriptCounts.lncRNA / total) * 100}%`, backgroundColor: transcriptColors.lncRNA }} />}
+                          {transcriptCounts.tRNA > 0 && <div className="h-full min-w-[2px] transition-colors" style={{ width: `${(transcriptCounts.tRNA / total) * 100}%`, backgroundColor: transcriptColors.tRNA }} />}
+                          {transcriptCounts.miRNA > 0 && <div className="h-full min-w-[2px] transition-colors" style={{ width: `${(transcriptCounts.miRNA / total) * 100}%`, backgroundColor: transcriptColors.miRNA }} />}
+                        </div>
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground tabular-nums">
+                          {transcriptCounts.mRNA > 0 && <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: transcriptColors.mRNA }} />mRNA <span>{formatN(transcriptCounts.mRNA)}</span></span>}
+                          {transcriptCounts.lncRNA > 0 && <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: transcriptColors.lncRNA }} />lncRNA <span>{formatN(transcriptCounts.lncRNA)}</span></span>}
+                          {transcriptCounts.tRNA > 0 && <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: transcriptColors.tRNA }} />tRNA <span>{formatN(transcriptCounts.tRNA)}</span></span>}
+                          {transcriptCounts.miRNA > 0 && <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: transcriptColors.miRNA }} />miRNA <span>{formatN(transcriptCounts.miRNA)}</span></span>}
+                        </div>
+                      </>
+                    )
+                  })()}
+                  {featureCategory === "busco" && buscoCounts && (() => {
+                    const total = buscoCounts.single_copy + buscoCounts.duplicated + buscoCounts.fragmented + buscoCounts.missing
+                    if (total <= 0) return null
+                    const formatN = (n: number) => (Number.isInteger(n) ? n.toLocaleString() : n.toFixed(1))
+                    return (
+                      <>
+                        <div className="flex h-2.5 w-full min-w-32 rounded overflow-hidden bg-muted/50 border border-border/30">
+                          {buscoCounts.single_copy > 0 && <div className="h-full min-w-[2px] transition-colors" style={{ width: `${(buscoCounts.single_copy / total) * 100}%`, backgroundColor: buscoColors.single_copy }} />}
+                          {buscoCounts.duplicated > 0 && <div className="h-full min-w-[2px] transition-colors" style={{ width: `${(buscoCounts.duplicated / total) * 100}%`, backgroundColor: buscoColors.duplicated }} />}
+                          {buscoCounts.fragmented > 0 && <div className="h-full min-w-[2px] transition-colors" style={{ width: `${(buscoCounts.fragmented / total) * 100}%`, backgroundColor: buscoColors.fragmented }} />}
+                          {buscoCounts.missing > 0 && <div className="h-full min-w-[2px] transition-colors" style={{ width: `${(buscoCounts.missing / total) * 100}%`, backgroundColor: buscoColors.missing }} />}
+                        </div>
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground tabular-nums">
+                          {buscoCounts.single_copy > 0 && <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: buscoColors.single_copy }} />C+S <span>{formatN(buscoCounts.single_copy)}</span></span>}
+                          {buscoCounts.duplicated > 0 && <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: buscoColors.duplicated }} />C+D <span>{formatN(buscoCounts.duplicated)}</span></span>}
+                          {buscoCounts.fragmented > 0 && <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: buscoColors.fragmented }} />F <span>{formatN(buscoCounts.fragmented)}</span></span>}
+                          {buscoCounts.missing > 0 && <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: buscoColors.missing }} />M <span>{formatN(buscoCounts.missing)}</span></span>}
+                        </div>
+                      </>
+                    )
+                  })()}
+                </div>
+              )}
             </div>
 
             {/* 4. Lineage (full path); highlight node that is the current root */}

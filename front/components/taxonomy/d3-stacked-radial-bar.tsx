@@ -6,15 +6,31 @@ import * as d3 from "d3"
 import { Loader2 } from "lucide-react"
 import { useUIStore } from "@/lib/stores/ui"
 import { useFlattenedTreeStore, useFilteredTreeByRootAndRank } from "@/lib/stores/flattened-tree"
-import { useTaxonomyGeneTypesStore } from "@/lib/stores/taxonomy-gene-types"
+import {
+  useTaxonomyGeneTypesStore,
+  type GeneType,
+  type TranscriptType,
+  type BuscoType,
+} from "@/lib/stores/taxonomy-gene-types"
 import type { FlatTreeNode } from "@/lib/api/taxons"
-import { getTreeGeneColors, type TreeRankOption } from "./taxonomy-tree-controls"
+import { getTreeGeneColors, getTreeTranscriptColors, getTreeBuscoColors, type TreeRankOption } from "./taxonomy-tree-controls"
 import { TaxonomyNodeTooltip } from "./taxonomy-node-tooltip"
 import { Button } from "@/components/ui/button"
 
 const DISPLAY_LIMIT = 50
 const PADDING = 100
-const INNER_RADIUS = 60
+
+function getCenterLabel(stackMode: StackMode): { title: string; subtitle: string } {
+  switch (stackMode) {
+    case "genes":
+      return { title: "Top 50", subtitle: "by gene count" }
+    case "transcripts":
+      return { title: "Top 50", subtitle: "by transcript count" }
+    case "busco":
+      return { title: "Top 50", subtitle: "by BUSCO completeness" }
+  }
+}
+const INNER_RADIUS = 72
 const MIN_PAD_ANGLE = 0.002
 const MAX_PAD_ANGLE = 0.04
 const HOVER_EXPAND = 1.06
@@ -24,7 +40,7 @@ const CHART_HEIGHT_FALLBACK = 700
 const TRANSITION_MS = 300
 const Y_TICKS = 4
 
-type Toggles = { showCoding: boolean; showNonCoding: boolean; showPseudogene: boolean }
+type StackMode = "genes" | "transcripts" | "busco"
 
 type ChartLayout = {
   cx: number
@@ -43,6 +59,14 @@ export type StackedRadialBarRow = {
   coding: number
   non_coding: number
   pseudogene: number
+  mRNA: number
+  lncRNA: number
+  tRNA: number
+  miRNA: number
+  busco_single_copy: number
+  busco_duplicated: number
+  busco_fragmented: number
+  busco_missing: number
   total: number
   annotationCount: number
   organismsCount: number
@@ -54,7 +78,7 @@ function getChartLayout(width: number, height: number, n: number): ChartLayout {
   const cy = height / 2
   const outerRadius = Math.min(width, height) / 2 - PADDING
   const bandWidth = n > 0 ? (2 * Math.PI) / n : 0
-  const innerRadius = Math.min(INNER_RADIUS, outerRadius * 0.15)
+  const innerRadius = Math.min(INNER_RADIUS, outerRadius * 0.18)
   const padAngle = n > 0
     ? Math.max(MIN_PAD_ANGLE, Math.min(MAX_PAD_ANGLE, bandWidth * 0.08))
     : 0
@@ -71,24 +95,60 @@ function getBarAngles(pos: number, bandWidth: number, padAngle: number) {
   return { startAngle: toCanvasAngle(bandStart), endAngle: toCanvasAngle(bandEnd) }
 }
 
+type Row = StackedRadialBarRow
+type GeneKey = "coding" | "non_coding" | "pseudogene"
+type TranscriptKey = "mRNA" | "lncRNA" | "tRNA" | "miRNA"
+type BuscoKey = "busco_single_copy" | "busco_duplicated" | "busco_fragmented" | "busco_missing"
+type SegmentKey = GeneKey | TranscriptKey | BuscoKey
+
 function getVisibleTotal(
-  d: { coding: number; non_coding: number; pseudogene: number },
-  t: Toggles
+  d: Row,
+  mode: StackMode,
+  geneSet: Set<GeneKey>,
+  transcriptSet: Set<string>,
+  buscoSet: Set<string>
 ): number {
-  return (t.showCoding ? d.coding : 0) + (t.showNonCoding ? d.non_coding : 0) + (t.showPseudogene ? d.pseudogene : 0)
+  if (mode === "genes")
+    return (geneSet.has("coding") ? d.coding : 0) + (geneSet.has("non_coding") ? d.non_coding : 0) + (geneSet.has("pseudogene") ? d.pseudogene : 0)
+  if (mode === "transcripts")
+    return (transcriptSet.has("mRNA") ? d.mRNA : 0) + (transcriptSet.has("lncRNA") ? d.lncRNA : 0) + (transcriptSet.has("tRNA") ? d.tRNA : 0) + (transcriptSet.has("miRNA") ? d.miRNA : 0)
+  return (buscoSet.has("single_copy") ? d.busco_single_copy : 0) + (buscoSet.has("duplicated") ? d.busco_duplicated : 0) + (buscoSet.has("fragmented") ? d.busco_fragmented : 0) + (buscoSet.has("missing") ? d.busco_missing : 0)
 }
 
 function cum(
-  d: { coding: number; non_coding: number; pseudogene: number },
-  key: "coding" | "non_coding" | "pseudogene",
-  t: Toggles
+  d: Row,
+  key: SegmentKey,
+  mode: StackMode,
+  geneSet: Set<GeneKey>,
+  transcriptSet: Set<string>,
+  buscoSet: Set<string>
 ): { start: number; end: number } {
-  const c = t.showCoding ? d.coding : 0
-  const nc = t.showNonCoding ? d.non_coding : 0
-  const p = t.showPseudogene ? d.pseudogene : 0
-  if (key === "coding") return { start: 0, end: c }
-  if (key === "non_coding") return { start: c, end: c + nc }
-  return { start: c + nc, end: c + nc + p }
+  if (mode === "genes") {
+    const c = geneSet.has("coding") ? d.coding : 0
+    const nc = geneSet.has("non_coding") ? d.non_coding : 0
+    const p = geneSet.has("pseudogene") ? d.pseudogene : 0
+    if (key === "coding") return { start: 0, end: c }
+    if (key === "non_coding") return { start: c, end: c + nc }
+    return { start: c + nc, end: c + nc + p }
+  }
+  if (mode === "transcripts") {
+    const m = transcriptSet.has("mRNA") ? d.mRNA : 0
+    const ln = transcriptSet.has("lncRNA") ? d.lncRNA : 0
+    const t = transcriptSet.has("tRNA") ? d.tRNA : 0
+    const mi = transcriptSet.has("miRNA") ? d.miRNA : 0
+    if (key === "mRNA") return { start: 0, end: m }
+    if (key === "lncRNA") return { start: m, end: m + ln }
+    if (key === "tRNA") return { start: m + ln, end: m + ln + t }
+    return { start: m + ln + t, end: m + ln + t + mi }
+  }
+  const sc = buscoSet.has("single_copy") ? d.busco_single_copy : 0
+  const dup = buscoSet.has("duplicated") ? d.busco_duplicated : 0
+  const frag = buscoSet.has("fragmented") ? d.busco_fragmented : 0
+  const miss = buscoSet.has("missing") ? d.busco_missing : 0
+  if (key === "busco_single_copy") return { start: 0, end: sc }
+  if (key === "busco_duplicated") return { start: sc, end: sc + dup }
+  if (key === "busco_fragmented") return { start: sc + dup, end: sc + dup + frag }
+  return { start: sc + dup + frag, end: sc + dup + frag + miss }
 }
 
 function hitTestBar(layout: ChartLayout, localX: number, localY: number): number | null {
@@ -164,7 +224,12 @@ export function D3StackedRadialBar({
   const idsAtSelectedRank = useMemo(() => collectLeafIds(filteredTree), [filteredTree])
   const isDark = useUIStore((s) => s.theme) === "dark"
   const geneColors = useMemo(() => getTreeGeneColors(isDark), [isDark])
+  const transcriptColors = useMemo(() => getTreeTranscriptColors(isDark), [isDark])
+  const buscoColors = useMemo(() => getTreeBuscoColors(isDark), [isDark])
+  const stackMode = useTaxonomyGeneTypesStore((s) => s.stackMode)
   const selectedGeneTypes = useTaxonomyGeneTypesStore((s) => s.selectedGeneTypes)
+  const selectedTranscriptTypes = useTaxonomyGeneTypesStore((s) => s.selectedTranscriptTypes)
+  const selectedBuscoTypes = useTaxonomyGeneTypesStore((s) => s.selectedBuscoTypes)
 
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
   const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null)
@@ -174,7 +239,10 @@ export function D3StackedRadialBar({
   const hoveredIndexRef = useRef<number | null>(null)
   const sizeRef = useRef({ width: 0, height: CHART_HEIGHT_FALLBACK })
   const sortedIndicesRef = useRef<number[]>([])
-  const prevTogglesRef = useRef<Set<"coding" | "non_coding" | "pseudogene">>(new Set(["coding", "non_coding", "pseudogene"]))
+  const prevStackModeRef = useRef<StackMode>("genes")
+  const prevGeneSetRef = useRef<Set<GeneType>>(new Set<GeneType>(["coding", "non_coding", "pseudogene"]))
+  const prevTranscriptSetRef = useRef<Set<TranscriptType>>(new Set<TranscriptType>(["mRNA", "lncRNA", "tRNA", "miRNA"]))
+  const prevBuscoSetRef = useRef<Set<BuscoType>>(new Set<BuscoType>(["single_copy", "duplicated", "fragmented", "missing"]))
   const transitionRef = useRef(1)
 
   useEffect(() => { fetchFlattenedTree() }, [fetchFlattenedTree])
@@ -182,35 +250,66 @@ export function D3StackedRadialBar({
 
   const data = useMemo((): StackedRadialBarRow[] => {
     const source = flatNodes.filter((n) => n.id !== "root" && idsAtSelectedRank.has(n.id))
-    return source
-      .map((n) => {
-        const coding = n.coding_count ?? 0
-        const non_coding = n.non_coding_count ?? 0
-        const pseudogene = n.pseudogene_count ?? 0
-        return {
-          taxid: parseInt(n.id, 10) || 0,
-          taxon_name: n.scientific_name ?? "",
-          rank: n.rank ?? "",
-          coding,
-          non_coding,
-          pseudogene,
-          total: coding + non_coding + pseudogene,
-          annotationCount: n.annotations_count ?? 0,
-          organismsCount: n.organisms_count ?? 0,
-          assembliesCount: n.assemblies_count ?? 0,
-        }
-      })
-      .sort((a, b) => b.total - a.total)
-      .slice(0, DISPLAY_LIMIT)
-  }, [flatNodes, idsAtSelectedRank])
+    const rows = source.map((n) => {
+      const coding = n.coding_count ?? 0
+      const non_coding = n.non_coding_count ?? 0
+      const pseudogene = n.pseudogene_count ?? 0
+      const mRNA = n.mrna_count ?? 0
+      const lncRNA = n.lncrna_count ?? 0
+      const tRNA = n.trna_count ?? 0
+      const miRNA = n.mirna_count ?? 0
+      const busco_single_copy = n.busco_single_copy_mean ?? 0
+      const busco_duplicated = n.busco_duplicated_mean ?? 0
+      const busco_fragmented = n.busco_fragmented_mean ?? 0
+      const busco_missing = n.busco_missing_mean ?? 0
+      return {
+        taxid: parseInt(n.id, 10) || 0,
+        taxon_name: n.scientific_name ?? "",
+        rank: n.rank ?? "",
+        coding,
+        non_coding,
+        pseudogene,
+        mRNA,
+        lncRNA,
+        tRNA,
+        miRNA,
+        busco_single_copy,
+        busco_duplicated,
+        busco_fragmented,
+        busco_missing,
+        total: coding + non_coding + pseudogene,
+        annotationCount: n.annotations_count ?? 0,
+        organismsCount: n.organisms_count ?? 0,
+        assembliesCount: n.assemblies_count ?? 0,
+      }
+    })
+    if (stackMode === "busco") {
+      const byCompleteness = [...rows].sort(
+        (a, b) =>
+          b.busco_single_copy + b.busco_duplicated - (a.busco_single_copy + a.busco_duplicated)
+      )
+      return byCompleteness.slice(0, DISPLAY_LIMIT)
+    }
+    return rows.slice(0, DISPLAY_LIMIT)
+  }, [flatNodes, idsAtSelectedRank, stackMode])
 
   useEffect(() => {
-    const changed =
-      selectedGeneTypes.size !== prevTogglesRef.current.size ||
-      [...selectedGeneTypes].some((t) => !prevTogglesRef.current.has(t)) ||
-      [...prevTogglesRef.current].some((t) => !selectedGeneTypes.has(t))
-    if (changed) transitionRef.current = 0
-  }, [selectedGeneTypes])
+    const modeChanged = stackMode !== prevStackModeRef.current
+    const geneChanged =
+      selectedGeneTypes.size !== prevGeneSetRef.current.size ||
+      [...selectedGeneTypes].some((t) => !prevGeneSetRef.current.has(t)) ||
+      [...prevGeneSetRef.current].some((t) => !selectedGeneTypes.has(t))
+    const transcriptChanged =
+      selectedTranscriptTypes.size !== prevTranscriptSetRef.current.size ||
+      [...selectedTranscriptTypes].some((t) => !prevTranscriptSetRef.current.has(t)) ||
+      [...prevTranscriptSetRef.current].some((t) => !selectedTranscriptTypes.has(t))
+    const buscoChanged =
+      selectedBuscoTypes.size !== prevBuscoSetRef.current.size ||
+      [...selectedBuscoTypes].some((t) => !prevBuscoSetRef.current.has(t)) ||
+      [...prevBuscoSetRef.current].some((t) => !selectedBuscoTypes.has(t))
+    if (modeChanged || (stackMode === "genes" && geneChanged) || (stackMode === "transcripts" && transcriptChanged) || (stackMode === "busco" && buscoChanged))
+      transitionRef.current = 0
+  }, [stackMode, selectedGeneTypes, selectedTranscriptTypes, selectedBuscoTypes])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -226,28 +325,45 @@ export function D3StackedRadialBar({
     }
     const dpr = window.devicePixelRatio || 1
 
-    const anyShown = selectedGeneTypes.size > 0
-    const toggles: Toggles = {
-      showCoding: anyShown ? selectedGeneTypes.has("coding") : true,
-      showNonCoding: anyShown ? selectedGeneTypes.has("non_coding") : true,
-      showPseudogene: anyShown ? selectedGeneTypes.has("pseudogene") : true,
-    }
-    const prev = prevTogglesRef.current
-    const prevAny = prev.size > 0
-    const prevToggles: Toggles = {
-      showCoding: prevAny ? prev.has("coding") : true,
-      showNonCoding: prevAny ? prev.has("non_coding") : true,
-      showPseudogene: prevAny ? prev.has("pseudogene") : true,
-    }
+    const geneSet = selectedGeneTypes as Set<GeneKey>
+    const transcriptSet = selectedTranscriptTypes
+    const buscoSet = selectedBuscoTypes
+    const prevGeneSet = prevGeneSetRef.current as Set<GeneKey>
+    const prevTranscriptSet = prevTranscriptSetRef.current
+    const prevBuscoSet = prevBuscoSetRef.current
 
-    const sortedIndices = data
-      .map((_, i) => i)
-      .sort((a, b) => getVisibleTotal(data[b], toggles) - getVisibleTotal(data[a], toggles))
+    const sortedIndices =
+      stackMode === "busco"
+        ? data
+            .map((_, i) => i)
+            .sort(
+              (a, b) =>
+                data[b].busco_single_copy +
+                data[b].busco_duplicated -
+                (data[a].busco_single_copy + data[a].busco_duplicated)
+            )
+        : data
+            .map((_, i) => i)
+            .sort(
+              (a, b) =>
+                getVisibleTotal(data[b], stackMode, geneSet, transcriptSet, buscoSet) -
+                getVisibleTotal(data[a], stackMode, geneSet, transcriptSet, buscoSet)
+            )
     sortedIndicesRef.current = sortedIndices
 
     const hoverColor = isDark ? "#fbbf24" : "#f59e0b"
-    const keys: ("coding" | "non_coding" | "pseudogene")[] = ["coding", "non_coding", "pseudogene"]
-
+    const keysByMode: Record<StackMode, SegmentKey[]> = {
+      genes: ["coding", "non_coding", "pseudogene"],
+      transcripts: ["mRNA", "lncRNA", "tRNA", "miRNA"],
+      busco: ["busco_single_copy", "busco_duplicated", "busco_fragmented", "busco_missing"],
+    }
+    const keys = keysByMode[stackMode]
+    const getSegmentColor = (key: SegmentKey): string => {
+      if (stackMode === "genes") return geneColors[key as GeneKey]
+      if (stackMode === "transcripts") return transcriptColors[key as TranscriptKey]
+      const buscoKey = key.replace("busco_", "") as "single_copy" | "duplicated" | "fragmented" | "missing"
+      return buscoColors[buscoKey]
+    }
     const draw = () => {
       const { width, height } = sizeRef.current
       if (width <= 0) return
@@ -256,8 +372,8 @@ export function D3StackedRadialBar({
       const sorted = sortedIndicesRef.current
       const transT = Math.min(1, transitionRef.current)
 
-      const maxCurr = Math.max(1, ...data.map((d) => getVisibleTotal(d, toggles)))
-      const maxPrev = Math.max(1, ...data.map((d) => getVisibleTotal(d, prevToggles)))
+      const maxCurr = Math.max(1, ...data.map((d) => getVisibleTotal(d, stackMode, geneSet, transcriptSet, buscoSet)))
+      const maxPrev = Math.max(1, ...data.map((d) => getVisibleTotal(d, prevStackModeRef.current, prevGeneSet, prevTranscriptSet, prevBuscoSet)))
       const maxVal = maxPrev + transT * (maxCurr - maxPrev)
       const y = (value: number) => innerRadius + (value / maxVal) * (outerRadius - innerRadius)
 
@@ -276,15 +392,15 @@ export function D3StackedRadialBar({
         ctx.beginPath()
         for (let pos = 0; pos < n; pos++) {
           const d = data[sorted[pos]]
-          const prevC = cum(d, key, prevToggles)
-          const currC = cum(d, key, toggles)
+          const prevC = cum(d, key, prevStackModeRef.current, prevGeneSet, prevTranscriptSet, prevBuscoSet)
+          const currC = cum(d, key, stackMode, geneSet, transcriptSet, buscoSet)
           const r0 = y(prevC.start + transT * (currC.start - prevC.start))
           const r1 = y(prevC.end + transT * (currC.end - prevC.end))
           if (r1 <= r0) continue
           const { startAngle, endAngle } = getBarAngles(pos, bandWidth, padAngle)
           appendArcSegment(ctx, cx, cy, r0, r1, startAngle, endAngle)
         }
-        ctx.fillStyle = geneColors[key]
+        ctx.fillStyle = getSegmentColor(key)
         ctx.fill()
       }
 
@@ -305,14 +421,14 @@ export function D3StackedRadialBar({
         const d = data[sorted[pos]]
         const { startAngle, endAngle } = getBarAngles(pos, bandWidth, padAngle)
         for (const key of keys) {
-          const prevC = cum(d, key, prevToggles)
-          const currC = cum(d, key, toggles)
+          const prevC = cum(d, key, prevStackModeRef.current, prevGeneSet, prevTranscriptSet, prevBuscoSet)
+          const currC = cum(d, key, stackMode, geneSet, transcriptSet, buscoSet)
           const r0 = y(prevC.start + transT * (currC.start - prevC.start))
           const r1 = y(prevC.end + transT * (currC.end - prevC.end))
           if (r1 <= r0) continue
           ctx.beginPath()
           appendArcSegment(ctx, cx, cy, mapR(r0), mapR(r1), startAngle, endAngle)
-          ctx.fillStyle = geneColors[key]
+          ctx.fillStyle = getSegmentColor(key)
           ctx.fill()
         }
         ctx.beginPath()
@@ -342,14 +458,15 @@ export function D3StackedRadialBar({
       ctx.fillStyle = isDark ? "rgba(15,23,42,0.55)" : "rgba(248,250,252,0.55)"
       ctx.fill()
 
+      const centerLabel = getCenterLabel(stackMode)
       const countFontSize = Math.max(14, Math.min(20, innerRadius * 0.32))
       const subFontSize = Math.max(9, Math.min(12, innerRadius * 0.2))
       ctx.font = `bold ${countFontSize}px system-ui, sans-serif`
       ctx.fillStyle = isDark ? "rgba(226,232,240,0.95)" : "rgba(30,41,59,0.95)"
-      ctx.fillText("Top 50", cx, cy - subFontSize * 0.8)
+      ctx.fillText(centerLabel.title, cx, cy - subFontSize * 0.8)
       ctx.font = `${subFontSize}px system-ui, sans-serif`
       ctx.fillStyle = isDark ? "rgba(148,163,184,0.8)" : "rgba(100,116,139,0.8)"
-      ctx.fillText("outliers", cx, cy + countFontSize * 0.5)
+      ctx.fillText(centerLabel.subtitle, cx, cy + countFontSize * 0.5)
 
       if ((controlledShowLabels ?? true) && n > 0) {
         const minLabelR = innerRadius + MIN_LABEL_RADIUS_OFFSET
@@ -359,8 +476,8 @@ export function D3StackedRadialBar({
         for (let pos = 0; pos < n; pos++) {
           const dataIdx = sorted[pos]
           const d = data[dataIdx]
-          const currV = getVisibleTotal(d, toggles)
-          const prevV = getVisibleTotal(d, prevToggles)
+          const currV = getVisibleTotal(d, stackMode, geneSet, transcriptSet, buscoSet)
+          const prevV = getVisibleTotal(d, prevStackModeRef.current, prevGeneSet, prevTranscriptSet, prevBuscoSet)
           const interpV = prevV + transT * (currV - prevV)
           const barOuterR = interpV > 0 ? y(interpV) : innerRadius
           const labelRadius = Math.max(barOuterR + LABEL_OFFSET, minLabelR)
@@ -432,7 +549,10 @@ export function D3StackedRadialBar({
         if (t < 1) frameId = requestAnimationFrame(run)
         else {
           transitionRef.current = 1
-          prevTogglesRef.current = new Set(selectedGeneTypes)
+          prevStackModeRef.current = stackMode
+          prevGeneSetRef.current = new Set(selectedGeneTypes)
+          prevTranscriptSetRef.current = new Set(selectedTranscriptTypes)
+          prevBuscoSetRef.current = new Set(selectedBuscoTypes)
         }
       }
       frameId = requestAnimationFrame(run)
@@ -442,7 +562,7 @@ export function D3StackedRadialBar({
       if (frameId) cancelAnimationFrame(frameId)
       ro.disconnect()
     }
-  }, [data, selectedGeneTypes, geneColors, isDark, highlightTaxid, controlledShowLabels])
+  }, [data, stackMode, selectedGeneTypes, selectedTranscriptTypes, selectedBuscoTypes, geneColors, transcriptColors, buscoColors, isDark, highlightTaxid, controlledShowLabels])
 
   const handleMouseMove = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -454,9 +574,8 @@ export function D3StackedRadialBar({
       const prev = hoveredIndexRef.current
       hoveredIndexRef.current = dataIdx
       setHoveredIndex(dataIdx)
-      if (dataIdx !== null && containerRef.current) {
-        const cr = containerRef.current.getBoundingClientRect()
-        setTooltipPos({ x: e.clientX - cr.left + 12, y: e.clientY - cr.top - 12 })
+      if (dataIdx !== null) {
+        setTooltipPos({ x: e.clientX, y: e.clientY })
       } else setTooltipPos(null)
       if (dataIdx !== prev) drawRef.current?.()
     },
@@ -528,7 +647,7 @@ export function D3StackedRadialBar({
             {hoveredIndex !== null && tooltipPos && data[hoveredIndex] != null && (
               <TaxonomyNodeTooltip
                 position={tooltipPos}
-                offset={{ x: 0, y: 0 }}
+                offset={{ x: 12, y: -12 }}
                 className="max-w-[min(280px,90vw)]"
                 payload={{
                   title: data[hoveredIndex].taxon_name || `Taxon ${hoveredIndex + 1}`,
@@ -542,6 +661,20 @@ export function D3StackedRadialBar({
                     pseudogene: data[hoveredIndex].pseudogene,
                   },
                   geneColors,
+                  transcriptCounts: {
+                    mRNA: data[hoveredIndex].mRNA ?? 0,
+                    lncRNA: data[hoveredIndex].lncRNA ?? 0,
+                    tRNA: data[hoveredIndex].tRNA ?? 0,
+                    miRNA: data[hoveredIndex].miRNA ?? 0,
+                  },
+                  transcriptColors,
+                  buscoCounts: {
+                    single_copy: data[hoveredIndex].busco_single_copy ?? 0,
+                    duplicated: data[hoveredIndex].busco_duplicated ?? 0,
+                    fragmented: data[hoveredIndex].busco_fragmented ?? 0,
+                    missing: data[hoveredIndex].busco_missing ?? 0,
+                  },
+                  buscoColors,
                   formatNumber: formatCount,
                 }}
               />

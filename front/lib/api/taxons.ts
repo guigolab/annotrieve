@@ -42,6 +42,14 @@ export interface FlatTreeNode {
   coding_count: number
   non_coding_count: number
   pseudogene_count: number
+  mrna_count: number
+  lncrna_count: number
+  trna_count: number
+  mirna_count: number
+  busco_single_copy_mean: number
+  busco_duplicated_mean: number
+  busco_fragmented_mean: number
+  busco_missing_mean: number
 }
 
 export interface FlattenedTreeResponse {
@@ -81,9 +89,10 @@ function parseTsvToFlatTreeNodes(tsvText: string): FlatTreeNode[] {
   
   return dataLines.map((line) => {
     const columns = line.split('\t')
-    
     // Expected columns: taxid, parent_taxid, scientific_name, annotations_count,
-    // assemblies_count, organisms_count, rank, coding_count, non_coding_count, pseudogene_count
+    // assemblies_count, organisms_count, rank, coding_mean_count, non_coding_mean_count,
+    // pseudogene_mean_count, mRNA_mean_count, lncRNA_mean_count, tRNA_mean_count, miRNA_mean_count,
+    // busco_single_copy_mean, busco_duplicated_mean, busco_fragmented_mean, busco_missing_mean
     return {
       id: columns[0] || '',
       parentId: columns[1] || null,
@@ -95,6 +104,14 @@ function parseTsvToFlatTreeNodes(tsvText: string): FlatTreeNode[] {
       coding_count: parseInt(columns[7] || '0', 10),
       non_coding_count: parseInt(columns[8] || '0', 10),
       pseudogene_count: parseInt(columns[9] || '0', 10),
+      mrna_count: parseFloat(columns[10] || '0') || 0,
+      lncrna_count: parseFloat(columns[11] || '0') || 0,
+      trna_count: parseFloat(columns[12] || '0') || 0,
+      mirna_count: parseFloat(columns[13] || '0') || 0,
+      busco_single_copy_mean: parseFloat(columns[14] || '0') || 0,
+      busco_duplicated_mean: parseFloat(columns[15] || '0') || 0,
+      busco_fragmented_mean: parseFloat(columns[16] || '0') || 0,
+      busco_missing_mean: parseFloat(columns[17] || '0') || 0,
     }
   })
 }

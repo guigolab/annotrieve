@@ -30,6 +30,8 @@ export function AnnotationCard({ annotation, isSelected }: AnnotationCardProps) 
   const nonCodingGenes = annotation.features_statistics?.gene_category_stats?.['non_coding']?.total_count;
   const pseudogenes = annotation.features_statistics?.gene_category_stats?.['pseudogene']?.total_count;
   const hasGeneCounts = codingGenes !== undefined || nonCodingGenes !== undefined || pseudogenes !== undefined;
+  const buscoComplete = annotation.busco?.complete;
+  const hasBusco = buscoComplete !== undefined && buscoComplete !== null;
   
   return (
     <Card className={`group relative overflow-hidden transition-all duration-200 ${
@@ -70,8 +72,8 @@ export function AnnotationCard({ annotation, isSelected }: AnnotationCardProps) 
             </div>
 
             {/* Gene Counts */}
-            {hasGeneCounts && (
-                <div className="flex items-center gap-4">
+            {(hasGeneCounts || hasBusco) && (
+                <div className="flex items-center gap-4 flex-wrap">
                   {codingGenes !== undefined && (
                     <div className="flex items-center gap-1.5">
                       <span className="text-xs text-muted-foreground">Coding</span>
@@ -89,8 +91,14 @@ export function AnnotationCard({ annotation, isSelected }: AnnotationCardProps) 
                       <span className="text-xs text-muted-foreground">Pseudo</span>
                       <span className="text-sm font-semibold text-accent">{pseudogenes.toLocaleString()}</span>
                     </div>
-                )}
-              </div>
+                  )}
+                  {hasBusco && (
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs text-muted-foreground">BUSCO complete</span>
+                      <span className="text-sm font-semibold text-foreground">{Number(buscoComplete).toFixed(1)}%</span>
+                    </div>
+                  )}
+                </div>
             )}
 
 

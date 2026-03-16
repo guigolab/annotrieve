@@ -12,6 +12,8 @@ export type SortOption =
   | 'non_coding_genes_count_asc'
   | 'pseudogenes_count_desc'
   | 'pseudogenes_count_asc'
+  | 'busco_complete_desc'
+  | 'busco_complete_asc'
 
 // Filter state interface
 export interface FiltersState {
@@ -265,6 +267,14 @@ export const useAnnotationsFiltersStore = create<AnnotationsFiltersStore>((set, 
         break
       case 'pseudogenes_count_asc':
         params.sort_by = 'features_statistics.gene_category_stats.pseudogene.total_count'
+        params.sort_order = 'asc'
+        break
+      case 'busco_complete_desc':
+        params.sort_by = 'busco.complete'
+        params.sort_order = 'desc'
+        break
+      case 'busco_complete_asc':
+        params.sort_by = 'busco.complete'
         params.sort_order = 'asc'
         break
       case 'none':

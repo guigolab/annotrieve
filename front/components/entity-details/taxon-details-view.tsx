@@ -23,6 +23,8 @@ import { getAnnotationsFrequencies } from "@/lib/api/annotations"
 import { Bar } from 'react-chartjs-2'
 import { CategoryScale, LinearScale, BarElement } from 'chart.js'
 import { buildEntityDetailsUrl, cn } from "@/lib/utils"
+import { getTreeGeneColors, getTreeTranscriptColors, getTreeBuscoColors } from "@/components/taxonomy/taxonomy-tree-controls"
+import type { FeatureCountCategory } from "@/components/taxonomy/taxonomy-node-tooltip"
 
 // Register Chart.js components
 ChartJS.register(ArcElement, Tooltip, Legend)
@@ -53,7 +55,11 @@ export function TaxonDetailsView({ taxid: taxidProp, onClose }: TaxonDetailsView
   const setSelectedTaxons = useAnnotationsFiltersStore((state) => state.setSelectedTaxons)
   const selectedTaxons = useAnnotationsFiltersStore((state) => state.selectedTaxons)
   const theme = useUIStore((state) => state.theme)
-  const legendColor = theme === 'dark' ? '#e5e7eb' : '#0f172a'
+  const isDark = theme === "dark"
+  const legendColor = isDark ? '#e5e7eb' : '#0f172a'
+  const geneColors = getTreeGeneColors(isDark)
+  const transcriptColors = getTreeTranscriptColors(isDark)
+  const buscoColors = getTreeBuscoColors(isDark)
   const [taxon, setTaxon] = useState<TaxonRecord | null>(null)
   const [lineage, setLineage] = useState<TaxonRecord[]>([])
   const [children, setChildren] = useState<TaxonRecord[]>([])
@@ -69,13 +75,15 @@ export function TaxonDetailsView({ taxid: taxidProp, onClose }: TaxonDetailsView
   const [directAnnotationsCount, setDirectAnnotationsCount] = useState(0)
   const [hasDirectOrganism, setHasDirectOrganism] = useState(false)
 
-  // Gene count distribution (from taxon.stats, like taxonomy)
+  type DistStats = { mean: number; median: number; std: number; min: number; max: number; n: number }
+  type RawCountStats = { mean?: number; median?: number; std?: number; min?: number; max?: number; n?: number }
+
+  // Gene count distribution (from taxon.stats)
   const distributionByCategory = taxon
     ? (() => {
-        type GeneCountStats = { mean?: number; median?: number; std?: number; min?: number; max?: number; n?: number }
-        const stats = (taxon as { stats?: { genes?: Record<string, { count?: GeneCountStats }> } }).stats
+        const stats = (taxon as { stats?: { genes?: Record<string, { count?: RawCountStats }> } }).stats
         if (!stats?.genes) return null
-        const out: Record<string, { mean: number; median: number; std: number; min: number; max: number; n: number }> = {}
+        const out: Record<string, DistStats> = {}
         for (const cat of ["coding", "non_coding", "pseudogene"] as const) {
           const s = stats.genes[cat]?.count
           if (s && typeof s.mean === "number") {
@@ -92,6 +100,65 @@ export function TaxonDetailsView({ taxid: taxidProp, onClose }: TaxonDetailsView
         return Object.keys(out).length ? out : null
       })()
     : null
+
+  // Transcript count distribution (from taxon.stats.transcripts)
+  const distributionByTranscript = taxon
+    ? (() => {
+        const stats = (taxon as { stats?: { transcripts?: Record<string, { count?: RawCountStats }> } }).stats
+        if (!stats?.transcripts) return null
+        const out: Record<string, DistStats> = {}
+        for (const cat of ["mRNA", "lncRNA", "tRNA", "miRNA"] as const) {
+          const s = stats.transcripts[cat]?.count
+          if (s && typeof s.mean === "number") {
+            out[cat] = {
+              mean: s.mean,
+              median: s.median ?? 0,
+              std: s.std ?? 0,
+              min: s.min ?? 0,
+              max: s.max ?? 0,
+              n: s.n ?? 0,
+            }
+          }
+        }
+        return Object.keys(out).length ? out : null
+      })()
+    : null
+
+  // BUSCO distribution (from taxon.stats.busco; each key has mean/median/std/min/max)
+  const distributionByBusco = taxon
+    ? (() => {
+        const stats = (taxon as { stats?: { busco?: Record<string, RawCountStats> } }).stats
+        if (!stats?.busco) return null
+        const out: Record<string, DistStats> = {}
+        for (const cat of ["single_copy", "duplicated", "fragmented", "missing"] as const) {
+          const s = stats.busco[cat]
+          if (s && typeof s.mean === "number") {
+            out[cat] = {
+              mean: s.mean,
+              median: s.median ?? 0,
+              std: s.std ?? 0,
+              min: s.min ?? 0,
+              max: s.max ?? 0,
+              n: s.n ?? 0,
+            }
+          }
+        }
+        return Object.keys(out).length ? out : null
+      })()
+    : null
+
+  const hasFeatureCounts = !!(distributionByCategory || distributionByTranscript || distributionByBusco)
+  const featureCategories: FeatureCountCategory[] = [
+    ...(distributionByCategory && Object.keys(distributionByCategory).length > 0 ? (["genes"] as const) : []),
+    ...(distributionByTranscript && Object.keys(distributionByTranscript).length > 0 ? (["transcripts"] as const) : []),
+    ...(distributionByBusco && Object.keys(distributionByBusco).length > 0 ? (["busco"] as const) : []),
+  ]
+  const [featureCategory, setFeatureCategory] = useState<FeatureCountCategory>("genes")
+  useEffect(() => {
+    if (featureCategories.length > 0 && !featureCategories.includes(featureCategory)) {
+      setFeatureCategory(featureCategories[0])
+    }
+  }, [featureCategories.join(","), featureCategory])
 
   // Ratios (computed from taxon counts)
   const organismsCount = taxon?.organisms_count ?? 0
@@ -292,7 +359,9 @@ export function TaxonDetailsView({ taxid: taxidProp, onClose }: TaxonDetailsView
 
   const handleViewAnnotations = () => {
     if (!taxon) return
-    setSelectedTaxons([...selectedTaxons, taxon])
+    if(!selectedTaxons.some(t => t.taxid === taxon.taxid)) {
+      setSelectedTaxons([...selectedTaxons, taxon])
+    }
     router.push('/annotations')
     onClose?.()
   }
@@ -420,40 +489,119 @@ export function TaxonDetailsView({ taxid: taxidProp, onClose }: TaxonDetailsView
                 </div>
               </div>
             </Card>
-            {/* Gene count distribution stats */}
-            {distributionByCategory && Object.keys(distributionByCategory).length > 0 && (
+            {/* Feature counts: genes, transcripts, BUSCO in one section */}
+            {hasFeatureCounts && (
               <Card className="p-4">
-                <h2 className="text-lg font-semibold mb-1">Gene count distribution</h2>
+                <h2 className="text-lg font-semibold mb-1">Feature counts</h2>
                 <p className="text-xs text-muted-foreground mb-3">
-                  Across {(taxon?.annotations_count ?? 0).toLocaleString()} annotation
+                  Gene, transcript and BUSCO score distributions across {(taxon?.annotations_count ?? 0).toLocaleString()} annotation
                   {(taxon?.annotations_count ?? 0) !== 1 ? "s" : ""}.
                 </p>
-                <div className="space-y-1.5">
-                  {Object.entries(distributionByCategory).map(([category, s]) => (
-                    <div
-                      key={category}
-                      className={cn(
-                        "rounded-md border p-2",
-                        category === "coding" && "border-primary/30 bg-primary/5",
-                        category === "non_coding" && "border-secondary/30 bg-secondary/5",
-                        category === "pseudogene" && "border-accent/30 bg-accent/5"
-                      )}
-                    >
-                      <div className="flex justify-between items-center text-xs">
-                        <span className="font-medium capitalize">
-                          {category === "non_coding" ? "Non-coding" : category}
-                        </span>
-                        <span className="tabular-nums">mean {s.mean.toFixed(1)}</span>
+                {featureCategories.length > 1 && (
+                  <div className="flex gap-0.5 mb-3">
+                    {featureCategories.map((cat) => (
+                      <button
+                        key={cat}
+                        type="button"
+                        onClick={() => setFeatureCategory(cat)}
+                        className={cn(
+                          "px-2.5 py-1 rounded text-xs font-medium uppercase tracking-wider transition-colors",
+                          featureCategory === cat
+                            ? "bg-primary/15 text-primary border border-primary/30"
+                            : "text-muted-foreground hover:text-foreground hover:bg-muted/50 border border-transparent"
+                        )}
+                      >
+                        {cat === "genes" ? "Genes" : cat === "transcripts" ? "Transcripts" : "BUSCO"}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {featureCategory === "genes" && distributionByCategory && (
+                  <div className="space-y-1.5">
+                    {Object.entries(distributionByCategory).map(([category, s]) => (
+                      <div
+                        key={category}
+                        className="rounded-md border p-2 border-border"
+                        style={{
+                          borderColor: category === "coding" ? `${geneColors.coding}40` : category === "non_coding" ? `${geneColors.non_coding}40` : `${geneColors.pseudogene}40`,
+                          backgroundColor: category === "coding" ? `${geneColors.coding}10` : category === "non_coding" ? `${geneColors.non_coding}10` : `${geneColors.pseudogene}10`,
+                        }}
+                      >
+                        <div className="flex justify-between items-center text-xs">
+                          <span className="font-medium capitalize">
+                            {category === "non_coding" ? "Non-coding" : category}
+                          </span>
+                          <span className="tabular-nums">mean {s.mean.toFixed(1)}</span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 mt-0.5 text-[10px] text-muted-foreground">
+                          <span>med {s.median.toFixed(0)}</span>
+                          <span>std {s.std.toFixed(1)}</span>
+                          <span>min {s.min}</span>
+                          <span>max {s.max}</span>
+                        </div>
                       </div>
-                      <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 mt-0.5 text-[10px] text-muted-foreground">
-                        <span>med {s.median.toFixed(0)}</span>
-                        <span>std {s.std.toFixed(1)}</span>
-                        <span>min {s.min}</span>
-                        <span>max {s.max}</span>
+                    ))}
+                  </div>
+                )}
+                {featureCategory === "transcripts" && distributionByTranscript && (
+                  <div className="space-y-1.5">
+                    {Object.entries(distributionByTranscript).map(([category, s]) => (
+                      <div
+                        key={category}
+                        className="rounded-md border p-2 border-border"
+                        style={{
+                          borderColor: `${transcriptColors[category as keyof typeof transcriptColors]}40`,
+                          backgroundColor: `${transcriptColors[category as keyof typeof transcriptColors]}10`,
+                        }}
+                      >
+                        <div className="flex justify-between items-center text-xs">
+                          <span className="font-medium">{category}</span>
+                          <span className="tabular-nums">mean {s.mean.toFixed(1)}</span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 mt-0.5 text-[10px] text-muted-foreground">
+                          <span>med {s.median.toFixed(0)}</span>
+                          <span>std {s.std.toFixed(1)}</span>
+                          <span>min {s.min}</span>
+                          <span>max {s.max}</span>
+                        </div>
                       </div>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                )}
+                {featureCategory === "busco" && distributionByBusco && (
+                  <div className="space-y-1.5">
+                    {Object.entries(distributionByBusco).map(([category, s]) => {
+                      const labels: Record<string, string> = {
+                        single_copy: "Complete & single-copy (C+S)",
+                        duplicated: "Complete & duplicated (C+D)",
+                        fragmented: "Fragmented (F)",
+                        missing: "Missing (M)",
+                      }
+                      const color = buscoColors[category as keyof typeof buscoColors]
+                      return (
+                        <div
+                          key={category}
+                          className="rounded-md border p-2 border-border"
+                          style={{
+                            borderColor: `${color}40`,
+                            backgroundColor: `${color}10`,
+                          }}
+                        >
+                          <div className="flex justify-between items-center text-xs">
+                            <span className="font-medium">{labels[category] ?? category}</span>
+                            <span className="tabular-nums">mean {s.mean.toFixed(1)}</span>
+                          </div>
+                          <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 mt-0.5 text-[10px] text-muted-foreground">
+                            <span>med {s.median.toFixed(0)}</span>
+                            <span>std {s.std.toFixed(1)}</span>
+                            <span>min {s.min}</span>
+                            <span>max {s.max}</span>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
               </Card>
             )}
 

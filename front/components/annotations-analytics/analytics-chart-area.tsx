@@ -12,9 +12,11 @@ import {
   getTranscriptStats,
   getTranscriptTypeDetails,
   getTranscriptTypeMetricValues,
+  type GeneCategoryMetricValues,
   type GeneStatsSummary,
   type TranscriptStatsSummary,
   type TranscriptTypeDetails,
+  type TranscriptTypeMetricValues,
 } from "@/lib/api/annotations"
 import { useStatsCacheStore } from "@/lib/stores/stats-cache"
 import { BoxplotChart } from "@/components/annotations-stats/boxplot-chart"
@@ -305,9 +307,9 @@ export function AnalyticsChartArea({
           nextValues[r.entryId] = r.values
           if (r.result) {
             if (entityType === "genes") {
-              setCachedGeneMetric(r.entryId, selectedCatOrType, selectedMetric, r.result)
+              setCachedGeneMetric(r.entryId, selectedCatOrType, selectedMetric, r.result as GeneCategoryMetricValues)
             } else {
-              setCachedTranscriptMetric(r.entryId, selectedCatOrType, selectedMetric, r.result)
+              setCachedTranscriptMetric(r.entryId, selectedCatOrType, selectedMetric, r.result as TranscriptTypeMetricValues)
             }
           }
         }

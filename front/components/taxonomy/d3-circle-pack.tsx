@@ -7,7 +7,7 @@ import { useUIStore } from "@/lib/stores/ui"
 import { useFlattenedTreeStore, useFilteredTreeByRootAndRank } from "@/lib/stores/flattened-tree"
 import type { FlatTreeNode } from "@/lib/api/taxons"
 import type { NodeClickEvent } from "./taxonomy-types"
-import { getTreeGeneColors } from "./taxonomy-tree-controls"
+import { getTreeGeneColors, getTreeTranscriptColors, getTreeBuscoColors } from "./taxonomy-tree-controls"
 import { TaxonomyNodeTooltip } from "./taxonomy-node-tooltip"
 
 interface D3CirclePackProps {
@@ -293,10 +293,10 @@ export function D3CirclePack({
         if (found !== currentHovered) {
           hoveredNodeRef.current = found
           setHoveredNode(found)
-          setTooltipPos(found ? { x: mouseX, y: mouseY } : null)
+          setTooltipPos(found ? { x: event.clientX, y: event.clientY } : null)
           debouncedDraw(transform)
         } else if (found) {
-          setTooltipPos({ x: mouseX, y: mouseY })
+          setTooltipPos({ x: event.clientX, y: event.clientY })
         }
 
         canvas.style.cursor = found ? "pointer" : "default"
@@ -422,6 +422,20 @@ export function D3CirclePack({
               pseudogene: hoveredNode.data.pseudogene_count ?? 0,
             },
             geneColors: getTreeGeneColors(isDark),
+            transcriptCounts: {
+              mRNA: hoveredNode.data.mrna_count ?? 0,
+              lncRNA: hoveredNode.data.lncrna_count ?? 0,
+              tRNA: hoveredNode.data.trna_count ?? 0,
+              miRNA: hoveredNode.data.mirna_count ?? 0,
+            },
+            transcriptColors: getTreeTranscriptColors(isDark),
+            buscoCounts: {
+              single_copy: hoveredNode.data.busco_single_copy_mean ?? 0,
+              duplicated: hoveredNode.data.busco_duplicated_mean ?? 0,
+              fragmented: hoveredNode.data.busco_fragmented_mean ?? 0,
+              missing: hoveredNode.data.busco_missing_mean ?? 0,
+            },
+            buscoColors: getTreeBuscoColors(isDark),
           }}
         />
       )}

@@ -6,7 +6,7 @@ import { Network } from "lucide-react"
 import { useUIStore } from "@/lib/stores/ui"
 import { useFlattenedTreeStore, useFilteredTreeByRootAndRank } from "@/lib/stores/flattened-tree"
 import { useTaxonomyGeneTypesStore } from "@/lib/stores/taxonomy-gene-types"
-import { getTreeGeneColors, type TreeRankOption } from "./taxonomy-tree-controls"
+import { getTreeGeneColors, getTreeTranscriptColors, getTreeBuscoColors, type TreeRankOption } from "./taxonomy-tree-controls"
 import type { FlatTreeNode } from "@/lib/api/taxons"
 import type { NodeClickEvent } from "./taxonomy-types"
 import { TaxonomyNodeTooltip } from "./taxonomy-node-tooltip"
@@ -51,11 +51,21 @@ export function D3RadialTree({
   const selectedRank: TreeRankOption =
     controlledRank === undefined || controlledRank === null ? "all" : controlledRank
   const showLabels = controlledShowLabels ?? false
+  const stackMode = useTaxonomyGeneTypesStore((s) => s.stackMode)
   const selectedGeneTypes = useTaxonomyGeneTypesStore((s) => s.selectedGeneTypes)
+  const selectedTranscriptTypes = useTaxonomyGeneTypesStore((s) => s.selectedTranscriptTypes)
+  const selectedBuscoTypes = useTaxonomyGeneTypesStore((s) => s.selectedBuscoTypes)
   const [animationProgress, setAnimationProgress] = useState(1)
   const previousGeneTypesRef = useRef<Set<"coding" | "non_coding" | "pseudogene">>(
     new Set(["coding", "non_coding", "pseudogene"])
   )
+  const previousTranscriptTypesRef = useRef<Set<"mRNA" | "lncRNA" | "tRNA" | "miRNA">>(
+    new Set(["mRNA", "lncRNA", "tRNA", "miRNA"])
+  )
+  const previousBuscoTypesRef = useRef<Set<"single_copy" | "duplicated" | "fragmented" | "missing">>(
+    new Set(["single_copy", "duplicated", "fragmented", "missing"])
+  )
+  const previousStackModeRef = useRef<"genes" | "transcripts" | "busco">("genes")
   const animationFrameRef = useRef<number | null>(null)
   const hoveredNodeRef = useRef<d3.HierarchyNode<FlatTreeNode> | null>(null)
   const nodesArrayRef = useRef<
@@ -95,6 +105,8 @@ export function D3RadialTree({
   const theme = useUIStore((state) => state.theme)
   const isDark = theme === "dark"
   const geneColors = getTreeGeneColors(isDark)
+  const transcriptColors = getTreeTranscriptColors(isDark)
+  const buscoColors = getTreeBuscoColors(isDark)
 
   useEffect(() => {
     const el = containerRef.current
@@ -124,10 +136,24 @@ export function D3RadialTree({
   }, [hoveredNode])
 
   useEffect(() => {
-    const typesChanged =
+    const modeChanged = stackMode !== previousStackModeRef.current
+    const geneTypesChanged =
       selectedGeneTypes.size !== previousGeneTypesRef.current.size ||
-      Array.from(selectedGeneTypes).some((type) => !previousGeneTypesRef.current.has(type)) ||
-      Array.from(previousGeneTypesRef.current).some((type) => !selectedGeneTypes.has(type))
+      [...selectedGeneTypes].some((t) => !previousGeneTypesRef.current.has(t)) ||
+      [...previousGeneTypesRef.current].some((t) => !selectedGeneTypes.has(t))
+    const transcriptTypesChanged =
+      selectedTranscriptTypes.size !== previousTranscriptTypesRef.current.size ||
+      [...selectedTranscriptTypes].some((t) => !previousTranscriptTypesRef.current.has(t)) ||
+      [...previousTranscriptTypesRef.current].some((t) => !selectedTranscriptTypes.has(t))
+    const buscoTypesChanged =
+      selectedBuscoTypes.size !== previousBuscoTypesRef.current.size ||
+      [...selectedBuscoTypes].some((t) => !previousBuscoTypesRef.current.has(t)) ||
+      [...previousBuscoTypesRef.current].some((t) => !selectedBuscoTypes.has(t))
+    const typesChanged =
+      modeChanged ||
+      (stackMode === "genes" && geneTypesChanged) ||
+      (stackMode === "transcripts" && transcriptTypesChanged) ||
+      (stackMode === "busco" && buscoTypesChanged)
 
     if (typesChanged) {
       setAnimationProgress(0)
@@ -145,7 +171,10 @@ export function D3RadialTree({
         } else {
           animationFrameRef.current = null
           setAnimationProgress(1)
+          previousStackModeRef.current = stackMode
           previousGeneTypesRef.current = new Set(selectedGeneTypes)
+          previousTranscriptTypesRef.current = new Set(selectedTranscriptTypes)
+          previousBuscoTypesRef.current = new Set(selectedBuscoTypes)
         }
       }
       animationFrameRef.current = requestAnimationFrame(animate)
@@ -156,7 +185,7 @@ export function D3RadialTree({
         cancelAnimationFrame(animationFrameRef.current)
       }
     }
-  }, [selectedGeneTypes])
+  }, [stackMode, selectedGeneTypes, selectedTranscriptTypes, selectedBuscoTypes])
 
   useEffect(() => {
     fetchFlattenedTree()
@@ -253,23 +282,72 @@ export function D3RadialTree({
       }
     }
 
-    const getTotalForSelectedTypes = (node: d3.HierarchyNode<FlatTreeNode>) => {
-      let total = 0
-      if (selectedGeneTypes.has("coding")) total += node.data.coding_count || 0
-      if (selectedGeneTypes.has("non_coding")) total += node.data.non_coding_count || 0
-      if (selectedGeneTypes.has("pseudogene")) total += node.data.pseudogene_count || 0
-      return total
+    type Segment = { type: string; value: number; color: string }
+    const getTotalForNode = (
+      node: d3.HierarchyNode<FlatTreeNode>,
+      mode: "genes" | "transcripts" | "busco",
+      geneSet: Set<string>,
+      transcriptSet: Set<string>,
+      buscoSet: Set<string>
+    ): number => {
+      const d = node.data
+      if (mode === "genes") {
+        let t = 0
+        if (geneSet.has("coding")) t += d.coding_count ?? 0
+        if (geneSet.has("non_coding")) t += d.non_coding_count ?? 0
+        if (geneSet.has("pseudogene")) t += d.pseudogene_count ?? 0
+        return t
+      }
+      if (mode === "transcripts") {
+        let t = 0
+        if (transcriptSet.has("mRNA")) t += d.mrna_count ?? 0
+        if (transcriptSet.has("lncRNA")) t += d.lncrna_count ?? 0
+        if (transcriptSet.has("tRNA")) t += d.trna_count ?? 0
+        if (transcriptSet.has("miRNA")) t += d.mirna_count ?? 0
+        return t
+      }
+      let t = 0
+      if (buscoSet.has("single_copy")) t += d.busco_single_copy_mean ?? 0
+      if (buscoSet.has("duplicated")) t += d.busco_duplicated_mean ?? 0
+      if (buscoSet.has("fragmented")) t += d.busco_fragmented_mean ?? 0
+      if (buscoSet.has("missing")) t += d.busco_missing_mean ?? 0
+      return t
+    }
+    const getSegmentsForNode = (node: d3.HierarchyNode<FlatTreeNode>): Segment[] => {
+      const d = node.data
+      if (stackMode === "genes") {
+        return [
+          { type: "coding", value: d.coding_count ?? 0, color: nodeGeneColors.coding },
+          { type: "non_coding", value: d.non_coding_count ?? 0, color: nodeGeneColors.non_coding },
+          { type: "pseudogene", value: d.pseudogene_count ?? 0, color: nodeGeneColors.pseudogene },
+        ].filter((s) => s.value > 0 && selectedGeneTypes.has(s.type as "coding" | "non_coding" | "pseudogene"))
+      }
+      if (stackMode === "transcripts") {
+        return [
+          { type: "mRNA", value: d.mrna_count ?? 0, color: transcriptColors.mRNA },
+          { type: "lncRNA", value: d.lncrna_count ?? 0, color: transcriptColors.lncRNA },
+          { type: "tRNA", value: d.trna_count ?? 0, color: transcriptColors.tRNA },
+          { type: "miRNA", value: d.mirna_count ?? 0, color: transcriptColors.miRNA },
+        ].filter((s) => s.value > 0 && selectedTranscriptTypes.has(s.type as "mRNA" | "lncRNA" | "tRNA" | "miRNA"))
+      }
+      return [
+        { type: "single_copy", value: d.busco_single_copy_mean ?? 0, color: buscoColors.single_copy },
+        { type: "duplicated", value: d.busco_duplicated_mean ?? 0, color: buscoColors.duplicated },
+        { type: "fragmented", value: d.busco_fragmented_mean ?? 0, color: buscoColors.fragmented },
+        { type: "missing", value: d.busco_missing_mean ?? 0, color: buscoColors.missing },
+      ].filter((s) => s.value > 0 && selectedBuscoTypes.has(s.type as "single_copy" | "duplicated" | "fragmented" | "missing"))
     }
 
-    const getPreviousTotalForSelectedTypes = (node: d3.HierarchyNode<FlatTreeNode>) => {
-      let total = 0
-      if (previousGeneTypesRef.current.has("coding")) total += node.data.coding_count || 0
-      if (previousGeneTypesRef.current.has("non_coding"))
-        total += node.data.non_coding_count || 0
-      if (previousGeneTypesRef.current.has("pseudogene"))
-        total += node.data.pseudogene_count || 0
-      return total
-    }
+    const getTotalForSelectedTypes = (node: d3.HierarchyNode<FlatTreeNode>) =>
+      getTotalForNode(node, stackMode, selectedGeneTypes, selectedTranscriptTypes, selectedBuscoTypes)
+    const getPreviousTotalForSelectedTypes = (node: d3.HierarchyNode<FlatTreeNode>) =>
+      getTotalForNode(
+        node,
+        previousStackModeRef.current,
+        previousGeneTypesRef.current,
+        previousTranscriptTypesRef.current,
+        previousBuscoTypesRef.current
+      )
 
     const maxTotalGenes = Math.max(
       1,
@@ -279,10 +357,12 @@ export function D3RadialTree({
       1,
       d3.max(leafNodes, (d) => getPreviousTotalForSelectedTypes(d)) || 1
     )
-    const animatedMaxGenes =
-      maxPreviousGenes + (maxTotalGenes - maxPreviousGenes) * animationProgress
+    const stackModeChanged = stackMode !== previousStackModeRef.current
+    const animatedMaxGenes = stackModeChanged
+      ? maxTotalGenes
+      : maxPreviousGenes + (maxTotalGenes - maxPreviousGenes) * animationProgress
 
-    const BAR_MAX_RADIUS = 50
+    const BAR_MAX_RADIUS = 60
     const BAR_GAP = 4
     const LABEL_SPACING = 5
     const nodeGeneColors = getTreeGeneColors(isDark)
@@ -480,26 +560,7 @@ export function D3RadialTree({
           startAngle,
           endAngle,
         } = barBounds
-        const allSegments = [
-          {
-            type: "coding" as const,
-            value: node.data.coding_count || 0,
-            color: nodeGeneColors.coding,
-          },
-          {
-            type: "non_coding" as const,
-            value: node.data.non_coding_count || 0,
-            color: nodeGeneColors.non_coding,
-          },
-          {
-            type: "pseudogene" as const,
-            value: node.data.pseudogene_count || 0,
-            color: nodeGeneColors.pseudogene,
-          },
-        ]
-        const visibleSegments = allSegments.filter(
-          (s) => s.value > 0 && selectedGeneTypes.has(s.type)
-        )
+        const visibleSegments = getSegmentsForNode(node)
         if (visibleSegments.length === 0) return
         const totalVisibleGenes = visibleSegments.reduce((sum, s) => sum + s.value, 0)
         const targetBarLength =
@@ -763,10 +824,9 @@ export function D3RadialTree({
       const rect = canvas.getBoundingClientRect()
       const mouseX = event.clientX - rect.left
       const mouseY = event.clientY - rect.top
-      // Tooltip is a sibling of canvas inside the container; use container-relative coords so it lines up with the cursor
-      const containerRect = container.getBoundingClientRect()
-      const tooltipX = event.clientX - containerRect.left + container.scrollLeft
-      const tooltipY = event.clientY - containerRect.top + container.scrollTop
+      // Tooltip is portaled to body and uses viewport coords so it stays on screen
+      const tooltipX = event.clientX
+      const tooltipY = event.clientY
       const transform = currentTransformRef.current
       const canvasX = (mouseX - (width / 2) * transform.k - transform.x) / transform.k
       const canvasY = (mouseY - (height / 2) * transform.k - transform.y) / transform.k
@@ -873,8 +933,13 @@ export function D3RadialTree({
     filteredTree,
     isDark,
     showLabels,
+    stackMode,
     selectedGeneTypes,
+    selectedTranscriptTypes,
+    selectedBuscoTypes,
     animationProgress,
+    transcriptColors,
+    buscoColors,
     onNodeClick,
     onTaxonSelect,
     containerSize,
@@ -931,6 +996,20 @@ export function D3RadialTree({
                 pseudogene: hoveredNode.data.pseudogene_count ?? 0,
               },
               geneColors,
+              transcriptCounts: {
+                mRNA: hoveredNode.data.mrna_count ?? 0,
+                lncRNA: hoveredNode.data.lncrna_count ?? 0,
+                tRNA: hoveredNode.data.trna_count ?? 0,
+                miRNA: hoveredNode.data.mirna_count ?? 0,
+              },
+              transcriptColors,
+              buscoCounts: {
+                single_copy: hoveredNode.data.busco_single_copy_mean ?? 0,
+                duplicated: hoveredNode.data.busco_duplicated_mean ?? 0,
+                fragmented: hoveredNode.data.busco_fragmented_mean ?? 0,
+                missing: hoveredNode.data.busco_missing_mean ?? 0,
+              },
+              buscoColors,
             }}
           />
         )}

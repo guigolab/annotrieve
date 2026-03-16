@@ -4,7 +4,6 @@ import { useState, useEffect, useRef, useCallback } from "react"
 import { useRouter } from "next/navigation"
 import { Card } from "@/components/ui/card"
 import { FileText, Loader2, ArrowUp, ArrowDown, Database, BarChart3 } from "lucide-react"
-import { Badge } from "@/components/ui/badge"
 import { AnnotationsStatsDashboard } from "./annotations-stats-dashboard"
 import { AnnotationCard } from "./annotation-card"
 import type { AnnotationRecord } from "@/lib/api/types"
@@ -218,6 +217,7 @@ export function AnnotationsList({ annotations, totalAnnotations, loading }: Anno
     { value: "coding_genes_count", label: "Coding genes count" },
     { value: "non_coding_genes_count", label: "Non-coding genes count" },
     { value: "pseudogenes_count", label: "Pseudogenes count" },
+    { value: "busco_complete", label: "Busco complete" },
   ]
 
   const handleSortFieldChange = (field: string) => {

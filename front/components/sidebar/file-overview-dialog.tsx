@@ -32,6 +32,7 @@ import {
 } from 'chart.js'
 import { SourceFileOverview } from "./file-overview-dialog/source-file-overview"
 import { FeaturesSummary } from "./file-overview-dialog/features-summary"
+import { BuscoScoreSection } from "./file-overview-dialog/busco-score-section"
 import { OverviewSection } from "./file-overview-dialog/overview-section"
 
 // Register Chart.js components
@@ -472,6 +473,10 @@ export function FileOverviewSidebar({ annotation, open, onOpenChange }: FileOver
           <SourceFileOverview annotation={annotation} />
 
           <FeaturesSummary annotation={annotation} />
+
+          {annotation.busco && (
+            <BuscoScoreSection annotation={annotation} />
+          )}
 
           {(annotation as any).features_statistics && (
             <OverviewSection

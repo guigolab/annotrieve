@@ -137,7 +137,7 @@ export function HomeFooter() {
           </span>
           <span>
             <a
-              href="https://www.genome.crg.cat"
+              href="https://genome.crg.cat"
               target="_blank"
               rel="noopener noreferrer"
               className="hover:text-foreground transition-colors"

@@ -263,7 +263,9 @@ def update_taxon_gene_and_transcript_stats():
                 miRNA=TaxonTranscriptTypeStats(count=compute_distribution_stats(t.get("miRNA", []))),
                 tRNA=TaxonTranscriptTypeStats(count=compute_distribution_stats(t.get("tRNA", []))),
             )
-            taxon.modify(stats=TaxonAnnotationStats(genes=genes, transcripts=transcripts))
+            # Keep the same busco score if it exists (do not overwrite)
+            busco_score = getattr(taxon.stats, "busco", None) if taxon.stats else None
+            taxon.modify(stats=TaxonAnnotationStats(genes=genes, transcripts=transcripts, busco=busco_score))
 
     print("Taxon gene and transcript stats updated")
 

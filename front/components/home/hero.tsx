@@ -257,12 +257,6 @@ export function Hero() {
                                 <Network className="h-4 w-4 sm:h-5 sm:w-5" />
                                 <span>Explore Taxonomy</span>
                             </Button>
-                            <Badge
-                                variant="secondary"
-                                className="absolute -top-1.5 -right-1.5 text-[10px] px-1.5 py-0 h-4 shrink-0 pointer-events-none"
-                            >
-                                Beta
-                            </Badge>
                         </div>
                     </div>
 

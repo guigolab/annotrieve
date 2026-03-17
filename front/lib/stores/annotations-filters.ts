@@ -35,6 +35,9 @@ export interface FiltersState {
   pipelines: string[]
   providers: string[]
   databaseSources: string[]
+  /** BUSCO completeness % range; null = no filter (0–100). */
+  buscoCompleteFrom: number | null
+  buscoCompleteTo: number | null
 }
 
 // Annotations state interface (pagination and sorting only, no data storage)
@@ -63,6 +66,7 @@ export interface AnnotationsFiltersStore extends FiltersState, AnnotationsState 
   setPipelines: (pipelines: string[]) => void
   setProviders: (providers: string[]) => void
   setDatabaseSources: (sources: string[]) => void
+  setBuscoCompleteRange: (from: number | null, to: number | null) => void
   clearAllFilters: () => void
   
   // Annotations actions
@@ -92,6 +96,8 @@ const defaultFilters: FiltersState = {
   pipelines: [],
   providers: [],
   databaseSources: [],
+  buscoCompleteFrom: null,
+  buscoCompleteTo: null,
 }
 
 const defaultAnnotations: AnnotationsState = {
@@ -171,7 +177,10 @@ export const useAnnotationsFiltersStore = create<AnnotationsFiltersStore>((set, 
     set({ databaseSources: sources })
     get().resetAnnotationsPage()
   },
-  
+  setBuscoCompleteRange: (from: number | null, to: number | null) => {
+    set({ buscoCompleteFrom: from, buscoCompleteTo: to })
+    get().resetAnnotationsPage()
+  },
   clearAllFilters: () => {
     set({ ...defaultFilters })
     get().resetAnnotationsPage()
@@ -233,6 +242,12 @@ export const useAnnotationsFiltersStore = create<AnnotationsFiltersStore>((set, 
     }
     if (state.databaseSources.length > 0) {
       params.db_sources = state.databaseSources.join(',')
+    }
+    if (state.buscoCompleteFrom != null) {
+      params.busco_complete_from = state.buscoCompleteFrom
+    }
+    if (state.buscoCompleteTo != null) {
+      params.busco_complete_to = state.buscoCompleteTo
     }
     
     // Add server-side sorting
@@ -348,7 +363,9 @@ export const useAnnotationsFiltersStore = create<AnnotationsFiltersStore>((set, 
       state.featureTypes.length > 0 ||
       state.pipelines.length > 0 ||
       state.providers.length > 0 ||
-      state.databaseSources.length > 0
+      state.databaseSources.length > 0 ||
+      state.buscoCompleteFrom != null ||
+      state.buscoCompleteTo != null
     )
   },
 }))

@@ -231,6 +231,40 @@ export function getTranscriptTypeMetricValues(
   )
 }
 
+// Busco Stats API (metrics only, no categories)
+export interface BuscoStatsSummary {
+  total_annotations: number
+  summary: Record<
+    string,
+    {
+      annotations_count: number
+      missing_annotations_count: number
+      mean: number | null
+    }
+  >
+  metrics: string[]
+}
+
+export function getBuscoStats(params?: Query) {
+  return apiGet<BuscoStatsSummary>('/annotations/busco-stats', params)
+}
+
+export interface BuscoMetricValues {
+  metric: string
+  values: number[]
+  annotation_ids?: string[]
+}
+
+export function getBuscoMetricValues(
+  metric: string,
+  params?: Query & { include_annotations?: boolean }
+) {
+  return apiGet<BuscoMetricValues>(
+    `/annotations/busco-stats/${encodeURIComponent(metric)}`,
+    params
+  )
+}
+
 // Annotations aggregates by taxon rank (for radial stacked bar chart)
 export const TAXON_RANK_OPTIONS = [
   'domain',

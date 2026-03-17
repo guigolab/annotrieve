@@ -32,6 +32,7 @@ function SubsetCard({ subset }: { subset: AnnotationSubset }) {
   const setPipelines = useAnnotationsFiltersStore((state) => state.setPipelines)
   const setProviders = useAnnotationsFiltersStore((state) => state.setProviders)
   const setDatabaseSources = useAnnotationsFiltersStore((state) => state.setDatabaseSources)
+  const setBuscoCompleteRange = useAnnotationsFiltersStore((state) => state.setBuscoCompleteRange)
 
   const handleLoad = () => {
     const filters = subset.filters
@@ -48,7 +49,8 @@ function SubsetCard({ subset }: { subset: AnnotationSubset }) {
     setPipelines(filters.pipelines)
     setProviders(filters.providers)
     setDatabaseSources(filters.databaseSources)
-    
+    setBuscoCompleteRange(filters.buscoCompleteFrom ?? null, filters.buscoCompleteTo ?? null)
+
     // Track that we just loaded this subset
     setLastLoadedSubsetId(subset.id)
   }

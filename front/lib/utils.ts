@@ -56,7 +56,13 @@ export function buildParamsFromFilters(filters: FiltersState): Record<string, an
   if (filters.databaseSources.length > 0) {
     params.db_sources = filters.databaseSources.join(',')
   }
-  
+  if (filters.buscoCompleteFrom != null) {
+    params.busco_complete_from = filters.buscoCompleteFrom
+  }
+  if (filters.buscoCompleteTo != null) {
+    params.busco_complete_to = filters.buscoCompleteTo
+  }
+
   return params
 }
 
@@ -80,6 +86,8 @@ export function getFiltersHash(filters: FiltersState): string {
     pipelines: [...filters.pipelines].sort().join(','),
     providers: [...filters.providers].sort().join(','),
     databaseSources: [...filters.databaseSources].sort().join(','),
+    buscoCompleteFrom: filters.buscoCompleteFrom ?? '',
+    buscoCompleteTo: filters.buscoCompleteTo ?? '',
   }
   
   // Create a stable string representation

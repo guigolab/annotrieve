@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useRef } from "react"
+import { useEffect, useState, useRef, useMemo } from "react"
 import * as d3 from "d3"
 import { Network } from "lucide-react"
 import { useUIStore } from "@/lib/stores/ui"
@@ -104,9 +104,9 @@ export function D3RadialTree({
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 })
   const theme = useUIStore((state) => state.theme)
   const isDark = theme === "dark"
-  const geneColors = getTreeGeneColors(isDark)
-  const transcriptColors = getTreeTranscriptColors(isDark)
-  const buscoColors = getTreeBuscoColors(isDark)
+  const geneColors = useMemo(() => getTreeGeneColors(isDark), [isDark])
+  const transcriptColors = useMemo(() => getTreeTranscriptColors(isDark), [isDark])
+  const buscoColors = useMemo(() => getTreeBuscoColors(isDark), [isDark])
 
   useEffect(() => {
     const el = containerRef.current

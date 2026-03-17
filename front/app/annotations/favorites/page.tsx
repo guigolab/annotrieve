@@ -4,17 +4,26 @@ import { useState, useEffect, useMemo, type ReactNode } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { AnnotationsCompare } from "@/components/annotations-compare/annotations-compare"
 import { listAnnotations } from "@/lib/api/annotations"
 import { useSelectedAnnotationsStore } from "@/lib/stores/selected-annotations"
 import type { Annotation } from "@/lib/types"
 import { RightSidebar } from "@/components/sidebar/right-sidebar"
-import { AlertCircle, ArrowLeft, GitCompare, Loader2, RefreshCw, Star } from "lucide-react"
+import { AlertCircle, ArrowLeft, GitCompare, Loader2, RefreshCw, Star, Trash2, AlertTriangle } from "lucide-react"
 
 export default function FavoritesComparePage() {
   const router = useRouter()
 
   const annotationsCart = useSelectedAnnotationsStore((state) => state.annotationsCart)
+  const removeFromCart = useSelectedAnnotationsStore((state) => state.removeFromCart)
   const favoriteSelections = useMemo(
     () => Array.from(annotationsCart.values()),
     [annotationsCart]
@@ -84,7 +93,24 @@ export default function FavoritesComparePage() {
   const selectionCount = favoriteIds.length
   const loadedCount = favoriteAnnotations.length
 
+  const notFoundIds = useMemo(() => {
+    if (loading || favoriteIds.length === 0) return []
+    const loadedIds = new Set(favoriteAnnotations.map((a) => a.annotation_id))
+    return favoriteIds.filter((id) => !loadedIds.has(id))
+  }, [loading, favoriteIds, favoriteAnnotations])
+
+  const [notFoundDialogOpen, setNotFoundDialogOpen] = useState(false)
+
   const handleRetry = () => setRefreshToken((prev) => prev + 1)
+
+  const handleRemoveNotFound = (id: string) => {
+    removeFromCart(id)
+  }
+
+  const handleRemoveAllNotFound = () => {
+    notFoundIds.forEach((id) => removeFromCart(id))
+    setNotFoundDialogOpen(false)
+  }
 
   let content: ReactNode
   if (selectionCount === 0) {
@@ -193,8 +219,74 @@ export default function FavoritesComparePage() {
                 Loaded annotations: <span className="text-foreground font-semibold">{loadedCount}</span>
               </span>
             )}
+            {notFoundIds.length > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-2 border-amber-500/60 text-amber-600 dark:text-amber-400 hover:bg-amber-500/10 hover:border-amber-500/80"
+                onClick={() => setNotFoundDialogOpen(true)}
+              >
+                <AlertTriangle className="h-4 w-4" />
+                {notFoundIds.length} favorite{notFoundIds.length !== 1 ? "s" : ""} not found
+              </Button>
+            )}
           </div>
         </header>
+
+        <Dialog open={notFoundDialogOpen} onOpenChange={setNotFoundDialogOpen}>
+          <DialogContent className="max-w-md sm:max-w-lg">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <AlertTriangle className="h-5 w-5 text-amber-500" />
+                Favorites not found
+              </DialogTitle>
+              <DialogDescription>
+                The following {notFoundIds.length} favorite{notFoundIds.length !== 1 ? "s" : ""} could not be loaded (e.g. removed or unavailable). Remove them from your favorites to clean up.
+              </DialogDescription>
+            </DialogHeader>
+            <ul className="max-h-[240px] overflow-y-auto rounded-md border border-border bg-muted/30 py-2 text-sm">
+              {notFoundIds.map((id) => {
+                const cartEntry = annotationsCart.get(id)
+                const label = cartEntry?.organism_name ?? cartEntry?.assembly_name ?? id
+                return (
+                  <li
+                    key={id}
+                    className="flex items-center justify-between gap-2 px-3 py-2 hover:bg-muted/50"
+                  >
+                    <span className="truncate text-foreground" title={id}>
+                      {label}
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="shrink-0 text-muted-foreground hover:text-destructive"
+                      onClick={() => handleRemoveNotFound(id)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                      <span className="sr-only">Remove</span>
+                    </Button>
+                  </li>
+                )
+              })}
+            </ul>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => setNotFoundDialogOpen(false)}
+              >
+                Close
+              </Button>
+              <Button
+                variant="destructive"
+                className="gap-2"
+                onClick={handleRemoveAllNotFound}
+              >
+                <Trash2 className="h-4 w-4" />
+                Remove all not found
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
         <main className="flex-1 min-h-0 lg:overflow-hidden overflow-y-auto bg-background">
           {content}
         </main>

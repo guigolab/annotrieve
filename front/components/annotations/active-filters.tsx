@@ -46,6 +46,8 @@ export function ActiveFilters({ readOnly = false }: ActiveFiltersProps = {}) {
     providers,
     featureSources,
     databaseSources,
+    buscoCompleteFrom,
+    buscoCompleteTo,
     setSelectedTaxons,
     setSelectedAssemblies,
     setSelectedBioprojects,
@@ -58,6 +60,7 @@ export function ActiveFilters({ readOnly = false }: ActiveFiltersProps = {}) {
     setProviders,
     setDatabaseSources,
     setFeatureSources,
+    setBuscoCompleteRange,
     clearAllFilters,
   } = store
 
@@ -376,6 +379,19 @@ export function ActiveFilters({ readOnly = false }: ActiveFiltersProps = {}) {
       })
     })
 
+    if (buscoCompleteFrom != null || buscoCompleteTo != null) {
+      const from = buscoCompleteFrom ?? 0
+      const to = buscoCompleteTo ?? 100
+      chips.push({
+        key: "busco-completeness",
+        label: `BUSCO: ${from}–${to}%`,
+        value: `busco-${from}-${to}`,
+        onRemove: () => setBuscoCompleteRange(null, null),
+        icon: <Filter className="h-3.5 w-3.5 text-muted-foreground" />,
+        colorScheme: chipColorScheme,
+      })
+    }
+
     return chips
   }, [
     selectedTaxons,
@@ -390,6 +406,9 @@ export function ActiveFilters({ readOnly = false }: ActiveFiltersProps = {}) {
     providers,
     databaseSources,
     featureSources,
+    buscoCompleteFrom,
+    buscoCompleteTo,
+    setBuscoCompleteRange,
     handleRemoveTaxid,
     handleRemoveAssembly,
     handleRemoveAssemblyLevel,
@@ -423,6 +442,8 @@ export function ActiveFilters({ readOnly = false }: ActiveFiltersProps = {}) {
       pipelines,
       providers,
       databaseSources,
+      buscoCompleteFrom,
+      buscoCompleteTo,
     }
     return getFiltersHash(currentFilters)
   }, [
@@ -439,6 +460,8 @@ export function ActiveFilters({ readOnly = false }: ActiveFiltersProps = {}) {
     pipelines,
     providers,
     databaseSources,
+    buscoCompleteFrom,
+    buscoCompleteTo,
   ])
 
   // Check if current filters match any existing subset (only when hash or subsets change)
@@ -509,6 +532,8 @@ export function ActiveFilters({ readOnly = false }: ActiveFiltersProps = {}) {
         pipelines: state.pipelines,
         providers: state.providers,
         databaseSources: state.databaseSources,
+        buscoCompleteFrom: state.buscoCompleteFrom,
+        buscoCompleteTo: state.buscoCompleteTo,
       }
       const savedId = addSubset(trimmedName, currentFilters)
       // Track that we just saved this subset - button will stay disabled until filters change

@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useMemo, useCallback, useRef } from "react"
-import { BarChart2, BarChart3, Activity, SlidersHorizontal, Star, Database, Dna, X } from "lucide-react"
+import { BarChart2, BarChart3, Activity, SlidersHorizontal, Star, Database, Dna, X, Beaker } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -12,11 +12,15 @@ import {
   getTranscriptStats,
   getTranscriptTypeDetails,
   getTranscriptTypeMetricValues,
+  getBuscoStats,
+  getBuscoMetricValues,
   type GeneCategoryMetricValues,
   type GeneStatsSummary,
   type TranscriptStatsSummary,
   type TranscriptTypeDetails,
   type TranscriptTypeMetricValues,
+  type BuscoStatsSummary,
+  type BuscoMetricValues,
 } from "@/lib/api/annotations"
 import { useStatsCacheStore } from "@/lib/stores/stats-cache"
 import { BoxplotChart } from "@/components/annotations-stats/boxplot-chart"
@@ -82,6 +86,7 @@ export function AnalyticsChartArea({
   // ── Stats (for categories/types list) ───────────────────────────────────
   const [geneStats, setGeneStats] = useState<GeneStatsSummary | null>(null)
   const [transcriptStats, setTranscriptStats] = useState<TranscriptStatsSummary | null>(null)
+  const [buscoStats, setBuscoStats] = useState<BuscoStatsSummary | null>(null)
   const [typeDetails, setTypeDetails] = useState<TranscriptTypeDetails | null>(null)
   const [statsLoading, setStatsLoading] = useState(false)
   const [statsError, setStatsError] = useState<string | null>(null)
@@ -106,6 +111,10 @@ export function AnalyticsChartArea({
   const setCachedGeneMetric = useStatsCacheStore(s => s.setGeneMetric)
   const getCachedTranscriptMetric = useStatsCacheStore(s => s.getTranscriptMetric)
   const setCachedTranscriptMetric = useStatsCacheStore(s => s.setTranscriptMetric)
+  const getCachedBuscoStats = useStatsCacheStore(s => s.getBuscoStats)
+  const setCachedBuscoStats = useStatsCacheStore(s => s.setBuscoStats)
+  const getCachedBuscoMetric = useStatsCacheStore(s => s.getBuscoMetric)
+  const setCachedBuscoMetric = useStatsCacheStore(s => s.setBuscoMetric)
 
   // ── Derive a stable params getter per entry ──────────────────────────────
   const getParams = useCallback(
@@ -120,16 +129,21 @@ export function AnalyticsChartArea({
   const selectedEntriesKey = selectedEntries.map(e => e.id).join(",")
   const firstEntry = selectedEntries[0]
 
-  // ── Fetch stats (categories/types) when entity or first entry changes ────
+  // ── Fetch stats (categories/types or busco metrics) when entity or first entry changes ────
   useEffect(() => {
     if (!firstEntry) {
       setGeneStats(null)
       setTranscriptStats(null)
+      setBuscoStats(null)
       setTypeDetails(null)
       setSelectedCatOrType("")
       setSelectedMetric("")
       return
     }
+
+    // Clear metric/category immediately so dependent effects don't request with stale values (e.g. mean_length for busco)
+    setSelectedMetric("")
+    if (entityType === "busco") setSelectedCatOrType("")
 
     let cancelled = false
     setStatsLoading(true)
@@ -148,6 +162,7 @@ export function AnalyticsChartArea({
           if (!cancelled) {
             setGeneStats(result)
             setTranscriptStats(null)
+            setBuscoStats(null)
             setTypeDetails(null)
             setStatsLoading(false)
             setSelectedMetric("")
@@ -160,7 +175,7 @@ export function AnalyticsChartArea({
               setSelectedMetric(preferred || result.metrics[0])
             }
           }
-        } else {
+        } else if (entityType === "transcripts") {
           let result = getCachedTranscriptStats(firstEntry.id)
           if (!result) {
             result = await getTranscriptStats(params)
@@ -169,6 +184,7 @@ export function AnalyticsChartArea({
           if (!cancelled) {
             setTranscriptStats(result)
             setGeneStats(null)
+            setBuscoStats(null)
             setTypeDetails(null)
             setStatsLoading(false)
             setSelectedMetric("")
@@ -179,6 +195,26 @@ export function AnalyticsChartArea({
                 (a, b) => (summary[b]?.annotations_count || 0) - (summary[a]?.annotations_count || 0)
               )
               setSelectedCatOrType(preferred || sorted[0])
+            }
+          }
+        } else {
+          // busco: metrics only
+          let result = getCachedBuscoStats(firstEntry.id)
+          if (!result) {
+            result = await getBuscoStats(params)
+            setCachedBuscoStats(firstEntry.id, result)
+          }
+          if (!cancelled) {
+            setBuscoStats(result)
+            setGeneStats(null)
+            setTranscriptStats(null)
+            setTypeDetails(null)
+            setStatsLoading(false)
+            setSelectedCatOrType("")
+            setSelectedMetric("")
+            if (result.metrics?.length) {
+              const preferred = result.metrics.find((m: string) => m === "complete")
+              setSelectedMetric(preferred || result.metrics[0])
             }
           }
         }
@@ -230,13 +266,19 @@ export function AnalyticsChartArea({
 
   // ── Available categories / types & metrics ───────────────────────────────
   const categories = useMemo(
-    () => (entityType === "genes" ? geneStats?.categories || [] : transcriptStats?.types || []),
+    () =>
+      entityType === "genes"
+        ? geneStats?.categories || []
+        : entityType === "transcripts"
+          ? transcriptStats?.types || []
+          : [],
     [entityType, geneStats, transcriptStats]
   )
   const metrics = useMemo(() => {
     if (entityType === "genes") return geneStats?.metrics || []
+    if (entityType === "busco") return buscoStats?.metrics || []
     return typeDetails?.metrics || []
-  }, [entityType, geneStats, typeDetails])
+  }, [entityType, geneStats, typeDetails, buscoStats])
 
   // Reset metric if it's no longer in the list
   useEffect(() => {
@@ -246,8 +288,16 @@ export function AnalyticsChartArea({
   }, [metrics, selectedMetric])
 
   // ── Fetch metric values for all selected entries ─────────────────────────
+  const needCatOrType = entityType !== "busco"
   useEffect(() => {
-    if (!selectedCatOrType || !selectedMetric || selectedEntries.length === 0) {
+    if ((needCatOrType && !selectedCatOrType) || !selectedMetric || selectedEntries.length === 0) {
+      setMetricValues({})
+      setMetricLoading(false)
+      setFailedEntries(new Set())
+      return
+    }
+    // Only fetch when current entity's stats are loaded and metric is valid (avoids e.g. requesting mean_length for busco)
+    if (metrics.length === 0 || !metrics.includes(selectedMetric)) {
       setMetricValues({})
       setMetricLoading(false)
       setFailedEntries(new Set())
@@ -267,7 +317,9 @@ export function AnalyticsChartArea({
         const hit =
           entityType === "genes"
             ? getCachedGeneMetric(entry.id, selectedCatOrType, selectedMetric)
-            : getCachedTranscriptMetric(entry.id, selectedCatOrType, selectedMetric)
+            : entityType === "transcripts"
+              ? getCachedTranscriptMetric(entry.id, selectedCatOrType, selectedMetric)
+              : getCachedBuscoMetric(entry.id, selectedMetric)
         if (hit) {
           cached[entry.id] = hit.values || []
         } else {
@@ -287,10 +339,13 @@ export function AnalyticsChartArea({
           if (entityType === "genes") {
             const result = await getGeneCategoryMetricValues(selectedCatOrType, selectedMetric, params)
             return { entryId: entry.id, values: result.values || [], result, err: null as Error | null }
-          } else {
+          }
+          if (entityType === "transcripts") {
             const result = await getTranscriptTypeMetricValues(selectedCatOrType, selectedMetric, params)
             return { entryId: entry.id, values: result.values || [], result, err: null as Error | null }
           }
+          const result = await getBuscoMetricValues(selectedMetric, params)
+          return { entryId: entry.id, values: result.values || [], result, err: null as Error | null }
         } catch (err) {
           return { entryId: entry.id, values: [], result: null, err: err as Error }
         }
@@ -308,8 +363,10 @@ export function AnalyticsChartArea({
           if (r.result) {
             if (entityType === "genes") {
               setCachedGeneMetric(r.entryId, selectedCatOrType, selectedMetric, r.result as GeneCategoryMetricValues)
-            } else {
+            } else if (entityType === "transcripts") {
               setCachedTranscriptMetric(r.entryId, selectedCatOrType, selectedMetric, r.result as TranscriptTypeMetricValues)
+            } else {
+              setCachedBuscoMetric(r.entryId, selectedMetric, r.result as BuscoMetricValues)
             }
           }
         }
@@ -322,11 +379,15 @@ export function AnalyticsChartArea({
     fetchAllMetrics()
     return () => { cancelled = true }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedEntriesKey, entityType, selectedCatOrType, selectedMetric])
+  }, [selectedEntriesKey, entityType, selectedCatOrType, selectedMetric, metrics])
 
   // ── Fetch reference line data for each selected ref (up to 10) ─────────────
   useEffect(() => {
-    if (selectedRefIds.length === 0 || !selectedCatOrType || !selectedMetric) {
+    if (selectedRefIds.length === 0 || !selectedMetric || (needCatOrType && !selectedCatOrType)) {
+      setRefLinesData([])
+      return
+    }
+    if (metrics.length === 0 || !metrics.includes(selectedMetric)) {
       setRefLinesData([])
       return
     }
@@ -343,7 +404,9 @@ export function AnalyticsChartArea({
           const result =
             entityType === "genes"
               ? await getGeneCategoryMetricValues(selectedCatOrType, selectedMetric, params)
-              : await getTranscriptTypeMetricValues(selectedCatOrType, selectedMetric, params)
+              : entityType === "transcripts"
+                ? await getTranscriptTypeMetricValues(selectedCatOrType, selectedMetric, params)
+                : await getBuscoMetricValues(selectedMetric, params)
           const vals = (result.values || []).filter((v): v is number => typeof v === "number" && isFinite(v) && v > 0)
           const sorted = [...vals].sort((a, b) => a - b)
           const mid = Math.floor(sorted.length / 2)
@@ -364,7 +427,7 @@ export function AnalyticsChartArea({
     fetchAll()
     return () => { cancelled = true }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedRefIds.join(","), entityType, selectedCatOrType, selectedMetric])
+  }, [selectedRefIds.join(","), entityType, selectedCatOrType, selectedMetric, metrics])
 
   // ── Build chart data series ──────────────────────────────────────────────
   const chartSeries: HistogramSeries[] = useMemo(() => {
@@ -404,9 +467,10 @@ export function AnalyticsChartArea({
   const hasFavorites = favCount > 0
   const isLoading = statsLoading || metricLoading
 
-  const catLabel = entityType === "genes" ? "Category" : "Type"
+  const catLabel = entityType === "genes" ? "Category" : entityType === "transcripts" ? "Type" : ""
   const metricLabel = selectedMetric ? formatLabel(selectedMetric) : ""
   const catOrTypeLabel = selectedCatOrType ? formatLabel(selectedCatOrType) : ""
+  const showCategorySelect = entityType !== "busco"
 
   // Chart container ref and height: must be declared before any conditional return (rules of hooks)
   const chartVisible = selectedEntries.length > 0 && !statsError
@@ -428,7 +492,7 @@ export function AnalyticsChartArea({
   // ── Empty states ─────────────────────────────────────────────────────────
   if (selectedEntries.length === 0) {
     return (
-      <div className="flex flex-1 items-center justify-center">
+      <div className="flex flex-1 items-center justify-center h-full">
         <div className="text-center space-y-2">
           <BarChart3 className="h-10 w-10 mx-auto text-muted-foreground/40" />
           <p className="text-sm text-muted-foreground">Select filter sets from the sidebar to start comparing</p>
@@ -452,10 +516,12 @@ export function AnalyticsChartArea({
 
   return (
     <div className="flex flex-col h-full relative">
-      {/* ── Toolbar row (under title bar) ───────────────────────────────────── */}
-      <div className="flex items-center gap-3 flex-wrap px-4 py-3 border-b border-border bg-background/80 shrink-0">
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-muted-foreground font-medium shrink-0">View</span>
+      {/* ── Toolbar ─────────────────────────────────────────────────────────── */}
+      <div className="flex items-center gap-2 px-4 sm:px-5 py-3 sm:py-3.5 border-b border-border bg-background/90 shrink-0 flex-wrap">
+
+        {/* Left group: what to analyze */}
+        <div className="flex items-center gap-2.5 flex-wrap">
+          {/* Entity type toggle */}
           <div className="flex rounded-md border border-border overflow-hidden">
             <Button
               variant="ghost"
@@ -466,7 +532,6 @@ export function AnalyticsChartArea({
               )}
               onClick={() => onEntityTypeChange("genes")}
             >
-              <Dna className="h-3.5 w-3.5" />
               Genes
             </Button>
             <Button
@@ -478,52 +543,95 @@ export function AnalyticsChartArea({
               )}
               onClick={() => onEntityTypeChange("transcripts")}
             >
-              <Database className="h-3.5 w-3.5" />
               Transcripts
             </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className={cn(
+                "h-8 px-3 rounded-none text-xs gap-1.5 border-l border-border",
+                entityType === "busco" ? "bg-primary text-primary-foreground hover:bg-primary/90" : "hover:bg-muted"
+              )}
+              onClick={() => onEntityTypeChange("busco")}
+            >
+              Busco
+            </Button>
+          </div>
+
+          {/* Separator */}
+          <div className="h-5 w-px bg-border/70 shrink-0 hidden sm:block" />
+
+          {/* Category / Type select (hidden for Busco) */}
+          {showCategorySelect && (
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs text-muted-foreground font-medium shrink-0">{catLabel}</span>
+              <Select
+                value={selectedCatOrType}
+                onValueChange={val => {
+                  setSelectedCatOrType(val)
+                  if (entityType === "transcripts") {
+                    setSelectedMetric("") // type-details effect will set preferred metric when new type loads
+                  } else if (metrics.length) {
+                    const preferred = metrics.find((m: string) => m.toLowerCase().includes("mean_length"))
+                    setSelectedMetric(preferred || metrics[0])
+                  } else {
+                    setSelectedMetric("")
+                  }
+                }}
+                disabled={statsLoading || categories.length === 0}
+              >
+                <SelectTrigger className="h-8 text-xs w-[168px]">
+                  <SelectValue placeholder={statsLoading ? "Loading…" : `Select ${catLabel.toLowerCase()}`} />
+                </SelectTrigger>
+                <SelectContent className="max-h-72">
+                  {categories.map(cat => (
+                    <SelectItem key={cat} value={cat} className="text-xs">
+                      {cat}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
+          {/* Metric select */}
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs text-muted-foreground font-medium shrink-0">Metric</span>
+            <Select
+              value={selectedMetric}
+              onValueChange={setSelectedMetric}
+              disabled={metrics.length === 0 || (showCategorySelect && !selectedCatOrType)}
+            >
+              <SelectTrigger className="h-8 text-xs w-[196px]">
+                <SelectValue
+                  placeholder={
+                    statsLoading
+                      ? "Loading…"
+                      : showCategorySelect && !selectedCatOrType
+                        ? `Choose ${catLabel.toLowerCase()} first`
+                        : "Select metric"
+                  }
+                />
+              </SelectTrigger>
+              <SelectContent className="max-h-72">
+                {metrics.map(m => (
+                  <SelectItem key={m} value={m} className="text-xs">
+                    {formatLabel(m)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
         </div>
-        <div className="flex items-center gap-1.5">
-          <span className="text-xs text-muted-foreground font-medium">{catLabel}</span>
-          <Select
-            value={selectedCatOrType}
-            onValueChange={val => { setSelectedCatOrType(val); setSelectedMetric("") }}
-            disabled={statsLoading || categories.length === 0}
-          >
-            <SelectTrigger className="h-8 text-xs w-[160px]">
-              <SelectValue placeholder={statsLoading ? "Loading…" : `Select ${catLabel.toLowerCase()}`} />
-            </SelectTrigger>
-            <SelectContent className="max-h-72">
-              {categories.map(cat => (
-                <SelectItem key={cat} value={cat} className="text-xs">
-                  {cat}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <span className="text-xs text-muted-foreground font-medium">Metric</span>
-          <Select
-            value={selectedMetric}
-            onValueChange={setSelectedMetric}
-            disabled={metrics.length === 0 || !selectedCatOrType}
-          >
-            <SelectTrigger className="h-8 text-xs w-[180px]">
-              <SelectValue placeholder={!selectedCatOrType ? `Choose ${catLabel.toLowerCase()} first` : "Select metric"} />
-            </SelectTrigger>
-            <SelectContent className="max-h-72">
-              {metrics.map(m => (
-                <SelectItem key={m} value={m} className="text-xs">
-                  {m}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+
         <div className="flex-1 min-w-2" />
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-muted-foreground font-medium shrink-0">Chart</span>
+
+        {/* Right group: display options */}
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Separator */}
+          <div className="h-5 w-px bg-border/70 shrink-0 hidden sm:block mr-0.5" />
+
+          {/* Chart type toggle */}
           <div className="flex rounded-md border border-border overflow-hidden">
             <Button
               variant="outline"
@@ -552,32 +660,36 @@ export function AnalyticsChartArea({
               <span className="hidden sm:inline">Histogram</span>
             </Button>
           </div>
-        </div>
-        <div className="flex rounded-md border border-border overflow-hidden">
-          <Button
-            variant="outline"
-            size="sm"
-            className={cn(
-              "h-8 px-3 rounded-none text-xs border-0",
-              !useLogScale ? "bg-muted font-medium" : "hover:bg-muted/50"
-            )}
-            onClick={() => setUseLogScale(false)}
-          >
-            Linear
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            className={cn(
-              "h-8 px-3 rounded-none text-xs border-0 border-l border-border",
-              useLogScale ? "bg-muted font-medium" : "hover:bg-muted/50"
-            )}
-            onClick={() => setUseLogScale(true)}
-          >
-            log₁₀
-          </Button>
-        </div>
-        <Button
+
+          {/* Scale toggle */}
+          <div className="flex rounded-md border border-border overflow-hidden">
+            <Button
+              variant="outline"
+              size="sm"
+              className={cn(
+                "h-8 px-3 rounded-none text-xs border-0",
+                !useLogScale ? "bg-muted font-medium" : "hover:bg-muted/50"
+              )}
+              onClick={() => setUseLogScale(false)}
+            >
+              Linear
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className={cn(
+                "h-8 px-3 rounded-none text-xs border-0 border-l border-border",
+                useLogScale ? "bg-muted font-medium" : "hover:bg-muted/50"
+              )}
+              onClick={() => setUseLogScale(true)}
+            >
+              log₁₀
+            </Button>
+          </div>
+
+          {/* Refs button */}
+          <div className="relative inline-block">
+            <Button
               variant={refsButtonActive ? "secondary" : "outline"}
               size="sm"
               className={cn(
@@ -590,56 +702,67 @@ export function AnalyticsChartArea({
             >
               <Star className={cn("h-3.5 w-3.5", (refsPanelOpen || hasRefsSelected) && "fill-current")} />
               {favCount > 0 && <span>{favCount}</span>}
-              {hasRefsSelected && <span className="text-muted-foreground">({selectedRefIds.length})</span>}
-              <span className="hidden sm:inline">Refs</span>
+              <span className="hidden sm:inline">Favs</span>
             </Button>
+            {hasRefsSelected && (
+              <span
+                className="absolute -top-1.5 -right-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold text-primary-foreground shadow-sm"
+                aria-label={`${selectedRefIds.length} reference lines active`}
+              >
+                {selectedRefIds.length}
+              </span>
+            )}
+          </div>
+        </div>
       </div>
 
-      {/* ── Card: chart only (uses all remaining height) ────────────────────── */}
-      <div className="flex flex-1 min-h-0 overflow-hidden px-4 pb-4">
-        <div className="flex-1 min-h-0 flex flex-col rounded-lg border border-border bg-muted/10 overflow-hidden">
-          <div className="flex-1 min-h-0 p-4">
+      {/* ── Chart card ──────────────────────────────────────────────────────── */}
+      <div className="flex flex-1 min-h-0 overflow-hidden px-4 sm:px-5 pb-4 pt-3">
+        <div className="flex-1 min-h-0 flex flex-col rounded-xl border border-border bg-card/50 shadow-sm overflow-hidden">
+          <div className="flex-1 min-h-0 p-5">
             <div ref={chartContainerRef} className="h-full w-full min-h-[280px]">
-            {isLoading && chartSeries.length === 0 ? (
-              <div className="flex h-full items-center justify-center">
-                <div className="text-center space-y-2">
-                  <Activity className="h-7 w-7 mx-auto animate-spin text-muted-foreground" />
-                  <p className="text-xs text-muted-foreground">Loading data…</p>
+              {isLoading && chartSeries.length === 0 ? (
+                <div className="flex h-full items-center justify-center">
+                  <div className="text-center space-y-3">
+                    <Activity className="h-8 w-8 mx-auto animate-spin text-muted-foreground/60" />
+                    <p className="text-sm text-muted-foreground">Loading data…</p>
+                  </div>
                 </div>
-              </div>
-            ) : !selectedCatOrType || !selectedMetric ? (
-              <div className="flex h-full items-center justify-center border border-dashed rounded-lg bg-muted/20">
-                <div className="text-center space-y-1">
-                  <SlidersHorizontal className="h-7 w-7 mx-auto text-muted-foreground/50" />
-                  <p className="text-sm text-muted-foreground">
-                    Choose a {catLabel.toLowerCase()} and metric above to see the chart
-                  </p>
+              ) : (showCategorySelect && !selectedCatOrType) || !selectedMetric ? (
+                <div className="flex h-full items-center justify-center border border-dashed rounded-lg bg-muted/20">
+                  <div className="text-center space-y-2">
+                    <SlidersHorizontal className="h-8 w-8 mx-auto text-muted-foreground/40" />
+                    <p className="text-sm text-muted-foreground">
+                      {entityType === "busco"
+                        ? "Choose a metric above to see the chart"
+                        : `Choose a ${catLabel.toLowerCase()} and metric above to see the chart`}
+                    </p>
+                  </div>
                 </div>
-              </div>
-            ) : chartSeries.length === 0 ? (
-              <div className="flex h-full items-center justify-center border border-dashed rounded-lg bg-muted/20">
-                <p className="text-sm text-muted-foreground">No data available for the current selection</p>
-              </div>
-            ) : chartType === "boxplot" ? (
-              <BoxplotChart
-                data={boxplotData}
-                title={`${catOrTypeLabel} — ${metricLabel}`}
-                yAxisLabel={metricLabel}
-                height={chartHeight}
-                useLogScale={useLogScale}
-                referenceLines={boxplotRefLines}
-              />
-            ) : (
-              <HistogramChart
-                series={chartSeries}
-                title={metricLabel}
-                xAxisLabel={metricLabel}
-                yAxisLabel="Count"
-                height={chartHeight}
-                useLogScale={useLogScale}
-                referenceSeries={histogramRefLines}
-              />
-            )}
+              ) : chartSeries.length === 0 ? (
+                <div className="flex h-full items-center justify-center border border-dashed rounded-lg bg-muted/20">
+                  <p className="text-sm text-muted-foreground">No data available for the current selection</p>
+                </div>
+              ) : chartType === "boxplot" ? (
+                <BoxplotChart
+                  data={boxplotData}
+                  title={entityType === "busco" ? metricLabel : `${catOrTypeLabel} — ${metricLabel}`}
+                  yAxisLabel={metricLabel}
+                  height={chartHeight}
+                  useLogScale={useLogScale}
+                  referenceLines={boxplotRefLines}
+                />
+              ) : (
+                <HistogramChart
+                  series={chartSeries}
+                  title={metricLabel}
+                  xAxisLabel={metricLabel}
+                  yAxisLabel="Count"
+                  height={chartHeight}
+                  useLogScale={useLogScale}
+                  referenceSeries={histogramRefLines}
+                />
+              )}
             </div>
           </div>
         </div>

@@ -5,8 +5,9 @@ import { LatestReleases } from "@/components/home/latest-releases"
 import { TopAnnotations } from "@/components/home/top-annotated-records"
 import { DatabaseFrequencies } from "@/components/home/database-frequencies"
 import { ReleaseDateChart } from "@/components/home/release-date-chart"
+import { BuscoCompletenessChart } from "@/components/home/busco-completeness-chart"
 import { FeaturesSection } from "@/components/home/features-section"
-import { UserAnalyticsMap } from "@/components/home/user-analytics-map"
+import { HomeFooter } from "@/components/home/home-footer"
 import { SectionWrapper } from "@/components/ui/section-wrapper"
 
 
@@ -56,6 +57,13 @@ export default function Home() {
         />
       </SectionWrapper>
 
+      <SectionWrapper id="busco-completeness" backgroundVariant="default">
+        <BuscoCompletenessChart
+          title="BUSCO completeness"
+          description="We use BUSCO (version 6.0.0) with eukaryota_odb12 lineage (129 genes) to compute the completeness of the annotations."
+        />
+      </SectionWrapper>
+
       <SectionWrapper id="latest-releases" backgroundVariant="default">
         <LatestReleases
           title="Explore recent releases"
@@ -70,6 +78,8 @@ export default function Home() {
           description="See organisms, classes, and assemblies with the most annotations and start exploring from there."
         />
       </SectionWrapper>
+
+       <HomeFooter />
     </>
   )
 }

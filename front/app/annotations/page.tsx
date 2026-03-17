@@ -42,6 +42,8 @@ export default function AnnotationsPage() {
   const pipelines = useAnnotationsFiltersStore((state) => state.pipelines)
   const providers = useAnnotationsFiltersStore((state) => state.providers)
   const databaseSources = useAnnotationsFiltersStore((state) => state.databaseSources)
+  const buscoCompleteFrom = useAnnotationsFiltersStore((state) => state.buscoCompleteFrom)
+  const buscoCompleteTo = useAnnotationsFiltersStore((state) => state.buscoCompleteTo)
 
   // Local state for annotations
   const [annotations, setAnnotations] = useState<AnnotationRecord[]>([])
@@ -98,6 +100,8 @@ export default function AnnotationsPage() {
     pipelines,
     providers,
     databaseSources,
+    buscoCompleteFrom,
+    buscoCompleteTo,
     buildAnnotationsParams,
   ])
 

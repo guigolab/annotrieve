@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo, useLayoutEffect } from "react"
 import type { ReactNode, KeyboardEvent as ReactKeyboardEvent } from "react"
-import { Checkbox, Button, Label } from "@/components/ui"
+import { Checkbox, Button, Label, Slider } from "@/components/ui"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Input } from "@/components/ui/input"
 import { ChevronDown, Loader2, ArrowRight, Search } from "lucide-react"
@@ -64,6 +64,28 @@ interface CollapsibleSectionProps {
 
 const COLLAPSIBLE_ANIMATION_DURATION = 300
 const COLLAPSIBLE_SKELETON_WIDTHS = ["w-5/6", "w-full", "w-2/3"] as const
+
+/** Compact area chart for BUSCO completeness counts (0–100%), aligned with the range slider. */
+function BuscoCompletenessChart({ data, className }: { data: Record<string, number>; className?: string }) {
+  const values = useMemo(() => {
+    const out: number[] = []
+    for (let i = 0; i <= 100; i++) out.push(data[String(i)] ?? 0)
+    return out
+  }, [data])
+  const maxCount = useMemo(() => Math.max(1, ...values), [values])
+  const pathD = useMemo(() => {
+    const w = 100
+    const h = 24
+    const points = values.map((v, i) => [(i / 100) * w, h - (v / maxCount) * h] as [number, number])
+    const line = points.map((p, i) => `${i === 0 ? "M" : "L"} ${p[0]} ${p[1]}`).join(" ")
+    return `${line} L 100 ${h} L 0 ${h} Z`
+  }, [values, maxCount])
+  return (
+    <svg className={cn("min-w-0 overflow-visible", className)} viewBox="0 0 100 24" preserveAspectRatio="none">
+      <path d={pathD} fill="currentColor" className="text-primary/30" />
+    </svg>
+  )
+}
 const BIOPROJECTS_PAGE_SIZE = 30
 const BIOPROJECT_SEARCH_DEBOUNCE = 400
 
@@ -256,6 +278,9 @@ export function AnnotationsSidebarFilters() {
     setPipelines,
     setProviders,
     setDatabaseSources,
+    buscoCompleteFrom,
+    buscoCompleteTo,
+    setBuscoCompleteRange,
   } = store
 
 
@@ -321,6 +346,12 @@ export function AnnotationsSidebarFilters() {
   const [filterSectionSearchQueries, setFilterSectionSearchQueries] = useState<Record<string, string>>({})
   const [isTaxonomySectionOpen, setIsTaxonomySectionOpen] = usePersistentState<boolean>("annotations-sidebar:taxonomy-open", false)
   const [isAssemblySectionOpen, setIsAssemblySectionOpen] = usePersistentState<boolean>("annotations-sidebar:assemblies-open", false)
+  const [isBuscoSectionOpen, setIsBuscoSectionOpen] = usePersistentState<boolean>("annotations-sidebar:busco-open", false)
+  const [buscoFrequencies, setBuscoFrequencies] = useState<Record<string, number>>({})
+  const [loadingBuscoFrequencies, setLoadingBuscoFrequencies] = useState(false)
+  const [buscoSliderValue, setBuscoSliderValue] = useState<[number, number]>([0, 100])
+  const buscoDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const BUSCO_DEBOUNCE_MS = 400
 
   const filterOptionSetters = useMemo<Record<string, (data: Record<string, number>) => void>>(
     () => ({
@@ -456,6 +487,10 @@ export function AnnotationsSidebarFilters() {
       if (paramToExclude) {
         delete params[paramToExclude]
       }
+      if (excludeField === 'busco_complete') {
+        delete params.busco_complete_from
+        delete params.busco_complete_to
+      }
     }
 
     return params
@@ -543,6 +578,36 @@ export function AnnotationsSidebarFilters() {
       })
     }
   }, [assemblyFiltersLoaded, loadingAssemblyFilters])
+
+  // Sync BUSCO slider local state from store (e.g. when clearing filters or loading a subset)
+  useEffect(() => {
+    setBuscoSliderValue([buscoCompleteFrom ?? 0, buscoCompleteTo ?? 100])
+  }, [buscoCompleteFrom, buscoCompleteTo])
+
+  useEffect(() => {
+    return () => {
+      if (buscoDebounceRef.current) clearTimeout(buscoDebounceRef.current)
+    }
+  }, [])
+
+  // Load BUSCO completeness frequencies when section opens
+  useEffect(() => {
+    if (!isBuscoSectionOpen) return
+    let cancelled = false
+    setLoadingBuscoFrequencies(true)
+    const params = buildFilterParams('busco_complete')
+    getAnnotationsFrequencies('busco_complete', params)
+      .then((data) => {
+        if (!cancelled) setBuscoFrequencies(data || {})
+      })
+      .catch(() => {
+        if (!cancelled) setBuscoFrequencies({})
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingBuscoFrequencies(false)
+      })
+    return () => { cancelled = true }
+  }, [isBuscoSectionOpen, buildFilterParams])
 
   // Only reload metadata filters when parent filters (taxons/assemblies) change
   // NOT when metadata filters themselves change, and NOT when assembly filter properties change
@@ -1161,6 +1226,56 @@ export function AnnotationsSidebarFilters() {
                 </div>
               </div>
             )}
+          </CollapsibleSection>
+
+          {/* BUSCO completeness */}
+          <CollapsibleSection
+            title="BUSCO completeness"
+            description="Filter annotations by BUSCO completeness percentage (0–100%). Drag the slider to restrict (e.g. 70–90%)."
+            isOpen={isBuscoSectionOpen}
+            onToggle={() => setIsBuscoSectionOpen((prev) => !prev)}
+            isLoading={loadingBuscoFrequencies && Object.keys(buscoFrequencies).length === 0}
+          >
+            <div className="space-y-3">
+              {loadingBuscoFrequencies && Object.keys(buscoFrequencies).length === 0 ? (
+                <div className="h-10 flex items-center justify-center">
+                  <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                </div>
+              ) : (
+                <>
+                  <div className="w-full h-10 flex items-end" aria-hidden>
+                    <BuscoCompletenessChart data={buscoFrequencies} className="w-full h-8" />
+                  </div>
+                  <div className="space-y-2">
+                    <Slider
+                      min={0}
+                      max={100}
+                      step={1}
+                      minStepsBetweenThumbs={0}
+                      value={buscoSliderValue}
+                      onValueChange={(value) => {
+                        const [a, b] = value
+                        setBuscoSliderValue([a, b])
+                        if (buscoDebounceRef.current) clearTimeout(buscoDebounceRef.current)
+                        buscoDebounceRef.current = setTimeout(() => {
+                          buscoDebounceRef.current = null
+                          if (a === 0 && b === 100) {
+                            setBuscoCompleteRange(null, null)
+                          } else {
+                            setBuscoCompleteRange(a, b)
+                          }
+                        }, BUSCO_DEBOUNCE_MS)
+                      }}
+                      aria-label="BUSCO completeness range (percent)"
+                    />
+                    <div className="flex justify-between text-xs text-muted-foreground">
+                      <span>{buscoSliderValue[0]}%</span>
+                      <span>{buscoSliderValue[1]}%</span>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
           </CollapsibleSection>
 
           {sourceMetadataSections.map((section) => {

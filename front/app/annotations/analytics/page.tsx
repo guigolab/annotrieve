@@ -1,8 +1,8 @@
 "use client"
 
-import { useState, useMemo, useCallback } from "react"
+import { useState, useMemo, useCallback, useEffect } from "react"
 import { useRouter } from "next/navigation"
-import { ArrowLeft, TrendingUp, HelpCircle, ChevronDown } from "lucide-react"
+import { ArrowLeft, TrendingUp, HelpCircle, ChevronDown, PanelLeft, PanelLeftClose } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { useAnnotationsFiltersStore } from "@/lib/stores/annotations-filters"
@@ -21,9 +21,11 @@ import { cn } from "@/lib/utils"
 import { formatLabel } from "@/lib/annotations-formatting"
 import type { FiltersState } from "@/lib/stores/annotations-filters"
 
-const MAX_SELECTED = 5
+const SIDEBAR_WIDTH = 280
+
+const MAX_SELECTED = 10
 const ANALYTICS_DESCRIPTION =
-  "Compare gene and transcript statistics across filter sets. Select filter sets in the left panel, choose category and metric, and optionally add favorite annotations as reference lines on the chart."
+  "Compare gene, transcript and BUSCO statistics across filter sets. Select filter sets in the left panel, choose category and metric, and optionally add favorite annotations as reference lines on the chart."
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -42,6 +44,8 @@ function buildFilterSummary(filters: ReturnType<typeof useAnnotationsFiltersStor
     parts.push(`${filters.biotypes.length} biotype${filters.biotypes.length > 1 ? "s" : ""}`)
   if (filters.featureTypes.length > 0)
     parts.push(`${filters.featureTypes.length} feat. type${filters.featureTypes.length > 1 ? "s" : ""}`)
+  if (filters.buscoCompleteFrom != null || filters.buscoCompleteTo != null)
+    parts.push(`BUSCO ${filters.buscoCompleteFrom ?? 0}–${filters.buscoCompleteTo ?? 100}%`)
   return parts.join(" · ")
 }
 
@@ -60,6 +64,8 @@ export default function AnnotationsAnalyticsPage() {
   const onlyRefGenomes = useAnnotationsFiltersStore(s => s.onlyRefGenomes)
   const biotypes = useAnnotationsFiltersStore(s => s.biotypes)
   const featureTypes = useAnnotationsFiltersStore(s => s.featureTypes)
+  const buscoCompleteFrom = useAnnotationsFiltersStore(s => s.buscoCompleteFrom)
+  const buscoCompleteTo = useAnnotationsFiltersStore(s => s.buscoCompleteTo)
 
   const subsets = useAnnotationSubsetsStore(s => s.subsets)
   const getSelectedIds = useSelectedAnnotationsStore(s => s.getSelectedIds)
@@ -68,6 +74,16 @@ export default function AnnotationsAnalyticsPage() {
   // ── Page state (lazy init to avoid new array ref on every render) ───────────
   const [selectedIds, setSelectedIds] = useState<string[]>(() => [CURRENT_ENTRY_ID])
   const [entityType, setEntityType] = useState<EntityType>("genes")
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+
+  // Default sidebar open on desktop, closed on mobile so main content is visible
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 768px)")
+    const handler = () => setSidebarOpen(mq.matches)
+    handler()
+    mq.addEventListener("change", handler)
+    return () => mq.removeEventListener("change", handler)
+  }, [])
 
   // ── Derived: all sidebar entries (stable deps = no unnecessary new array refs) ─
   const allEntries: AnalyticsEntry[] = useMemo(() => {
@@ -80,6 +96,8 @@ export default function AnnotationsAnalyticsPage() {
       onlyRefGenomes,
       biotypes,
       featureTypes,
+      buscoCompleteFrom,
+      buscoCompleteTo,
     } as any)
 
     const virtualEntry: AnalyticsEntry = {
@@ -108,6 +126,8 @@ export default function AnnotationsAnalyticsPage() {
     onlyRefGenomes,
     biotypes,
     featureTypes,
+    buscoCompleteFrom,
+    buscoCompleteTo,
     subsets,
   ])
 
@@ -155,37 +175,93 @@ export default function AnnotationsAnalyticsPage() {
   const favoriteAnnotations = useMemo(() => getSelectedAnnotations(), [getSelectedAnnotations])
 
   return (
-    <div className="flex flex-col" style={{ height: "calc(100vh - 4rem)" }}>
-      {/* ── Title bar: back, title, help, active filter set pills ────────────── */}
-      <header className="flex-shrink-0 flex items-center gap-3 px-4 py-3 border-b border-border bg-background flex-wrap">
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-8 px-2 gap-1.5 shrink-0"
-          onClick={() => router.back()}
+    <div className="flex h-[calc(100vh-4rem)] min-h-0">
+      {/* ── Collapsible filter sets sidebar ──────────────────────────────────── */}
+      <>
+        {/* Backdrop when sidebar is open on mobile */}
+        <button
+          type="button"
+          aria-hidden="true"
+          className={cn(
+            "fixed inset-0 z-40 bg-black/30 transition-opacity md:hidden",
+            sidebarOpen ? "opacity-100" : "pointer-events-none opacity-0"
+          )}
+          onClick={() => setSidebarOpen(false)}
+        />
+        <aside
+          className={cn(
+            "flex-shrink-0 overflow-y-auto border-r border-border bg-background transition-[transform,width] duration-200 ease-out",
+            "fixed left-0 top-[4rem] bottom-0 z-50 w-[var(--analytics-sidebar-width)] flex flex-col md:relative md:left-auto md:top-auto md:bottom-auto md:z-auto",
+            sidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0",
+            sidebarOpen ? "md:w-[var(--analytics-sidebar-width)]" : "md:w-0 md:overflow-hidden"
+          )}
+          style={{ "--analytics-sidebar-width": `${SIDEBAR_WIDTH}px` } as React.CSSProperties}
         >
-          <ArrowLeft className="h-4 w-4" />
-          <span className="hidden sm:inline text-sm">Back</span>
-        </Button>
-
-        <div className="flex items-center gap-2 shrink-0">
-          <TrendingUp className="h-4 w-4 text-primary" />
-          <h1 className="text-base font-semibold">Analytics</h1>
-          <Popover>
-            <PopoverTrigger asChild>
-              <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-foreground" aria-label="Help">
-                <HelpCircle className="h-4 w-4" />
+          <div className="w-full h-full min-w-0 flex flex-col">
+            <div className="flex items-center justify-between px-3 py-2 border-b border-border md:hidden shrink-0">
+              <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Filter sets</span>
+              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setSidebarOpen(false)} aria-label="Close sidebar">
+                <PanelLeftClose className="h-4 w-4" />
               </Button>
-            </PopoverTrigger>
-            <PopoverContent className="max-w-sm p-3 text-sm text-muted-foreground" align="start">
-              {ANALYTICS_DESCRIPTION}
-            </PopoverContent>
-          </Popover>
-        </div>
+            </div>
+            <AnalyticsSidebar
+              entries={allEntries}
+              selectedIds={selectedIds}
+              onSelectionChange={setSelectedIds}
+              maxSelected={MAX_SELECTED}
+            />
+          </div>
+        </aside>
+      </>
 
-        {/* Active filter set pills: toggleable to show filter content */}
+      {/* ── Main content (header + filter pills + chart) ─────────────────────── */}
+      <main className="flex-1 min-w-0 flex flex-col overflow-hidden">
+        {/* Row 1: Filter sets toggle, title, help | Back (far right) */}
+        <header className="flex-shrink-0 border-b border-border bg-background px-4 py-3 sm:px-5">
+          <div className="flex items-center justify-between gap-2 sm:gap-3">
+            <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 px-2 gap-1.5 shrink-0"
+                onClick={() => setSidebarOpen(v => !v)}
+                aria-label={sidebarOpen ? "Close filter sets" : "Open filter sets"}
+                title={sidebarOpen ? "Close filter sets" : "Open filter sets"}
+              >
+                {sidebarOpen ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeft className="h-4 w-4" />}
+                <span className="hidden sm:inline text-sm">{sidebarOpen ? "Hide" : "Filter sets"}</span>
+              </Button>
+              <div className="h-5 w-px bg-border/60 shrink-0 hidden sm:block" />
+              <div className="flex items-center gap-2 shrink-0 min-w-0">
+                <TrendingUp className="h-4 w-4 text-primary shrink-0" />
+                <h1 className="text-base font-semibold truncate">Analytics</h1>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground" aria-label="Help">
+                      <HelpCircle className="h-4 w-4" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="max-w-sm p-3 text-sm text-muted-foreground" align="start">
+                    {ANALYTICS_DESCRIPTION}
+                  </PopoverContent>
+                </Popover>
+              </div>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 px-2 gap-1.5 shrink-0"
+              onClick={() => router.back()}
+            >
+              <ArrowLeft className="h-4 w-4" />
+              <span className="hidden sm:inline text-sm">Back to annotations</span>
+            </Button>
+          </div>
+        </header>
+
+        {/* Row 2: Active filter set pills (same horizontal padding as chart area) */}
         {selectedEntries.length > 0 && (
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex-shrink-0 flex items-center gap-2 px-4 py-2 sm:px-5 border-b border-border/60 bg-muted/20 flex-wrap">
             {selectedEntries.map((entry) => (
               <FilterPill
                 key={entry.id}
@@ -196,22 +272,9 @@ export default function AnnotationsAnalyticsPage() {
             ))}
           </div>
         )}
-      </header>
 
-      {/* ── Content ──────────────────────────────────────────────────────────── */}
-      <div className="flex flex-1 min-h-0 overflow-hidden">
-        {/* ── Left sidebar ─────────────────────────────────────────────────── */}
-        <aside className="w-72 flex-shrink-0 overflow-y-auto border-r border-border bg-background/50">
-          <AnalyticsSidebar
-            entries={allEntries}
-            selectedIds={selectedIds}
-            onSelectionChange={setSelectedIds}
-            maxSelected={MAX_SELECTED}
-          />
-        </aside>
-
-        {/* ── Main chart area ───────────────────────────────────────────────── */}
-        <main className="flex-1 min-w-0 overflow-y-auto flex flex-col">
+        {/* Row 3: Chart area */}
+        <div className="flex-1 min-h-0 overflow-hidden">
           <AnalyticsChartArea
             selectedEntries={selectedEntries}
             entityType={entityType}
@@ -222,8 +285,8 @@ export default function AnnotationsAnalyticsPage() {
             buildFavoritesParams={buildFavoritesParams}
             subsetParams={subsetParams}
           />
-        </main>
-      </div>
+        </div>
+      </main>
     </div>
   )
 }
@@ -302,6 +365,11 @@ function CompactFilterList({
   if (filters.pipelines?.length) parts.push({ label: "Pipelines", items: filters.pipelines.map(formatLabel) })
   if (filters.providers?.length) parts.push({ label: "Providers", items: filters.providers.map(formatLabel) })
   if (filters.databaseSources?.length) parts.push({ label: "Databases", items: filters.databaseSources.map(formatLabel) })
+  if (filters.buscoCompleteFrom != null || filters.buscoCompleteTo != null)
+    parts.push({
+      label: "BUSCO completeness",
+      items: [`${filters.buscoCompleteFrom ?? 0}–${filters.buscoCompleteTo ?? 100}%`],
+    })
   if (parts.length === 0) return <p className="text-xs text-muted-foreground">No filters applied</p>
   return (
     <div className="space-y-2 text-xs">

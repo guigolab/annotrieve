@@ -91,6 +91,9 @@ export function BuscoScoreSection({ annotation }: BuscoScoreSectionProps) {
             {busco.busco_version && (
               <> · Version: <span className="font-mono">{busco.busco_version}</span></>
             )}
+            {busco.total_count && (
+              <> · Total count: <span className="font-mono">{busco.total_count}</span></>
+            )}
           </div>
         )}
       </div>

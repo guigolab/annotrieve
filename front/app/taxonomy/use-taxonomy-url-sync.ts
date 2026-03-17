@@ -56,7 +56,14 @@ export function useTaxonomyUrlSync({
           },
         }
         setRootPayload(payload)
-        setActiveView?.("overview")
+        const viewParam = searchParams?.get("view")
+        const validView =
+          viewParam === "overview" ||
+          viewParam === "constant-branch" ||
+          viewParam === "gene-stack"
+            ? viewParam
+            : "overview"
+        setActiveView?.(validView)
       })
       .catch(() => {
         if (!cancelled) router.replace("/taxonomy?taxon=" + EUKARYOTA_TAXID, { scroll: false })

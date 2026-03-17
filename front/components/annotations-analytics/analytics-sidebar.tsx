@@ -17,7 +17,7 @@ export interface AnalyticsEntry {
   filterSummary?: string
 }
 
-export type EntityType = "genes" | "transcripts"
+export type EntityType = "genes" | "transcripts" | "busco"
 
 interface AnalyticsSidebarProps {
   entries: AnalyticsEntry[]

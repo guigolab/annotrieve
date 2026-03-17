@@ -5,9 +5,9 @@ import { SectionHeader } from "@/components/ui/section-header"
 import { 
   Server, 
   Eye, 
-  BarChart3, 
-  Star, 
-  GitCompare 
+  TrendingUp, 
+  Star,
+  Network,
 } from "lucide-react"
 import { ReactNode } from "react"
 
@@ -35,25 +35,25 @@ const FEATURES: Feature[] = [
     iconBgColor: "bg-purple-500/10",
   },
   {
-    title: "Quick Statistics Lookup",
-    description: "Instantly access coding, non-coding, and pseudogene summaries with comprehensive annotation statistics.",
-    icon: BarChart3,
+    title: "Analytics",
+    description: "Compare annotations summary statistics across filter sets in one unified view.",
+    icon: TrendingUp,
     iconColor: "text-green-600",
     iconBgColor: "bg-green-500/10",
   },
   {
     title: "Add to Favorites",
-    description: "Save your frequently accessed annotations and assemblies for quick reference and easy navigation.",
+    description: "Save your frequently accessed annotations for quick reference and easy navigation.",
     icon: Star,
     iconColor: "text-amber-600",
     iconBgColor: "bg-amber-500/10",
   },
   {
-    title: "Compare Statistics",
-    description: "Compare annotation statistics side-by-side between multiple assemblies to analyze differences and similarities.",
-    icon: GitCompare,
-    iconColor: "text-red-600",
-    iconBgColor: "bg-red-500/10",
+    title: "Taxonomy Explorer",
+    description: "Explore summary statistics across taxomic groups in interactive visualizations.",
+    icon: Network,
+    iconColor: "text-blue-600",
+    iconBgColor: "bg-blue-500/10",
   },
 ]
 
@@ -119,7 +119,7 @@ export function FeaturesSection({ title, description }: FeaturesSectionProps) {
             </>
           )
         }
-        icon={BarChart3}
+        icon={TrendingUp}
         iconColor="text-primary"
         iconBgColor="bg-primary/10"
         align="center"

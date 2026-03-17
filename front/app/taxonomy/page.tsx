@@ -110,7 +110,9 @@ export default function TaxonomyPage() {
   const vizRef = useRef<HTMLDivElement>(null)
   const radialScrollRef = useRef<HTMLDivElement>(null)
   const selectedNodeRef = useRef<NodeClickEvent | null>(null)
+  const activeTabRef = useRef<ViewTab>(activeTab)
   selectedNodeRef.current = selectedNode
+  activeTabRef.current = activeTab
 
   // ── URL as source of truth: sync hook loads root payload when URL taxid changes ─────────────────────────
   useTaxonomyUrlSync({
@@ -149,7 +151,12 @@ export default function TaxonomyPage() {
         return payload
       })
       setSelectedNode(null)
-      if (payload) router.replace(`/taxonomy?taxon=${payload.taxid}`, { scroll: false })
+      if (payload) {
+        const view = activeTabRef.current
+        router.replace(`/taxonomy?taxon=${payload.taxid}&view=${view}`, {
+          scroll: false,
+        })
+      }
     },
     [router]
   )

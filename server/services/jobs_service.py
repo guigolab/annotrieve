@@ -2,7 +2,7 @@ from fastapi import HTTPException
 import os
 import secrets
 from jobs.import_annotations import import_annotations
-from jobs.updates import update_taxon_stats, update_records, update_busco_scores, update_taxons_busco_scores_job
+from jobs.updates import update_taxon_stats, update_records, update_busco_scores, update_taxons_busco_scores_job, update_assemblies_download_url_job
 from jobs.track_users import track_unique_users_by_country
 
 
@@ -64,3 +64,11 @@ def trigger_update_taxons_busco_scores(auth_key: str):
     _validate_auth_key(auth_key)
     update_taxons_busco_scores_job.delay()
     return {"message": "Update taxons busco scores task triggered"}
+
+def trigger_update_assemblies_download_url(auth_key: str):
+    """
+    Update the assemblies download url
+    """
+    _validate_auth_key(auth_key)
+    update_assemblies_download_url_job.delay()
+    return {"message": "Update assemblies download url task triggered"}

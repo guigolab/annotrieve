@@ -58,7 +58,6 @@ async def get_annotation_errors(offset: int = 0, limit: int = 20):
     """
     return annotations_service.get_annotation_errors(offset, limit)
 
-
 @router.get("/annotations/aggregates/taxons")
 async def get_annotations_aggregates_by_taxon_rank(rank: str):
     """
@@ -109,7 +108,6 @@ async def get_gene_category_metric_values(category: str, metric: str, commons: D
     - metric: The metric name
     - values: List of values (ordered by annotation_id)
     - annotation_ids: List of annotation_ids (only if include_annotations=True, ordered to match values)
-    - missing: List of annotation_ids missing this metric
     """
     # Extract include_annotations from payload (preferred) or query params
     include_annotations = False
@@ -165,7 +163,6 @@ async def get_transcript_type_metric_values(type: str, metric: str, commons: Dic
     - metric: The metric name
     - values: List of values (ordered by annotation_id)
     - annotation_ids: List of annotation_ids (only if include_annotations=True, ordered to match values)
-    - missing: List of annotation_ids missing this metric
     """
     # Extract include_annotations from payload (preferred) or query params
     include_annotations = False
@@ -180,6 +177,44 @@ async def get_transcript_type_metric_values(type: str, metric: str, commons: Dic
     return annotations_service.get_transcript_type_metric_values(type, metric, include_annotations, commons, payload)
 
 
+@router.get("/annotations/busco-stats")
+@router.post("/annotations/busco-stats")
+async def get_busco_stats(commons: Dict[str, Any] = Depends(params_helper.common_params), payload: Optional[Dict[str, Any]] = Body(None)):
+    """
+    Get busco stats summary with aggregated statistics for metrics only (no categories).
+    
+    Returns:
+    - total_annotations: Total number of annotations in queryset
+    - summary: Per-metric stats (complete, single_copy, duplicated, fragmented, missing) with mean, annotations_count, missing_annotations_count
+    - metrics: List of available metrics
+    """
+    return annotations_service.get_busco_stats_summary(commons, payload)
+
+
+@router.get("/annotations/busco-stats/{metric}")
+@router.post("/annotations/busco-stats/{metric}")
+async def get_busco_metric_values(metric: str, commons: Dict[str, Any] = Depends(params_helper.common_params), payload: Optional[Dict[str, Any]] = Body(None)):
+    """
+    Get raw values for a specific busco metric (for plotting histograms).
+    
+    Parameters:
+    - include_annotations: If True, include annotation_ids list (default: False). Can be passed as query param or in payload.
+    
+    Returns:
+    - metric: The metric name
+    - values: List of values (ordered by annotation_id)
+    - annotation_ids: List of annotation_ids (only if include_annotations=True, ordered to match values)
+    """
+    include_annotations = False
+    if payload and "include_annotations" in payload:
+        include_annotations = payload.pop("include_annotations")
+        include_annotations = params_helper.format_boolean_param(include_annotations)
+    elif commons and "include_annotations" in commons:
+        include_annotations = commons.pop("include_annotations")
+        include_annotations = params_helper.format_boolean_param(include_annotations)
+    return annotations_service.get_busco_metric_values(metric, include_annotations, commons, payload)
+
+
 @router.get("/annotations/{md5_checksum}")
 async def get_annotation(md5_checksum: str):
     """
@@ -187,23 +222,12 @@ async def get_annotation(md5_checksum: str):
     """
     return annotations_service.get_annotation_metadata(md5_checksum)
 
-@router.post("/annotations/{md5_checksum}/stats")
-async def update_annotation_stats(md5_checksum: str, payload: Optional[Dict[str, Any]] = Body(None)):
-    """
-    Update annotation stats, endpoint used from github action to update the stats of the annotations
-    """
-    annotations_service.update_annotation_stats(md5_checksum, payload)
-    return {"message": "Annotation stats updated"}
-
 @router.get("/annotations/{md5_checksum}/gff")
 async def stream_annotation_gff(md5_checksum: str, commons: Dict[str, Any] = Depends(params_helper.common_params)):
     """
     Get GFF of an annotation file
     """
     return annotations_service.stream_annotation_tabix(md5_checksum, **commons)
-
-
-
 
 @router.get("/annotations/{md5_checksum}/contigs")
 async def get_contigs(md5_checksum: str):

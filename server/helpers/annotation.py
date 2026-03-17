@@ -24,6 +24,8 @@ DEFAULT_FIELD_MAP: Dict[str, str] = {
     "providers": "source_file_info__provider__in",
     "release_date_from": "source_file_info__release_date__gte",
     "release_date_to": "source_file_info__release_date__lte",
+    "busco_complete_from": "busco__complete__gte",
+    "busco_complete_to": "busco__complete__lte",
 }
 
 
@@ -48,6 +50,8 @@ def get_annotation_records(
     sort_order: str = None,
     release_date_from: str = None,
     release_date_to: str = None,
+    busco_complete_from: str = None,
+    busco_complete_to: str = None,
 ):
 
     mongoengine_query = annotation_helper.query_params_to_mongoengine_query(
@@ -63,6 +67,8 @@ def get_annotation_records(
         providers=providers,
         release_date_from=release_date_from,
         release_date_to=release_date_to,
+        busco_complete_from=busco_complete_from,
+        busco_complete_to=busco_complete_to,
     )
     annotations = GenomeAnnotation.objects(**mongoengine_query).exclude('id')
     #check if any assembly related param is present
@@ -309,6 +315,8 @@ def query_params_to_mongoengine_query(
     release_date_from: Optional[str] = None,
     release_date_to: Optional[str] = None,
     field_map: Optional[Dict[str, str]] = None,
+    busco_complete_from: Optional[str] = None,
+    busco_complete_to: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Convert API query parameters to MongoDB query format.
@@ -351,6 +359,8 @@ def query_params_to_mongoengine_query(
         "providers": {"type": "list", "normalize": True, "required": False},
         "release_date_from": {"type": "date", "normalize": False, "required": False},
         "release_date_to": {"type": "date", "normalize": False, "required": False},
+        "busco_complete_from": {"type": "float", "normalize": False, "required": False},
+        "busco_complete_to": {"type": "float", "normalize": False, "required": False},
     }
 
     inputs = {
@@ -366,6 +376,8 @@ def query_params_to_mongoengine_query(
         "providers": providers,
         "release_date_from": release_date_from,
         "release_date_to": release_date_to,
+        "busco_complete_from": busco_complete_from,
+        "busco_complete_to": busco_complete_to,
     }
 
     for param_name, raw_value in inputs.items():
@@ -412,6 +424,8 @@ def _process_parameter_value(raw_value: Any, config: Dict[str, Any]) -> Any:
         return _process_list_value(raw_value, should_normalize)
     elif param_type == "int":
         return _process_int_value(raw_value)
+    elif param_type == "float":
+        return _process_float_value(raw_value)
     elif param_type == "date":
         return _process_date_value(raw_value)
     elif param_type == "string":
@@ -437,6 +451,19 @@ def _process_boolean_value(raw_value: Any) -> bool:
     else:
         raise ValueError(f"Cannot convert to boolean: {type(raw_value).__name__}")
 
+def _process_float_value(raw_value: Any) -> float:
+    """Process float parameter values."""
+    if isinstance(raw_value, float):
+        return raw_value
+    elif isinstance(raw_value, str):
+        try:
+            return float(raw_value.strip())
+        except ValueError:
+            raise ValueError(f"Invalid float value: {raw_value}")
+    elif isinstance(raw_value, int):
+        return float(raw_value)
+    else:
+        raise ValueError(f"Invalid float value: {raw_value}")
 
 def _process_list_value(raw_value: Any, should_normalize: bool = True) -> List[str] | None:
     """

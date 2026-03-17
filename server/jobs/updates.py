@@ -1,4 +1,5 @@
 from celery import shared_task
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from db.models import GenomeAssembly, GenomeAnnotation,  Organism
 import os
 from db.embedded_documents import BuscoScore
@@ -268,3 +269,60 @@ def update_taxons_busco_scores_job():
     Update the taxons busco scores
     """
     stats_service.update_taxons_busco_scores(BUSCO_LINEAGE, BUSCO_COUNT)
+
+def _resolve_assembly_download_url(row: tuple) -> tuple | None:
+    """Resolve current FTP URL for one assembly. Returns (assembly_accession, new_download_url) if URL changed, else None."""
+    accession, assembly_name, current_url = row
+    if not accession or not assembly_name:
+        return None
+    try:
+        resolved = assembly_service.create_ftp_path(accession, assembly_name)
+        if resolved and resolved != current_url:
+            return (accession, resolved)
+    except Exception:
+        pass
+    return None
+
+
+@shared_task(name='update_assemblies_download_url', ignore_result=False)
+def update_assemblies_download_url_job(batch_size: int = 500, max_workers: int = 4):
+    """
+    Validate and update existing assembly download_url values by resolving the current
+    NCBI FTP path (with existence check and directory scrape fallback). Runs concurrent
+    resolution per batch to avoid rate limits while making progress.
+    """
+    total_assemblies = GenomeAssembly.objects.count()
+    if total_assemblies == 0:
+        print("No assemblies found, skipping download URL update")
+        return {"updated": 0, "processed": 0}
+    updated_count = 0
+    processed_count = 0
+    skip = 0
+    while skip < total_assemblies:
+        batch = list(
+            GenomeAssembly.objects()
+            .skip(skip)
+            .limit(batch_size)
+            .scalar("assembly_accession", "assembly_name", "download_url")
+        )
+        if not batch:
+            break
+        to_update = []
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [executor.submit(_resolve_assembly_download_url, row) for row in batch]
+            for future in as_completed(futures):
+                result = future.result()
+                if result:
+                    to_update.append(result)
+        for accession, new_url in to_update:
+            try:
+                GenomeAssembly.objects(assembly_accession=accession).update_one(set__download_url=new_url)
+                updated_count += 1
+            except Exception as e:
+                print(f"Failed to update download_url for {accession}: {e}")
+        processed_count += len(batch)
+        skip += batch_size
+        if to_update:
+            print(f"Processed {processed_count}/{total_assemblies} assemblies, updated {updated_count} download URLs so far")
+    print(f"Download URL update finished: {updated_count} assemblies updated out of {processed_count} processed")
+    return {"updated": updated_count, "processed": processed_count}

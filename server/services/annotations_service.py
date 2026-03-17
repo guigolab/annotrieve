@@ -6,16 +6,18 @@ from helpers import pysam_helper
 from helpers import constants as constants_helper
 from helpers import annotation as annotation_helper
 from helpers import feature_stats as feature_stats_helper
+from helpers import busco_stats as busco_stats_helper
 from helpers import pipelines as pipelines_helper
-from db.models import GenomeAnnotation, AnnotationError, AnnotationSequenceMap, TaxonNode
+from db.models import GenomeAnnotation, AnnotationError, AnnotationSequenceMap
 from fastapi.responses import StreamingResponse
-from fastapi import HTTPException, BackgroundTasks
-from typing import Optional, Dict, Any
+from fastapi import HTTPException
+from typing import Dict, Any
 import os
 from datetime import datetime
 from db.embedded_documents import GFFStats
+import itertools
 
-def get_annotations(args: dict, field: str = None, response_type: str = 'metadata', background_tasks: Optional[BackgroundTasks] = None):
+def get_annotations(args: dict, field: str = None, response_type: str = 'metadata'):
     try:
         limit = args.pop('limit', 20)
         offset = args.pop('offset', 0)
@@ -38,20 +40,18 @@ def get_annotations(args: dict, field: str = None, response_type: str = 'metadat
 
 TSV_BUFFER_SIZE = 5000
 
-def stream_annotation_tsv(annotations):
-    def row_iterator():
-        header = "\t".join(constants_helper.FIELD_TSV_MAP.keys()) + "\n"
-        yield header
-        buffer: list[str] = []
-        for annotation in annotations.scalar(*constants_helper.FIELD_TSV_MAP.values()):
-            row = "\t".join("" if value is None else str(value) for value in annotation) + "\n"
-            buffer.append(row)
-            if len(buffer) >= TSV_BUFFER_SIZE:
-                yield "".join(buffer)
-                buffer.clear()
-        if buffer:
-            yield "".join(buffer)
 
+def stream_annotation_tsv(annotations):
+    fields = list(constants_helper.FIELD_TSV_MAP.values())
+    header = ("\t".join(constants_helper.FIELD_TSV_MAP.keys()) + "\n").encode()
+    def row_iterator():
+        yield header
+        cursor = iter(annotations.batch_size(TSV_BUFFER_SIZE).scalar(*fields))
+        while batch := list(itertools.islice(cursor, TSV_BUFFER_SIZE)):
+            yield "".join(
+                "\t".join("" if v is None else str(v) for v in row) + "\n"
+                for row in batch
+            ).encode()
     return StreamingResponse(
         row_iterator(),
         media_type='text/tab-separated-values',
@@ -222,6 +222,25 @@ def get_transcript_type_metric_values(transcript_type: str, metric: str, include
     params = params_helper.handle_request_params(commons or {}, payload or {})
     annotations = annotation_helper.get_annotation_records(**params)
     return feature_stats_helper.get_transcript_type_metric_values(transcript_type, metric, annotations, include_annotations)
+
+
+def get_busco_stats_summary(commons: Dict[str, Any] = None, payload: Dict[str, Any] = None):
+    """
+    Get busco stats summary: metrics (complete, single_copy, duplicated, fragmented, missing)
+    with mean and counts. No categories.
+    """
+    params = params_helper.handle_request_params(commons or {}, payload or {})
+    annotations = annotation_helper.get_annotation_records(**params)
+    return busco_stats_helper.get_busco_stats_summary(annotations)
+
+
+def get_busco_metric_values(metric: str, include_annotations: bool = False, commons: Dict[str, Any] = None, payload: Dict[str, Any] = None):
+    """
+    Get raw values for a single busco metric (for histograms).
+    """
+    params = params_helper.handle_request_params(commons or {}, payload or {})
+    annotations = annotation_helper.get_annotation_records(**params)
+    return busco_stats_helper.get_busco_metric_values(metric, annotations, include_annotations)
 
 
 def get_annotations_aggregates_by_taxon_rank(rank: str):

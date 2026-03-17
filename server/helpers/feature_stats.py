@@ -1,6 +1,6 @@
 
 from helpers import pipelines as pipelines_helper
-from db.models import GenomeAnnotation
+from helpers import response as response_helper
 from fastapi import HTTPException
 import statistics
 
@@ -181,38 +181,9 @@ def get_gene_category_metric_values(category: str, metric: str, annotations, inc
     else:
         field_path = f"features_statistics.gene_category_stats.{db_category}.{metric}"
     
-    pipeline = pipelines_helper.gene_category_metric_values_pipeline(field_path)
-    
-    result = list(annotations.aggregate(pipeline))
-    
-    if result:
-        values_docs = result[0].get("values", [])
-        # Values are already sorted by MongoDB
-        # Use zip to extract both values and annotation_ids in one pass
-        if values_docs:
-            values, annotation_ids = zip(*[(doc["value"], doc["annotation_id"]) for doc in values_docs])
-            values = list(values)
-            annotation_ids = list(annotation_ids)
-        else:
-            values = []
-            annotation_ids = []
-        missing = [doc["annotation_id"] for doc in result[0].get("empty_annotations", [])]
-    else:
-        values = []
-        annotation_ids = []
-        missing = []
-    
-    response = {
-        "category": category,
-        "metric": metric,
-        "values": values,
-        "missing": missing
-    }
-    
-    if include_annotations:
-        response["annotation_ids"] = annotation_ids
-    
-    return response
+    return response_helper.metric_values_response(
+        annotations, field_path, include_annotations, category=category, metric=metric
+    )
 
 def get_transcript_stats_summary(annotations):
     """
@@ -452,36 +423,6 @@ def get_transcript_type_metric_values(transcript_type: str, metric: str, annotat
         )
     
     field_path = metric_mapping[metric]
-    
-    pipeline = pipelines_helper.transcript_type_metric_values_pipeline(field_path)
-    
-    result = list(annotations.aggregate(pipeline))
-    
-    if result:
-        values_docs = result[0].get("values", [])
-        # Values are already sorted by MongoDB
-        # Use zip to extract both values and annotation_ids in one pass
-        if values_docs:
-            values, annotation_ids = zip(*[(doc["value"], doc["annotation_id"]) for doc in values_docs])
-            values = list(values)
-            annotation_ids = list(annotation_ids)
-        else:
-            values = []
-            annotation_ids = []
-        missing = [doc["annotation_id"] for doc in result[0].get("empty_annotations", [])]
-    else:
-        values = []
-        annotation_ids = []
-        missing = []
-    
-    response = {
-        "type": transcript_type,
-        "metric": metric,
-        "values": values,
-        "missing": missing
-    }
-    
-    if include_annotations:
-        response["annotation_ids"] = annotation_ids
-    
-    return response
+    return response_helper.metric_values_response(
+        annotations, field_path, include_annotations, type=transcript_type, metric=metric
+    )

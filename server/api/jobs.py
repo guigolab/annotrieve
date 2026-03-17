@@ -65,3 +65,12 @@ async def trigger_update_taxons_busco_scores(x_auth_key: str = Header(..., alias
     Requires X-Auth-Key header for authentication.
     """
     return jobs_service.trigger_update_taxons_busco_scores(x_auth_key)
+
+@router.post("/jobs/update/assemblies/download_url")
+async def trigger_update_assemblies_download_url(x_auth_key: str = Header(..., alias="X-Auth-Key")):
+    """
+    Trigger update assemblies download url job
+    
+    Requires X-Auth-Key header for authentication.
+    """
+    return jobs_service.trigger_update_assemblies_download_url(x_auth_key)

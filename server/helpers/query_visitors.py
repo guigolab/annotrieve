@@ -4,7 +4,6 @@ from mongoengine.queryset import QuerySet
 
 NO_VALUE_KEY = "no_value"
 
-
 def taxonomic_query(filter):
     return (Q(taxid__iexact=filter) | 
             Q(taxid__icontains=filter) |
@@ -51,6 +50,7 @@ ALLOWED_FIELDS_MAP = {
     'pipeline':'source_file_info.pipeline.name',
     'provider':'source_file_info.provider',
     'attribute_key':'features_summary.attribute_keys',
+    'busco_complete':'busco.complete',
 }
 ALLOWED_FIELDS_MAP_ASSEMBLY = {
     'organism_name':'organism_name',
@@ -62,6 +62,7 @@ ALLOWED_FIELDS_MAP_ASSEMBLY = {
     'assembly_type':'assembly_type',
     'bioprojects':'bioprojects',
 }
+
 def get_frequencies(items:QuerySet, field:str, type:str = 'annotation'):
     if type == 'annotation':
         allowed_fields_map = ALLOWED_FIELDS_MAP
@@ -71,15 +72,44 @@ def get_frequencies(items:QuerySet, field:str, type:str = 'annotation'):
         raise HTTPException(status_code=400, detail=f"Type parameter is required and must be one of: annotation, assembly")
     if not field or field not in allowed_fields_map:
         raise HTTPException(status_code=400, detail=f"Field parameter is required and must be one of: {', '.join(allowed_fields_map.keys())}")
-    field = allowed_fields_map[field]
+    mongo_field = allowed_fields_map[field]
     try:
+        # BUSCO completeness: bucket by rounded percentage (0-100); missing/null → no_value
+        if field == 'busco_complete':
+            pipeline = [
+                {
+                    "$project": {
+                        "bucket": {
+                            "$cond": [
+                                {"$eq": [{"$ifNull": [f"${mongo_field}", "no_value"]}, "no_value"]},
+                                NO_VALUE_KEY,
+                                {"$min": [100, {"$max": [0, {"$round": f"${mongo_field}"}]}]}
+                            ]
+                        },
+                        "annotation_id": "$_id"
+                    }
+                },
+                {
+                    "$group": {
+                        "_id": "$bucket",
+                        "count": {"$addToSet": "$annotation_id"}
+                    }
+                },
+                {"$project": {"_id": 1, "count": {"$size": "$count"}}}
+            ]
+            raw = {}
+            for doc in items.aggregate(pipeline):
+                raw[doc["_id"]] = int(doc["count"])
+            response = {str(i): raw.get(i, 0) for i in range(101)}
+            response[NO_VALUE_KEY] = raw.get(NO_VALUE_KEY, 0)
+            return response
 
-            # Original pipeline for regular fields
+        # Original pipeline for regular fields
         pipeline = [
             {
                 "$project": {
                     "field_value": {
-                        "$ifNull": [f"${field}", f"{NO_VALUE_KEY}"]
+                        "$ifNull": [f"${mongo_field}", f"{NO_VALUE_KEY}"]
                     },
                     "annotation_id": "$_id"  # Keep track of unique annotations
                 }

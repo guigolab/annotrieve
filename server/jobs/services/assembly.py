@@ -1,12 +1,29 @@
 import os
+import re
 from db.models import BioProject, GenomeAssembly, AssemblyStats, GenomicSequence
 from clients import ncbi_datasets as ncbi_datasets_client
 from .classes import AnnotationToProcess, AssemblyReportSequence
 from .utils import create_batches
 import asyncio
 import aiohttp
+import requests
 from typing import Iterator
+from urllib.parse import urljoin
 import time
+
+FTP_BASE = "https://ftp.ncbi.nlm.nih.gov/genomes/all"
+REQUEST_TIMEOUT = 15
+_FTP_REQUEST_COUNT = 0
+_FTP_RATE_LIMIT_EVERY = 3
+_FTP_RATE_LIMIT_WAIT = 1.0
+
+
+def _maybe_wait_ftp_rate() -> None:
+    """Wait 1 second every 3 FTP requests to avoid rate limiting."""
+    global _FTP_REQUEST_COUNT
+    if _FTP_REQUEST_COUNT > 0 and _FTP_REQUEST_COUNT % _FTP_RATE_LIMIT_EVERY == 0:
+        time.sleep(_FTP_RATE_LIMIT_WAIT)
+    _FTP_REQUEST_COUNT += 1
 
 
 def get_existing_accessions(accessions: list[str]) -> list[str]:
@@ -291,9 +308,64 @@ async def get_assembly_report(session: aiohttp.ClientSession, ftp_path: str) -> 
     except Exception:
         return None
 
+
+def _build_ftp_level_url(accession: str) -> str:
+    """Build the NCBI FTP URL for the accession's numeric level directory (e.g. .../GCF/000/001/405/)."""
+    return f"{FTP_BASE}/{accession[0:3]}/{accession[4:7]}/{accession[7:10]}/{accession[10:13]}/"
+
+
+def _check_ftp_path_exists(url: str) -> bool:
+    """Return True if the URL exists (HTTP 200) on NCBI FTP."""
+    _maybe_wait_ftp_rate()
+    try:
+        resp = requests.head(url, timeout=REQUEST_TIMEOUT, allow_redirects=True)
+        return resp.status_code == 200
+    except Exception:
+        return False
+
+
+def _scrape_ftp_directory(level_url: str, accession: str) -> list[str]:
+    """
+    Fetch the NCBI FTP directory listing for level_url and return subdirectory names
+    that start with accession_ (e.g. GCF_000001405.40_GRCh38.p14).
+    """
+    _maybe_wait_ftp_rate()
+    try:
+        resp = requests.get(level_url, timeout=REQUEST_TIMEOUT)
+        resp.raise_for_status()
+        html = resp.text
+    except Exception:
+        return []
+    # Match directory links: accession_something/ (href or plain in <pre>)
+    prefix = re.escape(accession) + "_"
+    pattern = prefix + r"([^\s/]+)/"
+    matches = re.findall(pattern, html)
+    dir_names = [accession + "_" + m for m in matches]
+    return list(dict.fromkeys(dir_names))
+
+
 def create_ftp_path(accession: str, assembly_name: str) -> str:
-    assembly_name = assembly_name.replace(' ', '_')
-    return f"https://ftp.ncbi.nlm.nih.gov/genomes/all/{accession[0:3]}/{accession[4:7]}/{accession[7:10]}/{accession[10:13]}/{accession}_{assembly_name}/{accession}_{assembly_name}_genomic.fna.gz"
+    """
+    Build the NCBI FTP URL for the assembly genomic.fna.gz file.
+    If the constructed path does not exist (e.g. assembly name mismatch), scrapes the
+    accession's directory on NCBI FTP and resolves the correct subdirectory and file URL.
+    """
+    assembly_name = assembly_name.replace(" ", "_").replace("-", "_")
+    candidate = f"{FTP_BASE}/{accession[0:3]}/{accession[4:7]}/{accession[7:10]}/{accession[10:13]}/{accession}_{assembly_name}/{accession}_{assembly_name}_genomic.fna.gz"
+    if _check_ftp_path_exists(candidate):
+        return candidate
+    level_url = _build_ftp_level_url(accession)
+    dirs = _scrape_ftp_directory(level_url, accession)
+    if not dirs:
+        return candidate
+    # Prefer directory that contains the requested assembly_name (e.g. GRCh38.p14)
+    assembly_lower = assembly_name.lower()
+    preferred = next((d for d in dirs if assembly_lower in d.lower()), dirs[0])
+    resolved = urljoin(level_url, f"{preferred}/{preferred}_genomic.fna.gz")
+    if _check_ftp_path_exists(resolved):
+        return resolved
+    return candidate
+
 
 def parse_bioprojects(assembly_info: dict, bioprojects_to_save: dict[str, BioProject]) -> list[str]:
     """

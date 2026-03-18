@@ -283,15 +283,31 @@ export function D3StackedRadialBar({
         assembliesCount: n.assemblies_count ?? 0,
       }
     })
-    if (stackMode === "busco") {
-      const byCompleteness = [...rows].sort(
+    if (stackMode === "genes") {
+      const geneSet = selectedGeneTypes as Set<GeneKey>
+      const byGeneTotal = [...rows].sort(
         (a, b) =>
-          b.busco_single_copy + b.busco_duplicated - (a.busco_single_copy + a.busco_duplicated)
+          getVisibleTotal(b, "genes", geneSet, new Set(), new Set()) -
+          getVisibleTotal(a, "genes", geneSet, new Set(), new Set())
       )
-      return byCompleteness.slice(0, DISPLAY_LIMIT)
+      return byGeneTotal.slice(0, DISPLAY_LIMIT)
     }
-    return rows.slice(0, DISPLAY_LIMIT)
-  }, [flatNodes, idsAtSelectedRank, stackMode])
+    if (stackMode === "transcripts") {
+      const transcriptSet = selectedTranscriptTypes
+      const byTranscriptTotal = [...rows].sort(
+        (a, b) =>
+          getVisibleTotal(b, "transcripts", new Set(), transcriptSet, new Set()) -
+          getVisibleTotal(a, "transcripts", new Set(), transcriptSet, new Set())
+      )
+      return byTranscriptTotal.slice(0, DISPLAY_LIMIT)
+    }
+    // busco: keep existing behavior
+    const byCompleteness = [...rows].sort(
+      (a, b) =>
+        b.busco_single_copy + b.busco_duplicated - (a.busco_single_copy + a.busco_duplicated)
+    )
+    return byCompleteness.slice(0, DISPLAY_LIMIT)
+  }, [flatNodes, idsAtSelectedRank, stackMode, selectedGeneTypes, selectedTranscriptTypes])
 
   useEffect(() => {
     const modeChanged = stackMode !== prevStackModeRef.current

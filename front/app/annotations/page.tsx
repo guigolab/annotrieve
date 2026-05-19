@@ -58,7 +58,6 @@ export default function AnnotationsPage() {
   const itemsPerPage = useAnnotationsFiltersStore((s) => s.itemsPerPage)
   const sortOption = useAnnotationsFiltersStore((s) => s.sortOption)
   const setAnnotationsSortOption = useAnnotationsFiltersStore((s) => s.setAnnotationsSortOption)
-  const hasActiveFilters = useAnnotationsFiltersStore((s) => s.hasActiveFilters())
   const selectedTaxons = useAnnotationsFiltersStore((s) => s.selectedTaxons)
   const selectedAssemblies = useAnnotationsFiltersStore((s) => s.selectedAssemblies)
   const selectedBioprojects = useAnnotationsFiltersStore((s) => s.selectedBioprojects)
@@ -340,12 +339,10 @@ export default function AnnotationsPage() {
               </div>
             </div>
 
-            {/* Row 2 — Active filter chips (only shown when filters are active) */}
-            {hasActiveFilters && (
-              <div className="px-3 sm:px-4 lg:px-6 pb-2 sm:pb-3">
-                <ActiveFilters hideToggle />
-              </div>
-            )}
+            {/* Row 2 — Active filter chips (always mounted; zero height when empty) */}
+            <div className="px-3 sm:px-4 lg:px-6 min-h-0">
+              <ActiveFilters hideToggle />
+            </div>
           </header>
 
           {/* Download TSV dialog */}

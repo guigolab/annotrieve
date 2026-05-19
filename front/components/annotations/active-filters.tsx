@@ -567,11 +567,18 @@ export function ActiveFilters({ readOnly = false, hideToggle = false }: ActiveFi
     )
   )
 
-  if (hideToggle && filterChips.length === 0) return null
+  if (hideToggle && filterChips.length === 0) {
+    return <div className="h-0 overflow-hidden p-0 m-0" aria-hidden />
+  }
 
   return (
     <>
-      <div className="flex items-center gap-3 w-full overflow-x-auto mb-2">
+      <div
+        className={cn(
+          "flex items-center gap-3 w-full overflow-x-auto",
+          hideToggle ? "pb-2 sm:pb-3" : "mb-2",
+        )}
+      >
         {/* Toggle Filter Button — hidden when caller provides its own toggle */}
         {!readOnly && !hideToggle && (
           <Button

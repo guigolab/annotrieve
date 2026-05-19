@@ -53,7 +53,6 @@ export function TaxonDetailsView({ taxid: taxidProp, onClose }: TaxonDetailsView
   const router = useRouter()
   const taxid = taxidProp ?? null
   const setSelectedTaxons = useAnnotationsFiltersStore((state) => state.setSelectedTaxons)
-  const selectedTaxons = useAnnotationsFiltersStore((state) => state.selectedTaxons)
   const theme = useUIStore((state) => state.theme)
   const isDark = theme === "dark"
   const legendColor = isDark ? '#e5e7eb' : '#0f172a'
@@ -359,10 +358,8 @@ export function TaxonDetailsView({ taxid: taxidProp, onClose }: TaxonDetailsView
 
   const handleViewAnnotations = () => {
     if (!taxon) return
-    if(!selectedTaxons.some(t => t.taxid === taxon.taxid)) {
-      setSelectedTaxons([...selectedTaxons, taxon])
-    }
-    router.push('/annotations')
+    setSelectedTaxons([{ ...taxon, taxid: String(taxon.taxid) }])
+    router.push("/annotations")
     onClose?.()
   }
 

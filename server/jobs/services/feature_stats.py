@@ -256,9 +256,9 @@ def _compute_features_statistics_from_lines(lines: Iterable[str]) -> GFFStats:
                     continue
                 
                 gene_ftype = feature_type.lower()
-                gene_biotype = (attr.get('biotype') or attr.get('gene_biotype') or 
-                                   attr.get('type')).lower()
-                gene_biotype = gene_biotype if gene_biotype else MISSING_BIOTYPE                
+                gene_biotype = (attr.get('biotype') or attr.get('gene_biotype') or
+                                attr.get('type'))
+                gene_biotype = gene_biotype.lower() if gene_biotype else MISSING_BIOTYPE
                 if gene_id not in gene_info:
                     gene_info[gene_id] = {
                         'feature_type': gene_ftype,

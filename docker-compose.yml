@@ -1,7 +1,16 @@
+# Image registry (set in .env). ECR (build-all.yml): ECR_REGISTRY, ECR_REPOSITORY,
+# ANNOTRIEVE_IMAGE_TAG_SEPARATOR=:
+# GitLab (legacy default): leave unset or use ANNOTRIEVE_IMAGE_TAG_SEPARATOR=/
+x-annotrieve-images:
+  nginx: &annotrieve-nginx-image >-
+    ${ECR_REGISTRY:-gitlab.hpc.crg.es:5005/monstre}/${ECR_REPOSITORY:-annotrieve}${ANNOTRIEVE_IMAGE_TAG_SEPARATOR:-/}annotrieve-nginx
+  fastapi: &annotrieve-fastapi-image >-
+    ${ECR_REGISTRY:-gitlab.hpc.crg.es:5005/monstre}/${ECR_REPOSITORY:-annotrieve}${ANNOTRIEVE_IMAGE_TAG_SEPARATOR:-/}annotrieve-fastapi
+
 services:
 
   annotrieve-nginx:
-    image: gitlab.hpc.crg.es:5005/monstre/annotrieve/annotrieve-nginx
+    image: *annotrieve-nginx-image
     restart: always
     environment:
       - BASE_PATH=${BASE_PATH}
@@ -44,7 +53,7 @@ services:
       - monstre
 
   annotrieve-fastapi:
-    image: gitlab.hpc.crg.es:5005/monstre/annotrieve/annotrieve-fastapi
+    image: *annotrieve-fastapi-image
     container_name: annotrieve-fastapi
     restart: always
     # Production uses Gunicorn (CMD in Dockerfile), override only if needed
@@ -62,7 +71,7 @@ services:
       - monstre
 
   annotrieve-fastapi-celery:
-    image: gitlab.hpc.crg.es:5005/monstre/annotrieve/annotrieve-fastapi
+    image: *annotrieve-fastapi-image
     restart: always
     command: celery --app celery_app.celery_worker.app worker --loglevel=info --autoscale=2,1 --max-tasks-per-child=1
     volumes:
@@ -78,7 +87,7 @@ services:
       - monstre
 
   annotrieve-fastapi-celery-beat:
-    image: gitlab.hpc.crg.es:5005/monstre/annotrieve/annotrieve-fastapi
+    image: *annotrieve-fastapi-image
     restart: always
     command: celery --app celery_app.celery_worker.app beat --loglevel=info --schedule=/tmp/celerybeat-schedule
     volumes:

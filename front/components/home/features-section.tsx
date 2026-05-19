@@ -8,6 +8,7 @@ import {
   TrendingUp, 
   Star,
   Network,
+  UploadCloud,
 } from "lucide-react"
 import { ReactNode } from "react"
 
@@ -54,6 +55,14 @@ const FEATURES: Feature[] = [
     icon: Network,
     iconColor: "text-blue-600",
     iconBgColor: "bg-blue-500/10",
+  },
+  {
+    title: "Upload Custom GFF",
+    description:
+      "Upload your own GFF3 files for server-side feature statistics, or import annotations from JSON and JSONL. Results are saved to your favorites for browsing and comparison.",
+    icon: UploadCloud,
+    iconColor: "text-teal-600",
+    iconBgColor: "bg-teal-500/10",
   },
 ]
 

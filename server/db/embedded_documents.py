@@ -33,6 +33,15 @@ class AssemblyStats(EmbeddedDocument):
     number_of_organelles = IntField()
 
 
+class AssemblyReportBackfill(EmbeddedDocument):
+    """Sync state for NCBI assembly_report → chromosomes.json on disk."""
+
+    report_status = StringField(default="pending")  # pending | ok | failed
+    report_fetched_at = DateTimeField()
+
+    meta = {"strict": False}  # tolerate legacy fields e.g. sequence_stored_count
+
+
 class BuscoScore(EmbeddedDocument):
     """
     This class is used to store the busco score of the assembly.
@@ -187,7 +196,6 @@ class TaxonBuscoScore(EmbeddedDocument):
     busco_lineage = StringField()
     busco_version = StringField()
     total_count = IntField()
-
 
 
 class TaxonGeneStats(EmbeddedDocument):

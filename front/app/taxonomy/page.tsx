@@ -9,6 +9,8 @@ import type { TreeRankOption } from "@/components/taxonomy/taxonomy-tree-control
 import { D3StackedRadialBar } from "@/components/taxonomy/d3-stacked-radial-bar"
 import { TaxonomyDetailsPanel } from "@/components/taxonomy/taxonomy-details-panel"
 import { RadialTreeWithWarning } from "@/components/taxonomy/radial-tree-with-warning"
+import { RadialTreeLegendCard } from "@/components/taxonomy/radial-tree-legend-card"
+import type { LegendItem } from "@/components/taxonomy/radial-tree-legend-card"
 import { ExpandableSearch } from "@/components/taxonomy/expandable-search"
 import { useTaxonomyUrlSync } from "./use-taxonomy-url-sync"
 import { useFlattenedTreeStore, useRankDistribution, useRootOrganismsCount, getRankIndex } from "@/lib/stores/flattened-tree"
@@ -106,6 +108,7 @@ export default function TaxonomyPage() {
   // Rank reset toast (shown when root moves below selected rank)
   const [rankResetToastOpen, setRankResetToastOpen] = useState(false)
   const [helpDialogOpen, setHelpDialogOpen] = useState(false)
+  const [legendItems, setLegendItems] = useState<LegendItem[]>([])
 
   const vizRef = useRef<HTMLDivElement>(null)
   const radialScrollRef = useRef<HTMLDivElement>(null)
@@ -362,6 +365,10 @@ export default function TaxonomyPage() {
                 controlledRank={(selectedMaxRank as TreeRankOption) ?? undefined}
                 controlledShowLabels={showLabels}
                 scopeHint={rootTaxon ? currentDisplayTaxon.taxon.scientific_name : undefined}
+                onLegendChange={setLegendItems}
+                distribution={rankDistribution}
+                onSelectRank={setSelectedMaxRank}
+                currentRootRank={currentDisplayTaxon.taxon.rank ?? null}
               />
             </div>
           )}
@@ -386,7 +393,8 @@ export default function TaxonomyPage() {
             className={cn(
               GLASS_PANEL,
               GLASS_PANEL_PADDING,
-              "pointer-events-auto absolute left-4 top-4 flex flex-wrap items-center gap-2 shadow-md h-[50px]"
+              "pointer-events-auto absolute left-4 top-4 flex-wrap items-center gap-2 shadow-md h-[50px]",
+              "hidden md:flex"
             )}
             aria-label="Taxonomy explorer"
           >
@@ -409,12 +417,39 @@ export default function TaxonomyPage() {
             onClose={() => setRankResetToastOpen(false)}
             className="absolute right-4 top-4"
           />
-          {/* Bottom strip: stack chart options (Tree + Outliers views only) */}
+          {/* Bottom strip: stack chart options (Tree + Outliers views only).
+              On mobile, the legend items are merged into this strip to avoid overlap. */}
           <BottomStackVizStrip
             visible={activeTab === "constant-branch" || activeTab === "gene-stack"}
             showLabels={showLabels}
             onShowLabelsChange={setShowLabels}
+            legendItems={activeTab === "constant-branch" ? legendItems : undefined}
+            legendRootName={currentDisplayTaxon.taxon.scientific_name ?? "root"}
+            legendSelectedTaxid={selectedNode?.taxid ?? null}
+            onLegendItemClick={(taxid) => {
+              const node = flatNodes.find((n) => n.id === taxid)
+              if (!node) return
+              setSelectedNode((prev) =>
+                prev?.taxid === taxid ? null : { taxid, node, screenX: 0, screenY: 0 }
+              )
+            }}
           />
+          {/* Legend card: desktop floating bottom-left only (mobile version suppressed — merged above) */}
+          {activeTab === "constant-branch" && legendItems.length > 0 && (
+            <RadialTreeLegendCard
+              items={legendItems}
+              rootName={currentDisplayTaxon.taxon.scientific_name ?? "root"}
+              selectedTaxid={selectedNode?.taxid ?? null}
+              hideMobile
+              onItemClick={(taxid) => {
+                const node = flatNodes.find((n) => n.id === taxid)
+                if (!node) return
+                setSelectedNode((prev) =>
+                  prev?.taxid === taxid ? null : { taxid, node, screenX: 0, screenY: 0 }
+                )
+              }}
+            />
+          )}
           {/* Strip: draggable, centered by default */}
           <FloatingVizStrip
               currentDisplayTaxon={currentDisplayTaxon}
@@ -434,6 +469,8 @@ export default function TaxonomyPage() {
                 setActiveTab(t)
                 setSelectedNode(null)
               }}
+              title="Taxonomy"
+              onHelpClick={() => setHelpDialogOpen(true)}
               searchSlot={
                 <ExpandableSearch
                   query={searchQuery}

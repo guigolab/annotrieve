@@ -50,4 +50,4 @@ EXPOSE 5000
 
 # Run the application with Gunicorn and Uvicorn workers for production
 # In development, this is overridden by docker-compose command
-CMD ["gunicorn", "-k", "uvicorn.workers.UvicornWorker", "-w", "4", "-b", "0.0.0.0:5000", "--access-logfile", "-", "--error-logfile", "-", "main:app"] 
+CMD ["gunicorn", "-k", "uvicorn.workers.UvicornWorker", "-w", "4", "-b", "0.0.0.0:5000", "--timeout", "3600", "--access-logfile", "-", "--error-logfile", "-", "main:app"] 

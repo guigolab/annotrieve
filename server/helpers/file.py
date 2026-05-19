@@ -32,8 +32,13 @@ def get_annotation_file_path(annotation:GenomeAnnotation):
     """
     if not ANNOTATIONS_PATH:
         raise ValueError("LOCAL_ANNOTATIONS_DIR environment variable is not set")
-    
-    bgzipped_path = annotation.indexed_file_info.bgzipped_path.lstrip('/') if annotation.indexed_file_info.bgzipped_path.startswith('/') else annotation.indexed_file_info.bgzipped_path
+    if not annotation.indexed_file_info or not annotation.indexed_file_info.bgzipped_path:
+        raise ValueError(
+            f"Annotation {annotation.annotation_id} has no indexed_file_info.bgzipped_path"
+        )
+
+    rel_path = annotation.indexed_file_info.bgzipped_path
+    bgzipped_path = rel_path.lstrip("/") if rel_path.startswith("/") else rel_path
     return os.path.join(ANNOTATIONS_PATH, bgzipped_path)
 
 def remove_files(files, dir_path) -> list[str]:

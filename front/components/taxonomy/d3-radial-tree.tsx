@@ -25,6 +25,12 @@ const LEGEND_PALETTE_LIGHT = [
   "#991b1b", "#1d4ed8", "#3f6212",
 ]
 
+export interface LegendItem {
+  taxid: string
+  name: string
+  color: string
+}
+
 interface D3RadialTreeProps {
   rootTaxid?: string | null
   highlightTaxid?: string | null
@@ -33,6 +39,7 @@ interface D3RadialTreeProps {
   onTaxonSelect?: (taxid: string, taxon: FlatTreeNode) => void
   controlledRank?: TreeRankOption | null
   controlledShowLabels?: boolean
+  onLegendChange?: (items: LegendItem[]) => void
 }
 
 export function D3RadialTree({
@@ -42,6 +49,7 @@ export function D3RadialTree({
   onTaxonSelect,
   controlledRank,
   controlledShowLabels,
+  onLegendChange,
 }: D3RadialTreeProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -122,14 +130,25 @@ export function D3RadialTree({
     return () => ro.disconnect()
   }, [])
 
-  const {
-    isLoading: loading,
-    error,
-    fetchFlattenedTree,
-  } = useFlattenedTreeStore()
+  const { isLoading: loading, error } = useFlattenedTreeStore()
 
   const rankForFilter: string | null = selectedRank === "all" ? null : selectedRank
   const filteredTree = useFilteredTreeByRootAndRank(rootTaxid, rankForFilter)
+
+  // Emit legend items whenever the tree or theme changes (without triggering re-render loops)
+  useEffect(() => {
+    if (!filteredTree || !onLegendChange) return
+    const domainChildren = filteredTree.children ?? []
+    const domainTaxids = domainChildren.map((c) => c.data.id)
+    const palette = isDark ? LEGEND_PALETTE_DARK : LEGEND_PALETTE_LIGHT
+    const colorScale = d3.scaleOrdinal<string>().domain(domainTaxids).range(palette)
+    const items: LegendItem[] = domainChildren.map((child) => ({
+      taxid: child.data.id,
+      name: child.data.scientific_name.replace(/_/g, " "),
+      color: colorScale(child.data.id),
+    }))
+    onLegendChange(items)
+  }, [filteredTree, isDark, onLegendChange])
 
   useEffect(() => {
     hoveredNodeRef.current = hoveredNode
@@ -186,10 +205,6 @@ export function D3RadialTree({
       }
     }
   }, [stackMode, selectedGeneTypes, selectedTranscriptTypes, selectedBuscoTypes])
-
-  useEffect(() => {
-    fetchFlattenedTree()
-  }, [fetchFlattenedTree])
 
   useEffect(() => {
     if (!filteredTree || !canvasRef.current || !containerRef.current) return
@@ -371,7 +386,6 @@ export function D3RadialTree({
       treeRoot: d3.HierarchyNode<FlatTreeNode>,
       useRankInterp: boolean,
       opts: {
-        drawLegend: boolean
         alpha: number
         radialScale?: number
       }
@@ -633,41 +647,6 @@ export function D3RadialTree({
       }
       ctx.globalAlpha = opts.alpha
 
-      if (opts.drawLegend && treeDomainTaxids.length > 0) {
-        const legendItems = treeDomainChildren.map((child) => ({
-          name: child.data.scientific_name.replace(/_/g, " "),
-          color: treeColor(child.data.id),
-        }))
-        const ROWS_PER_COLUMN = 15
-        const ROW_HEIGHT = 20
-        const COLUMN_WIDTH = 110
-        const TITLE_HEIGHT = 28
-        const numRows = Math.min(legendItems.length, ROWS_PER_COLUMN)
-        const totalHeight = TITLE_HEIGHT + numRows * ROW_HEIGHT
-        const rootName = treeRoot.data.scientific_name?.replace(/_/g, " ") ?? "selected taxon"
-        ctx.save()
-        ctx.translate(-width / 2 + 20, height / 2 - 20 - totalHeight)
-        ctx.font = "bold 13px system-ui, -apple-system, sans-serif"
-        ctx.textAlign = "left"
-        ctx.textBaseline = "top"
-        ctx.fillStyle = (isDark ? "#e2e8f0" : "#1e293b") as string
-        ctx.fillText(`Children of ${rootName}`, 0, 0)
-        ctx.font = "12px system-ui, -apple-system, sans-serif"
-        ctx.textBaseline = "middle"
-        legendItems.forEach((item, i) => {
-          const col = Math.floor(i / ROWS_PER_COLUMN)
-          const row = i % ROWS_PER_COLUMN
-          const x = col * COLUMN_WIDTH
-          const y = TITLE_HEIGHT + row * ROW_HEIGHT
-          ctx.beginPath()
-          ctx.arc(x + 8, y, 6, 0, 2 * Math.PI)
-          ctx.fillStyle = item.color
-          ctx.fill()
-          ctx.fillStyle = (isDark ? "#e2e8f0" : "#1e293b") as string
-          ctx.fillText(item.name, x + 20, y)
-        })
-        ctx.restore()
-      }
       ctx.globalAlpha = 1
       return { nodesArray: treeNodesArray, labelsArray: treeLabelsArray }
     }
@@ -692,13 +671,11 @@ export function D3RadialTree({
         const newScale = rootT < half ? 0 : (rootT - half) / half
         if (oldScale > 0.001) {
           drawTreeLayer(prevRoot, false, {
-            drawLegend: false,
             alpha: 1,
             radialScale: oldScale,
           })
         }
         const curr = drawTreeLayer(root, true, {
-          drawLegend: true,
           alpha: 1,
           radialScale: newScale,
         })
@@ -706,14 +683,13 @@ export function D3RadialTree({
         labelsArrayRef.current = curr.labelsArray
       } else if (doingInitialDraw) {
         const curr = drawTreeLayer(root, true, {
-          drawLegend: true,
           alpha: 1,
           radialScale: initialT,
         })
         nodesArrayRef.current = curr.nodesArray
         labelsArrayRef.current = curr.labelsArray
       } else {
-        const curr = drawTreeLayer(root, true, { drawLegend: true, alpha: 1 })
+        const curr = drawTreeLayer(root, true, { alpha: 1 })
         nodesArrayRef.current = curr.nodesArray
         labelsArrayRef.current = curr.labelsArray
       }

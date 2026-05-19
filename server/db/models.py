@@ -1,16 +1,26 @@
 from datetime import datetime
-from .embedded_documents import AssemblyStats, SourceFileInfo, IndexedFileInfo, FeatureOverview, GFFStats, TaxonAnnotationStats, BuscoScore
+from .embedded_documents import (
+    AssemblyStats,
+    AssemblyReportBackfill,
+    SourceFileInfo,
+    IndexedFileInfo,
+    FeatureOverview,
+    GFFStats,
+    TaxonAnnotationStats,
+    BuscoScore,
+)
 from mongoengine import (
     Document,
     DynamicDocument,
     StringField,
     ListField,
     IntField,
+    BooleanField,
     EmbeddedDocumentField,
-    EmbeddedDocumentListField,
     URLField,
     DateTimeField,
 )
+
 
 def drop_all_collections():
     GenomeAssembly.objects().delete()
@@ -21,6 +31,7 @@ def drop_all_collections():
     GenomeAnnotation.objects().delete()
     TaxonNode.objects().delete()
     BioProject.objects().delete()
+
 
 class GenomeAssembly(DynamicDocument):
     assembly_accession = StringField(required=True, unique=True)
@@ -39,7 +50,11 @@ class GenomeAssembly(DynamicDocument):
     bioprojects = ListField(StringField()) #list of bioprojects
     submitter = StringField()
     annotations_count = IntField()
+    ncbi_ftp_directory_url = URLField()
     download_url = URLField(required=True, unique=True)
+    assembly_report = EmbeddedDocumentField(
+        AssemblyReportBackfill, default=AssemblyReportBackfill
+    )
     meta = {
         'indexes': [
             "assembly_accession", 
@@ -53,6 +68,7 @@ class GenomeAssembly(DynamicDocument):
             "refseq_category",
         ],
     }
+
 
 class UserAnalytics(DynamicDocument):
     fingerprint = StringField(required=True, unique=True) #hmac of the user's IP address to ensure full anonymity
@@ -80,6 +96,30 @@ class UserAnalytics(DynamicDocument):
         """
         return date.isoformat().split('T')[0]
 
+
+class UploadRateLimit(DynamicDocument):
+    """
+    Track upload requests per client (IP + User-Agent) to enforce per-day limits.
+    Documents are short-lived thanks to a TTL index on created_at.
+    """
+
+    ip = StringField(required=True)
+    user_agent = StringField(required=True)
+    created_at = DateTimeField(default=datetime.utcnow)
+    task_id = StringField()
+
+    meta = {
+        "indexes": [
+            ("ip", "user_agent"),
+            {
+                "fields": ["created_at"],
+                # 48h TTL – application logic enforces a rolling 24h window
+                "expireAfterSeconds": 60 * 60 * 48,
+            },
+        ]
+    }
+
+
 class BioProject(DynamicDocument):
     accession = StringField(required=True, unique=True)
     title = StringField(required=True)
@@ -90,6 +130,7 @@ class BioProject(DynamicDocument):
             'title',
         ]
     }
+
 
 class Organism(DynamicDocument):
     taxid = StringField(required=True, unique=True)
@@ -107,32 +148,43 @@ class Organism(DynamicDocument):
             ]
     }
 
-#class to map aliases to the related sequence_id in the gff file
+
+# Deprecated: per-annotation seqids live in {gff}.contigs.txt on disk.
 class AnnotationSequenceMap(DynamicDocument):
     sequence_id = StringField(required=True) #id in the gff file
     annotation_id = StringField(required=True) #indexed_file_info.uncompressed_md5 of the annotation
     aliases = ListField(StringField()) #aliases for the sequence_id, e.g. chr1, 1, 1_1, 1_1_1,ucsc_style_name, refseq_accession, insdc_accession, etc.
+    feature_count = IntField(default=0)
+    length = IntField()
+    canonical_id = StringField()
     meta = {
-        'indexes': ['annotation_id', 'sequence_id', 'aliases']
+        'indexes': [
+            'annotation_id',
+            'sequence_id',
+            'aliases',
+            'canonical_id',
+        ]
     }
 
+# Deprecated: assembly chromosomes live in chromosomes.json on disk.
 class GenomicSequence(DynamicDocument):
     #ASSEMBLY
     assembly_accession = StringField(required=True)
     assembly_name = StringField(required=True)
 
-    #SEQUENCE IDENTIFIERShttps://genome.crg.es/annotrieve/api/v0/annotations/frequencies/biotype?biotypes
     ucsc_style_name = StringField()
     genbank_accession = StringField()
     refseq_accession = StringField()
-    
+    canonical_id = StringField()
+
     chr_name = StringField()
-    sequence_name = StringField() #assigned_molecule in the assembly report
+    sequence_role = StringField()
+    sequence_name = StringField()
     length = IntField()
 
     aliases = ListField(StringField(), required=True) #all possible aliases for the chromosome
     meta = {
-        'indexes': ['assembly_accession', 'aliases']
+        'indexes': ['assembly_accession', 'aliases', 'canonical_id', 'chr_name', 'sequence_name', 'sequence_role']
     }
 
 class AnnotationError(DynamicDocument):
@@ -171,7 +223,7 @@ class GenomeAnnotation(DynamicDocument):
     busco = EmbeddedDocumentField(BuscoScore)
 
     #MAPPED REGIONS
-    mapped_regions = ListField(StringField()) #Mapped seqid of the gff file (AnnotationSequenceMap ids)
+    mapped_regions = ListField(StringField())  # Deprecated; use AnnotationSequenceMap collection
 
     #SOURCE
     source_file_info = EmbeddedDocumentField(SourceFileInfo)
@@ -217,6 +269,7 @@ class GenomeAnnotation(DynamicDocument):
 
 class TaxonNode(Document):
     children = ListField(StringField())
+    parent_id = StringField()
     scientific_name = StringField(required=True)
     taxid = StringField(required= True,unique=True)
     rank = StringField()
@@ -226,6 +279,6 @@ class TaxonNode(Document):
     stats = EmbeddedDocumentField(TaxonAnnotationStats)
     meta = {
         'indexes': [
-            'taxid', 'scientific_name','children','rank'
+            'taxid', 'scientific_name', 'children', 'parent_id', 'rank'
         ]
     }

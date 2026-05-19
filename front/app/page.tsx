@@ -8,6 +8,7 @@ import { ReleaseDateChart } from "@/components/home/release-date-chart"
 import { BuscoCompletenessChart } from "@/components/home/busco-completeness-chart"
 import { FeaturesSection } from "@/components/home/features-section"
 import { HomeFooter } from "@/components/home/home-footer"
+import { VisitorAnalyticsSection } from "@/components/home/visitor-analytics-section"
 import { SectionWrapper } from "@/components/ui/section-wrapper"
 
 
@@ -52,6 +53,19 @@ export default function Home() {
               <span className="font-medium">Ensembl</span>,{" "}
               <span className="font-medium">NCBI RefSeq</span>, and{" "}
               <span className="font-medium">NCBI GenBank</span>. Each line shows the total number of annotations released up to that year, with each database accumulating independently.
+            </>
+          }
+        />
+      </SectionWrapper>
+
+      <SectionWrapper id="visitor-analytics" backgroundVariant="muted">
+        <VisitorAnalyticsSection
+          title="Global usage"
+          description={
+            <>
+              Anonymous, country-level usage of Annotrieve. We never store IP addresses—only
+              hashed fingerprints and approximate country. Visit counts reflect distinct days
+              with API activity.
             </>
           }
         />

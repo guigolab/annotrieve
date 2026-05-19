@@ -133,77 +133,88 @@ interface FlattenedTreeState {
   }
 }
 
+let flattenedTreeFetchInFlight: Promise<void> | null = null
+
 export const useFlattenedTreeStore = create<FlattenedTreeState>((set, get) => ({
   // Initial state
   flatNodes: [],
   isLoading: false,
   error: null,
   
-  // Fetch flattened tree data
+  // Fetch flattened tree data (taxonomy page triggers on mount; viz components read loading/error only)
   fetchFlattenedTree: async () => {
     const state = get()
     if (state.flatNodes.length > 0) {
       // Already loaded, skip
       return
     }
-    
-    set({ isLoading: true, error: null })
-    
-    try {
-      // Request TSV format for streaming; getFlattenedTree('tsv') returns FlatTreeNode[]
-      const fetched = await getFlattenedTree('tsv') as FlatTreeNode[]
-      
-      // Find nodes without parents in the dataset
-      const idsSet = new Set(fetched.map(n => n.id))
-      const rootCandidates = fetched.filter(n =>
-        !n.parentId || !idsSet.has(n.parentId)
-      )
-
-      let flatNodes: FlatTreeNode[]
-      if (rootCandidates.length > 1) {
-        // Build new array: root candidates get parentId 'root'; add synthetic root (no mutation of fetched)
-        flatNodes = fetched.map(node => {
-          if (!node.parentId || !idsSet.has(node.parentId)) {
-            return { ...node, parentId: 'root' as string | null }
-          }
-          return node
-        })
-        flatNodes.push({
-          id: 'root',
-          parentId: null,
-          scientific_name: 'Tree of Life',
-          annotations_count: rootCandidates.reduce((sum, n) => sum + n.annotations_count, 0),
-          assemblies_count: rootCandidates.reduce((sum, n) => sum + n.assemblies_count, 0),
-          organisms_count: rootCandidates.reduce((sum, n) => sum + n.organisms_count, 0),
-          rank: null,
-          coding_count: rootCandidates.reduce((sum, n) => sum + n.coding_count, 0),
-          non_coding_count: rootCandidates.reduce((sum, n) => sum + n.non_coding_count, 0),
-          pseudogene_count: rootCandidates.reduce((sum, n) => sum + n.pseudogene_count, 0),
-          mrna_count: rootCandidates.reduce((sum, n) => sum + (n.mrna_count ?? 0), 0),
-          lncrna_count: rootCandidates.reduce((sum, n) => sum + (n.lncrna_count ?? 0), 0),
-          trna_count: rootCandidates.reduce((sum, n) => sum + (n.trna_count ?? 0), 0),
-          mirna_count: rootCandidates.reduce((sum, n) => sum + (n.mirna_count ?? 0), 0),
-          busco_single_copy_mean: 0,
-          busco_duplicated_mean: 0,
-          busco_fragmented_mean: 0,
-          busco_missing_mean: 0,
-        })
-      } else {
-        flatNodes = fetched
-      }
-
-      set({
-        flatNodes,
-        isLoading: false,
-        error: null
-      })
-    } catch (err) {
-      console.error('Error fetching flattened tree:', err)
-      set({ 
-        isLoading: false,
-        error: err instanceof Error ? err.message : 'Failed to load tree data'
-      })
+    if (flattenedTreeFetchInFlight) {
+      return flattenedTreeFetchInFlight
     }
+
+    flattenedTreeFetchInFlight = (async () => {
+      set({ isLoading: true, error: null })
+
+      try {
+        // Request TSV format for streaming; getFlattenedTree('tsv') returns FlatTreeNode[]
+        const fetched = await getFlattenedTree('tsv') as FlatTreeNode[]
+
+        // Find nodes without parents in the dataset
+        const idsSet = new Set(fetched.map(n => n.id))
+        const rootCandidates = fetched.filter(n =>
+          !n.parentId || !idsSet.has(n.parentId)
+        )
+
+        let flatNodes: FlatTreeNode[]
+        if (rootCandidates.length > 1) {
+          // Build new array: root candidates get parentId 'root'; add synthetic root (no mutation of fetched)
+          flatNodes = fetched.map(node => {
+            if (!node.parentId || !idsSet.has(node.parentId)) {
+              return { ...node, parentId: 'root' as string | null }
+            }
+            return node
+          })
+          flatNodes.push({
+            id: 'root',
+            parentId: null,
+            scientific_name: 'Tree of Life',
+            annotations_count: rootCandidates.reduce((sum, n) => sum + n.annotations_count, 0),
+            assemblies_count: rootCandidates.reduce((sum, n) => sum + n.assemblies_count, 0),
+            organisms_count: rootCandidates.reduce((sum, n) => sum + n.organisms_count, 0),
+            rank: null,
+            coding_count: rootCandidates.reduce((sum, n) => sum + n.coding_count, 0),
+            non_coding_count: rootCandidates.reduce((sum, n) => sum + n.non_coding_count, 0),
+            pseudogene_count: rootCandidates.reduce((sum, n) => sum + n.pseudogene_count, 0),
+            mrna_count: rootCandidates.reduce((sum, n) => sum + (n.mrna_count ?? 0), 0),
+            lncrna_count: rootCandidates.reduce((sum, n) => sum + (n.lncrna_count ?? 0), 0),
+            trna_count: rootCandidates.reduce((sum, n) => sum + (n.trna_count ?? 0), 0),
+            mirna_count: rootCandidates.reduce((sum, n) => sum + (n.mirna_count ?? 0), 0),
+            busco_single_copy_mean: 0,
+            busco_duplicated_mean: 0,
+            busco_fragmented_mean: 0,
+            busco_missing_mean: 0,
+          })
+        } else {
+          flatNodes = fetched
+        }
+
+        set({
+          flatNodes,
+          isLoading: false,
+          error: null
+        })
+      } catch (err) {
+        console.error('Error fetching flattened tree:', err)
+        set({
+          isLoading: false,
+          error: err instanceof Error ? err.message : 'Failed to load tree data'
+        })
+      } finally {
+        flattenedTreeFetchInFlight = null
+      }
+    })()
+
+    return flattenedTreeFetchInFlight
   },
   
   // Get tree structure (computed on-demand using d3.stratify, similar to tree-of-life-d3.tsx)

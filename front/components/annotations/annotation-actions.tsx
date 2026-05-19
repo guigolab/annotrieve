@@ -3,14 +3,15 @@
 import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { FileText, Star } from "lucide-react"
-import type { Annotation } from "@/lib/types"
+import type { PortalAnnotation } from "@/lib/types"
 import { useRouter } from "next/navigation"
 import { useSelectedAnnotationsStore } from "@/lib/stores/selected-annotations"
 import { useUIStore } from "@/lib/stores/ui"
 import { getFilesBase, joinUrl } from "@/lib/config/env"
+import { cn } from "@/lib/utils"
 
 interface AnnotationActionsProps {
-  annotation: Annotation
+  annotation: PortalAnnotation
 }
 
 export function AnnotationActions({ annotation }: AnnotationActionsProps) {
@@ -49,22 +50,28 @@ export function AnnotationActions({ annotation }: AnnotationActionsProps) {
 
   return (
     <>
-      <div className="flex items-center gap-2">
-        <Button 
-          variant="ghost" 
+      <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+        <Button
+          variant="ghost"
           size="sm"
+          className={cn(
+            "h-8 w-8 p-0 sm:h-9 sm:w-9",
+            isFavorite ? "text-yellow-500 hover:text-yellow-600" : ""
+          )}
           onClick={() => toggleSelection(annotation)}
-          className={isFavorite ? "text-yellow-500 hover:text-yellow-600" : ""}
+          title={isFavorite ? "Remove from favorites" : "Add to favorites"}
         >
           <Star className={`h-4 w-4 ${isFavorite ? "fill-current" : ""}`} />
         </Button>
-        <Button 
-          variant="outline" 
-          size="sm" 
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-8 w-8 p-0 sm:h-9 sm:w-auto sm:px-3"
           onClick={() => openRightSidebar("file-overview", { annotation })}
+          title="View details"
         >
-          <FileText className="h-4 w-4 mr-2" />
-          Details
+          <FileText className="h-4 w-4 sm:mr-2" />
+          <span className="hidden sm:inline">Details</span>
         </Button>
       </div>
 

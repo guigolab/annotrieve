@@ -3,10 +3,12 @@
 import { Button } from "@/components/ui/button"
 import { X, Download, Copy, Check, Eye, Activity, ExternalLink, MoreVertical, FileDown, FileJson, Info } from "lucide-react"
 import { useState, useEffect } from "react"
-import type { Annotation } from "@/lib/types"
+import type { PortalAnnotation } from "@/lib/types"
 import { buildEntityDetailsUrl, cn } from "@/lib/utils"
 import { useRouter } from "next/navigation"
 import { downloadContigs } from "@/lib/api/annotations"
+import { getAssembly } from "@/lib/api/assemblies"
+import { assemblyHasChromosomesFile, contigsFileUrl, headFile } from "@/lib/api/files"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -47,7 +49,7 @@ ChartJS.register(
 )
 
 interface FileOverviewSidebarProps {
-  annotation: Annotation | null
+  annotation: PortalAnnotation | null
   open: boolean
   onOpenChange: (open: boolean) => void
 }
@@ -59,6 +61,87 @@ export function FileOverviewSidebar({ annotation, open, onOpenChange }: FileOver
   const [downloadingContigs, setDownloadingContigs] = useState(false)
   const [copiedSource, setCopiedSource] = useState(false)
   const [copiedBgzip, setCopiedBgzip] = useState(false)
+  const [canViewInBrowser, setCanViewInBrowser] = useState(false)
+  const [browserGateLoading, setBrowserGateLoading] = useState(false)
+  const [hasContigsFile, setHasContigsFile] = useState(false)
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false)
+  const [primaryActionsOpen, setPrimaryActionsOpen] = useState(false)
+
+  useEffect(() => {
+    if (
+      annotation == null ||
+      !annotation.assembly_accession ||
+      !annotation.taxid ||
+      !open
+    ) {
+      setCanViewInBrowser(false)
+      setHasContigsFile(false)
+      setBrowserGateLoading(false)
+      return
+    }
+
+    const ann = annotation
+    let cancelled = false
+    setBrowserGateLoading(true)
+    setCanViewInBrowser(false)
+
+    async function checkGates() {
+      try {
+        let paired: string | undefined
+        try {
+          const assembly = await getAssembly(ann.assembly_accession)
+          paired = assembly.paired_assembly_accession ?? undefined
+        } catch {
+          paired = undefined
+        }
+        if (cancelled) return
+        const hasChromosomes = await assemblyHasChromosomesFile(
+          ann.taxid,
+          ann.assembly_accession,
+          paired,
+        )
+        if (!cancelled) setCanViewInBrowser(hasChromosomes)
+
+        if (ann.indexed_file_info?.bgzipped_path) {
+          const contigsOk = await headFile(
+            contigsFileUrl(ann.indexed_file_info.bgzipped_path),
+          )
+          if (!cancelled) setHasContigsFile(contigsOk)
+        } else if (!cancelled) {
+          setHasContigsFile(false)
+        }
+      } catch {
+        if (!cancelled) {
+          setCanViewInBrowser(false)
+          setHasContigsFile(false)
+        }
+      } finally {
+        if (!cancelled) setBrowserGateLoading(false)
+      }
+    }
+
+    checkGates()
+    return () => {
+      cancelled = true
+    }
+  }, [
+    annotation?.assembly_accession,
+    annotation?.taxid,
+    annotation?.indexed_file_info?.bgzipped_path,
+    open,
+  ])
+
+  useEffect(() => {
+    if (!open) {
+      setMoreMenuOpen(false)
+      setPrimaryActionsOpen(false)
+    }
+  }, [open])
+
+  const handleBackdropClose = () => {
+    if (moreMenuOpen || primaryActionsOpen) return
+    onOpenChange(false)
+  }
 
   const copyAnnotationId = async () => {
     if (!annotation) return
@@ -109,7 +192,10 @@ export function FileOverviewSidebar({ annotation, open, onOpenChange }: FileOver
     if (!annotation) return
     setDownloadingContigs(true)
     try {
-      const response = await downloadContigs(annotation.annotation_id)
+      const response = await downloadContigs(
+        annotation.annotation_id,
+        annotation.indexed_file_info?.bgzipped_path,
+      )
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`)
       }
@@ -146,6 +232,13 @@ export function FileOverviewSidebar({ annotation, open, onOpenChange }: FileOver
 
   if (!annotation) return null
 
+  const sourceUrl = (annotation.source_file_info as { url_path?: string } | undefined)?.url_path
+  const bgzipUrl = annotation.indexed_file_info?.bgzipped_path
+    ? `https://genome.crg.es/annotrieve/files${annotation.indexed_file_info.bgzipped_path}`
+    : undefined
+  const showViewInBrowser = !browserGateLoading && canViewInBrowser
+  const hasPrimaryToolbarActions = Boolean(sourceUrl || bgzipUrl || showViewInBrowser)
+
   return (
     <>
       {/* Overlay */}
@@ -154,7 +247,9 @@ export function FileOverviewSidebar({ annotation, open, onOpenChange }: FileOver
           "fixed inset-0 bg-black/50 z-40 transition-opacity duration-300 ease-in-out",
           open ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
         )}
-        onClick={() => onOpenChange(false)}
+        onPointerDown={(e) => {
+          if (e.target === e.currentTarget) handleBackdropClose()
+        }}
       />
 
       {/* Sidebar */}
@@ -224,7 +319,7 @@ export function FileOverviewSidebar({ annotation, open, onOpenChange }: FileOver
                     onClick={() => router.push(buildEntityDetailsUrl("taxon", annotation.taxid))}
                     title="View organism details"
                   >
-                    <Info className="h-3 w-3" />
+                    <ExternalLink className="h-3 w-3" />
                   </Button>
                 </div>
               </div>
@@ -258,16 +353,63 @@ export function FileOverviewSidebar({ annotation, open, onOpenChange }: FileOver
             </div>
 
             {/* Action Buttons */}
-            <div className="flex items-center gap-2 pt-3 border-t">
-              {/* Primary Actions - Download buttons always visible */}
-              {(annotation.source_file_info as any)?.url_path && (
+            <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 pt-3 border-t min-w-0">
+              {hasPrimaryToolbarActions && (
+                <DropdownMenu
+                  modal={false}
+                  open={primaryActionsOpen}
+                  onOpenChange={setPrimaryActionsOpen}
+                >
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 gap-1.5 shrink-0 md:hidden"
+                      title="Download and view"
+                    >
+                      <Download className="h-4 w-4 shrink-0" />
+                      <span>Files</span>
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="z-[100] w-56">
+                    <DropdownMenuLabel>Download &amp; view</DropdownMenuLabel>
+                    {sourceUrl && (
+                      <DropdownMenuItem onClick={() => handleDownload(sourceUrl)}>
+                        <FileDown className="h-4 w-4 mr-2" />
+                        <span>Download source GFF</span>
+                      </DropdownMenuItem>
+                    )}
+                    {bgzipUrl && (
+                      <DropdownMenuItem onClick={() => handleDownload(bgzipUrl)}>
+                        <Download className="h-4 w-4 mr-2" />
+                        <span>Download BGZip</span>
+                      </DropdownMenuItem>
+                    )}
+                    {showViewInBrowser && (
+                      <DropdownMenuItem
+                        onClick={() =>
+                          router.push(
+                            `/jbrowse/?accession=${annotation.assembly_accession}&annotationId=${annotation.annotation_id}`
+                          )
+                        }
+                      >
+                        <Eye className="h-4 w-4 mr-2" />
+                        <span>View in genome browser</span>
+                      </DropdownMenuItem>
+                    )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
+
+              <div className="hidden md:contents">
+              {sourceUrl && (
                 <Popover>
                   <div className="flex items-center border rounded-md overflow-hidden shadow-sm">
                     <Button
                       variant="outline"
                       size="sm"
                       className="h-9 px-4 rounded-r-none border-r border-r-background/20"
-                      onClick={() => handleDownload((annotation.source_file_info as any).url_path)}
+                      onClick={() => handleDownload(sourceUrl)}
                     >
                       <FileDown className="h-4 w-4 mr-1.5" />
                       Download Source
@@ -296,7 +438,7 @@ export function FileOverviewSidebar({ annotation, open, onOpenChange }: FileOver
                             size="sm"
                             className="h-6 px-2 text-xs"
                             onClick={() => {
-                              copyToClipboard((annotation.source_file_info as any).url_path, 'source')
+                              copyToClipboard(sourceUrl, 'source')
                               setCopiedSource(true)
                               setTimeout(() => setCopiedSource(false), 2000)
                             }}
@@ -315,7 +457,7 @@ export function FileOverviewSidebar({ annotation, open, onOpenChange }: FileOver
                           </Button>
                         </div>
                         <code className="text-xs break-all text-foreground bg-muted px-2 py-1 rounded block">
-                          {(annotation.source_file_info as any).url_path}
+                          {sourceUrl}
                         </code>
                       </div>
                     </div>
@@ -323,14 +465,14 @@ export function FileOverviewSidebar({ annotation, open, onOpenChange }: FileOver
                 </Popover>
               )}
 
-              {annotation.indexed_file_info?.bgzipped_path && (
+              {bgzipUrl && (
                 <Popover>
                   <div className="flex items-center border rounded-md overflow-hidden">
                     <Button
                       variant="outline"
                       size="sm"
                       className="h-9 px-4 rounded-r-none border-r border-r-border"
-                      onClick={() => handleDownload(`https://genome.crg.es/annotrieve/files${annotation.indexed_file_info.bgzipped_path}`)}
+                      onClick={() => handleDownload(bgzipUrl)}
                     >
                       <Download className="h-4 w-4 mr-1.5" />
                       Download BGZip
@@ -359,7 +501,7 @@ export function FileOverviewSidebar({ annotation, open, onOpenChange }: FileOver
                             size="sm"
                             className="h-6 px-2 text-xs"
                             onClick={() => {
-                              copyToClipboard(`https://genome.crg.es/annotrieve/files${annotation.indexed_file_info.bgzipped_path}`, 'bgzip')
+                              copyToClipboard(bgzipUrl, 'bgzip')
                               setCopiedBgzip(true)
                               setTimeout(() => setCopiedBgzip(false), 2000)
                             }}
@@ -378,7 +520,7 @@ export function FileOverviewSidebar({ annotation, open, onOpenChange }: FileOver
                           </Button>
                         </div>
                         <code className="text-xs break-all text-foreground bg-muted px-2 py-1 rounded block">
-                          https://genome.crg.es/annotrieve/files{annotation.indexed_file_info.bgzipped_path}
+                          {bgzipUrl}
                         </code>
                       </div>
                     </div>
@@ -386,42 +528,43 @@ export function FileOverviewSidebar({ annotation, open, onOpenChange }: FileOver
                 </Popover>
               )}
 
-              {/* More Actions Dropdown */}
-              <DropdownMenu>
+              {showViewInBrowser && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-9 px-3 gap-1.5 shrink-0"
+                  onClick={() =>
+                    router.push(
+                      `/jbrowse/?accession=${annotation.assembly_accession}&annotationId=${annotation.annotation_id}`
+                    )
+                  }
+                  title="View in genome browser"
+                >
+                  <Eye className="h-4 w-4 shrink-0" />
+                  View in Browser
+                </Button>
+              )}
+              </div>
+
+              {/* More — contigs, JSON, copy URLs */}
+              <DropdownMenu modal={false} open={moreMenuOpen} onOpenChange={setMoreMenuOpen}>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="outline" size="sm" className="h-9 px-3">
-                    <MoreVertical className="h-4 w-4 mr-1.5" />
-                    More
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8 w-8 p-0 md:h-9 md:w-auto md:px-3 md:gap-1.5 shrink-0 ml-auto md:ml-0"
+                    title="More actions"
+                  >
+                    <MoreVertical className="h-4 w-4 shrink-0" />
+                    <span className="sr-only md:not-sr-only md:inline">More</span>
                   </Button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-56">
-                  {/* Browser Actions */}
-                  <DropdownMenuLabel>Browser Actions</DropdownMenuLabel>
-
-                  {(annotation as any).mapped_regions && Array.isArray((annotation as any).mapped_regions) && (annotation as any).mapped_regions.length > 0 && (
-                      <DropdownMenuItem
-                        onClick={() => {
-                          router.push(`/jbrowse/?accession=${annotation.assembly_accession}&annotationId=${annotation.annotation_id}`)
-                        }}
-                      >
-                        <Eye className="h-4 w-4 mr-2" />
-                        <span>View in Browser</span>
-                      </DropdownMenuItem>
-                    )}
-                      {/* <DropdownMenuItem
-                        onClick={() => router.push(`/gff-stream?id=${annotation.annotation_id}`)}
-                      >
-                        <Activity className="h-4 w-4 mr-2" />
-                        <span>Stream GFF regions</span>
-                      </DropdownMenuItem>
-                      <DropdownMenuSeparator /> */}
-                  
-
+                <DropdownMenuContent align="end" className="z-[100] w-56">
                   {/* Downloads */}
                   <DropdownMenuLabel>Downloads</DropdownMenuLabel>
                   <DropdownMenuItem
                     onClick={handleDownloadContigs}
-                    disabled={downloadingContigs}
+                    disabled={downloadingContigs || !hasContigsFile}
                   >
                     {downloadingContigs ? (
                       <>
@@ -443,18 +586,18 @@ export function FileOverviewSidebar({ annotation, open, onOpenChange }: FileOver
                   {/* Copy URLs */}
                   <DropdownMenuSeparator />
                   <DropdownMenuLabel>Copy URLs</DropdownMenuLabel>
-                  {(annotation.source_file_info as any)?.url_path && (
+                  {sourceUrl && (
                     <DropdownMenuItem
-                      onClick={() => copyToClipboard((annotation.source_file_info as any).url_path, 'source')}
+                      onClick={() => copyToClipboard(sourceUrl, 'source')}
                     >
                       <Copy className="h-4 w-4 mr-2" />
                       <span>Copy Source URL</span>
                       {copiedUrl === 'source' && <Check className="h-3.5 w-3.5 ml-auto text-green-600" />}
                     </DropdownMenuItem>
                   )}
-                  {annotation.indexed_file_info?.bgzipped_path && (
+                  {bgzipUrl && (
                     <DropdownMenuItem
-                      onClick={() => copyToClipboard(`https://genome.crg.es/annotrieve/files${annotation.indexed_file_info.bgzipped_path}`, 'bgzip')}
+                      onClick={() => copyToClipboard(bgzipUrl, 'bgzip')}
                     >
                       <Copy className="h-4 w-4 mr-2" />
                       <span>Copy BGZip URL</span>

@@ -144,11 +144,13 @@ def get_ordered_taxons(taxids: list[str])->list[TaxonNode]:
 def update_taxon_hierarchy(ordered_taxons: list[TaxonNode]):
     """
     Update the taxon hierarchy in a best-effort manner, add the children to the father taxon
+    and set parent_id on each child.
     """
     for index in range(len(ordered_taxons) - 1):
         child_taxon = ordered_taxons[index]
         father_taxon = ordered_taxons[index + 1]
         father_taxon.modify(add_to_set__children=child_taxon.taxid)
+        child_taxon.modify(set__parent_id=father_taxon.taxid)
 
 
 def rebuild_taxon_hierarchy_from_lineages():
@@ -162,8 +164,9 @@ def rebuild_taxon_hierarchy_from_lineages():
     print("Rebuilding taxon hierarchy from all lineages...")
     
     # Build parent-child relationships incrementally by streaming lineages
-    # parent_taxid -> set of child_taxids
+    # parent_taxid -> set of child_taxids; child_taxid -> parent_taxid
     parent_to_children = defaultdict(set)
+    child_to_parent: dict[str, str] = {}
     
     # Process lineages from assemblies
     for doc in GenomeAssembly.objects.aggregate([
@@ -177,7 +180,8 @@ def rebuild_taxon_hierarchy_from_lineages():
             child_taxid = lineage[i]
             parent_taxid = lineage[i + 1]
             parent_to_children[parent_taxid].add(child_taxid)
-    
+            child_to_parent[child_taxid] = parent_taxid
+
     # Process lineages from annotations
     for doc in GenomeAnnotation.objects.aggregate([
         {"$project": {"taxon_lineage": 1}},
@@ -189,7 +193,8 @@ def rebuild_taxon_hierarchy_from_lineages():
             child_taxid = lineage[i]
             parent_taxid = lineage[i + 1]
             parent_to_children[parent_taxid].add(child_taxid)
-    
+            child_to_parent[child_taxid] = parent_taxid
+
     # Process lineages from organisms
     for doc in Organism.objects.aggregate([
         {"$project": {"taxon_lineage": 1}},
@@ -201,7 +206,8 @@ def rebuild_taxon_hierarchy_from_lineages():
             child_taxid = lineage[i]
             parent_taxid = lineage[i + 1]
             parent_to_children[parent_taxid].add(child_taxid)
-    
+            child_to_parent[child_taxid] = parent_taxid
+
     # Convert sets to sorted lists for consistency
     parent_to_children = {k: sorted(list(v)) for k, v in parent_to_children.items()}
     
@@ -268,6 +274,45 @@ def rebuild_taxon_hierarchy_from_lineages():
         result = taxon_collection.bulk_write(bulk_ops, ordered=False)
         updated_count += result.modified_count
     
+    # Set parent_id on all taxons that appear as children in lineages
+    child_taxids_list = list(child_to_parent.keys())
+    for batch_taxids in create_batches(child_taxids_list, batch_size):
+        bulk_ops = [
+            UpdateOne(
+                {'taxid': taxid},
+                {'$set': {'parent_id': child_to_parent[taxid]}}
+            )
+            for taxid in batch_taxids
+        ]
+        if bulk_ops:
+            result = taxon_collection.bulk_write(bulk_ops, ordered=False)
+            updated_count += result.modified_count
+
+    # Clear parent_id for taxons that are not children of any lineage-derived parent
+    all_child_taxids_set = set(child_to_parent.keys())
+    batch_taxids_to_clear_parent = []
+    for doc in taxon_collection.find(
+        {'taxid': {'$nin': list(all_child_taxids_set)}, 'parent_id': {'$exists': True, '$ne': None}},
+        {'taxid': 1}
+    ):
+        batch_taxids_to_clear_parent.append(doc['taxid'])
+        if len(batch_taxids_to_clear_parent) >= batch_size:
+            bulk_ops = [
+                UpdateOne({'taxid': taxid}, {'$unset': {'parent_id': ''}})
+                for taxid in batch_taxids_to_clear_parent
+            ]
+            result = taxon_collection.bulk_write(bulk_ops, ordered=False)
+            updated_count += result.modified_count
+            batch_taxids_to_clear_parent = []
+
+    if batch_taxids_to_clear_parent:
+        bulk_ops = [
+            UpdateOne({'taxid': taxid}, {'$unset': {'parent_id': ''}})
+            for taxid in batch_taxids_to_clear_parent
+        ]
+        result = taxon_collection.bulk_write(bulk_ops, ordered=False)
+        updated_count += result.modified_count
+
     print(f"Rebuilt taxon hierarchy: updated {updated_count} taxon nodes")
 
 
@@ -380,8 +425,9 @@ def handle_new_lineage(organism: OrganismToProcess):
             if payload:
                 taxon.modify(**payload)
 
-    # Note: Hierarchy will be rebuilt from all lineages by rebuild_taxon_hierarchy_from_lineages()
-    # No need for incremental update here since it only adds and doesn't remove stale relationships
+    # Set parent_id from lineage (species index 0 toward root)
+    ordered_taxons = get_ordered_taxons(organism.taxon_lineage)
+    update_taxon_hierarchy(ordered_taxons)
 
 
 def process_organism(organism: OrganismToProcess, existing_organism: Organism):
@@ -401,3 +447,82 @@ def process_organism(organism: OrganismToProcess, existing_organism: Organism):
     if existing_organism.common_name != organism.common_name:
         payload['common_name'] = organism.common_name
     return payload, payload_of_related_documents
+
+
+TMP_DIR = "/tmp"
+
+
+def fetch_new_organisms_from_assembly_taxids(assembly_taxids: list[str]) -> None:
+    """
+    Fetch new organisms from assembly taxids and update taxonomy and related assemblies.
+    """
+    new_taxids = get_new_organisms_taxids(assembly_taxids)
+    if not new_taxids:
+        return
+    new_organisms_to_process = [
+        organism
+        for organism in fetch_new_organisms(new_taxids, TMP_DIR)
+        if organism.taxon_lineage
+    ]
+    if not new_organisms_to_process:
+        return
+
+    saved_taxids = save_organisms(new_organisms_to_process)
+    if not saved_taxids:
+        return
+
+    save_taxons([o for o in new_organisms_to_process if o.taxon_id in saved_taxids])
+
+    saved_organisms = Organism.objects(taxid__in=saved_taxids)
+    for organism in saved_organisms:
+        payload = dict(
+            taxon_lineage=organism.taxon_lineage,
+            organism_name=organism.organism_name,
+        )
+        GenomeAssembly.objects(taxid=organism.taxid).update(**payload)
+
+
+def update_records_with_empty_taxon_lineage_fallback(
+    model: type[GenomeAssembly] | type[GenomeAnnotation],
+) -> None:
+    """
+    Update documents with empty taxon_lineage using organism lineage as fallback.
+    """
+    documents_with_empty_taxon_lineage = model.objects(taxon_lineage=[])
+    if documents_with_empty_taxon_lineage.count() > 0:
+        related_taxids = set(documents_with_empty_taxon_lineage.scalar("taxid"))
+        related_organisms = Organism.objects(taxid__in=list(related_taxids))
+        for organism in related_organisms:
+            if organism.taxon_lineage:
+                update_payload = dict(
+                    taxon_lineage=organism.taxon_lineage,
+                    organism_name=organism.organism_name,
+                )
+                model.objects(taxid=organism.taxid).update(**update_payload)
+
+
+def update_taxonomy_from_ebi() -> None:
+    """Refresh organism records and related assemblies/annotations from EBI."""
+    all_taxids = Organism.objects().scalar("taxid")
+    batches = create_batches(list(all_taxids), 5000)
+    for batch in batches:
+        organisms_to_process = fetch_new_organisms(batch, TMP_DIR)
+        existing_organisms_map = {
+            organism.taxid: organism for organism in Organism.objects(taxid__in=batch)
+        }
+        for organism in organisms_to_process:
+            if not organism.taxon_lineage or organism.taxon_id not in existing_organisms_map:
+                continue
+            existing_organism = existing_organisms_map[organism.taxon_id]
+            payload, payload_of_related_documents = process_organism(
+                organism, existing_organism
+            )
+            if payload:
+                existing_organism.modify(**payload)
+            if payload_of_related_documents:
+                GenomeAssembly.objects(taxid=organism.taxon_id).update(
+                    **payload_of_related_documents
+                )
+                GenomeAnnotation.objects(taxid=organism.taxon_id).update(
+                    **payload_of_related_documents
+                )

@@ -4,11 +4,11 @@ import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Tag, ChevronDown, ChevronUp } from "lucide-react"
-import type { Annotation } from "@/lib/types"
+import type { AnnotationBase } from "@/lib/types"
 import { useState } from "react"
 
 interface FeaturesSummaryProps {
-  annotation: Annotation
+  annotation: AnnotationBase
 }
 
 export function FeaturesSummary({ annotation }: FeaturesSummaryProps) {

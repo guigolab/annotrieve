@@ -1,8 +1,18 @@
+import os
 from typing import Optional
+
 from db.models import TaxonNode
-from helpers import response as response_helper, query_visitors as query_visitors_helper
 from fastapi import HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import RedirectResponse, StreamingResponse
+from helpers import query_visitors as query_visitors_helper
+from helpers import response as response_helper
+from helpers.flattened_taxonomy_export import (
+    CELLULAR_ORGANISMS_TAXID,
+    FLATTENED_TREE_FIELDS,
+    get_flattened_tree_file_path,
+    get_flattened_tree_public_url,
+)
+
 
 def get_taxon_nodes(filter: str = None, rank: str = None, offset: int = 0, limit: int = 20, taxids: Optional[str] = None, sort_by: str = None, sort_order: str = 'desc'):
     query=dict()
@@ -48,47 +58,51 @@ def get_ancestors(taxid: str):
         "total": len(ancestors)
     }
 
-def get_flattened_tree(format: str = "json"):
+
+def _flattened_tree_cache_headers() -> dict:
+    return {"Cache-Control": "public, max-age=86400"}
+
+
+def _get_prebuilt_flattened_tree_response(format: str):
     """
-    Returns flattened taxonomy tree.
-    - format='json' (default): JSON with fields + rows (list of lists).
-    - format='tsv': streaming TSV response (lower memory, streamed).
+    Redirect to nginx static files when prebuilt export exists; None if missing (caller uses fallback).
+    """
+    try:
+        path = get_flattened_tree_file_path(format)
+    except RuntimeError:
+        return None
+    if not os.path.isfile(path):
+        return None
+    return RedirectResponse(
+        url=get_flattened_tree_public_url(format),
+        status_code=307,
+        headers=_flattened_tree_cache_headers(),
+    )
+
+
+def _get_flattened_tree_fallback(format: str = "json"):
+    """
+    On-the-fly flattened tree when prebuilt files are absent (cold start / DR).
+    Uses parent_id when set; falls back to children scan for parent_taxid.
     """
     taxon_coll = TaxonNode._get_collection()
 
-    # Build parent mapping - stream cursor (no list conversion)
-    parent_by_child = {}
-    # skip cellular organism we use Eukaryota as root
-    for doc in taxon_coll.find({"taxid": {"$ne": "131567"}}, {"taxid": 1, "children": 1}):
+    parent_by_child: dict[str, str] = {}
+    for doc in taxon_coll.find({"taxid": {"$ne": CELLULAR_ORGANISMS_TAXID}}, {"taxid": 1, "children": 1, "parent_id": 1}):
+        taxid = doc.get("taxid")
+        parent_id = doc.get("parent_id")
+        if taxid and parent_id:
+            parent_by_child[taxid] = parent_id
         parent_taxid = doc["taxid"]
         for child_taxid in doc.get("children", []):
-            parent_by_child[child_taxid] = parent_taxid
-
-    fields = [
-        "taxid",
-        "parent_taxid",
-        "scientific_name",
-        "annotations_count",
-        "assemblies_count",
-        "organisms_count",
-        "rank",
-        "coding_mean_count",
-        "non_coding_mean_count",
-        "pseudogene_mean_count",
-        "mRNA_mean_count",
-        "lncRNA_mean_count",
-        "tRNA_mean_count",
-        "miRNA_mean_count",
-        "busco_single_copy_mean",
-        "busco_duplicated_mean",
-        "busco_fragmented_mean",
-        "busco_missing_mean",
-    ]
+            if child_taxid and child_taxid not in parent_by_child:
+                parent_by_child[child_taxid] = parent_taxid
 
     pipeline = [
-        {"$match": {"taxid": {"$ne": "131567"}}},
+        {"$match": {"taxid": {"$ne": CELLULAR_ORGANISMS_TAXID}}},
         {"$project": {
             "taxid": 1,
+            "parent_id": 1,
             "scientific_name": 1,
             "annotations_count": 1,
             "assemblies_count": 1,
@@ -113,11 +127,11 @@ def get_flattened_tree(format: str = "json"):
         TSV_BUFFER_SIZE = 5000
 
         def stream_tsv():
-            yield "\t".join(fields) + "\n"
+            yield "\t".join(FLATTENED_TREE_FIELDS) + "\n"
             buffer: list[str] = []
             for doc in taxon_coll.aggregate(pipeline):
                 taxid = doc["taxid"]
-                parent_taxid = parent_by_child.get(taxid)
+                parent_taxid = doc.get("parent_id") or parent_by_child.get(taxid)
                 row_values = [
                     str(taxid),
                     str(parent_taxid) if parent_taxid else "",
@@ -151,16 +165,16 @@ def get_flattened_tree(format: str = "json"):
             headers={
                 "Content-Type": "text/tab-separated-values; charset=utf-8",
                 "X-Accel-Buffering": "no",
-            }
+            },
         )
 
-    # JSON format (default): build rows list and return
     rows = []
     for doc in taxon_coll.aggregate(pipeline):
         taxid = doc["taxid"]
+        parent_taxid = doc.get("parent_id") or parent_by_child.get(taxid)
         rows.append([
             taxid,
-            parent_by_child.get(taxid),
+            parent_taxid,
             doc.get("scientific_name"),
             doc.get("annotations_count", 0),
             doc.get("assemblies_count", 0),
@@ -178,4 +192,18 @@ def get_flattened_tree(format: str = "json"):
             doc.get("busco_fragmented_mean", 0),
             doc.get("busco_missing_mean", 0),
         ])
-    return {"fields": fields, "rows": rows}
+    return {"fields": FLATTENED_TREE_FIELDS, "rows": rows}
+
+
+def get_flattened_tree(format: str = "json"):
+    """
+    Returns flattened taxonomy tree.
+    - When prebuilt files exist: 307 redirect to /annotrieve/files/taxonomy/flattened-tree.{tsv|json} (nginx static).
+    - Otherwise: on-the-fly aggregation fallback.
+    - format='json' (default): JSON with fields + rows.
+    - format='tsv': TSV file.
+    """
+    prebuilt = _get_prebuilt_flattened_tree_response(format)
+    if prebuilt is not None:
+        return prebuilt
+    return _get_flattened_tree_fallback(format)

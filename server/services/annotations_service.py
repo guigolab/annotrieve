@@ -8,7 +8,8 @@ from helpers import annotation as annotation_helper
 from helpers import feature_stats as feature_stats_helper
 from helpers import busco_stats as busco_stats_helper
 from helpers import pipelines as pipelines_helper
-from db.models import GenomeAnnotation, AnnotationError, AnnotationSequenceMap
+from db.models import GenomeAnnotation, AnnotationError
+from helpers import assembly_sequence_files as seq_files
 from fastapi.responses import StreamingResponse
 from fastapi import HTTPException
 from typing import Dict, Any
@@ -88,28 +89,53 @@ def update_annotation_stats(md5_checksum, payload):
 
 def get_mapped_regions(md5_checksum, offset_param, limit_param):
     try:
-        regions = AnnotationSequenceMap.objects(annotation_id=md5_checksum)
-        count = regions.count()
-        offset, limit = params_helper.handle_pagination_params(offset_param, limit_param, count)    
-        return response_helper.json_response_with_pagination(regions, count, offset, limit)
+        annotation = get_annotation(md5_checksum)
+        if not annotation.indexed_file_info or not annotation.indexed_file_info.bgzipped_path:
+            return response_helper.json_response_with_pagination([], 0, 0, 20)
+        rel = annotation.indexed_file_info.bgzipped_path.lstrip("/")
+        lines = list(seq_files.iter_contigs_lines(rel))
+        count = len(lines)
+        offset, limit = params_helper.handle_pagination_params(offset_param, limit_param, count)
+        page = [
+            {"sequence_id": sid, "annotation_id": md5_checksum, "aliases": [sid]}
+            for sid in lines[offset : offset + limit]
+        ]
+        return response_helper.json_response_with_pagination(page, count, offset, limit)
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error fetching mapped regions: {e}")
+        raise HTTPException(status_code=500, detail=f"Error fetching contigs aliases: {e}")
+
+
+def _stream_contigs_for_annotation(annotation: GenomeAnnotation):
+    rel = annotation.indexed_file_info.bgzipped_path.lstrip("/")
+    if seq_files.contigs_file_exists(rel):
+        for line in seq_files.iter_contigs_lines(rel):
+            yield line + "\n"
+        return
+    file_path = file_helper.get_annotation_file_path(annotation)
+    yield from pysam_helper.stream_contigs(file_path)
+
 
 def get_contigs(md5_checksum):
     try:
         annotation = get_annotation(md5_checksum)
+        if not annotation.indexed_file_info or not annotation.indexed_file_info.bgzipped_path:
+            raise HTTPException(status_code=404, detail=f"Annotation {md5_checksum} not found")
         file_path = file_helper.get_annotation_file_path(annotation)
         if not os.path.exists(file_path):
             raise HTTPException(status_code=404, detail=f"Annotation {md5_checksum} not found")
         return StreamingResponse(
-            pysam_helper.stream_contigs(file_path), 
-            media_type='text/plain', 
+            _stream_contigs_for_annotation(annotation),
+            media_type='text/plain',
             headers={
                 "Content-Disposition": f'attachment; filename="{md5_checksum}_contigs.txt"',
                 "Cache-Control": "public, max-age=86400",
                 "X-Accel-Buffering": "no",
             }
-        )  
+        )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching contigs: {e}")
 

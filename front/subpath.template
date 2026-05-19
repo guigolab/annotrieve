@@ -82,6 +82,73 @@ server {
         return 301 /annotrieve/;
     }
 
+    # Custom GFF upload (multipart POST, up to 1.5 GiB — not cached)
+    location = /annotrieve/api/v0/annotations/upload-gff {
+        access_log /var/log/nginx/api.log analytics_json;
+
+        rewrite ^/annotrieve/api/v0/?(.*)$ /$1 break;
+        proxy_pass http://annotrieve-fastapi:5000/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $http_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Origin $http_origin;
+        client_max_body_size 1536m;
+
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 3600s;
+        proxy_read_timeout 3600s;
+
+        proxy_buffering on;
+        proxy_buffer_size 4k;
+        proxy_buffers 8 4k;
+        proxy_busy_buffers_size 8k;
+    }
+
+    # Job polling and rate limits change per request — must not use the API proxy_cache.
+    location ^~ /annotrieve/api/v0/annotations/upload-gff/jobs/ {
+        access_log /var/log/nginx/api.log analytics_json;
+
+        rewrite ^/annotrieve/api/v0/?(.*)$ /$1 break;
+        proxy_pass http://annotrieve-fastapi:5000/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $http_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Origin $http_origin;
+
+        proxy_connect_timeout 10s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+
+        proxy_buffering on;
+        proxy_buffer_size 4k;
+        proxy_buffers 8 4k;
+        proxy_busy_buffers_size 8k;
+
+        add_header Cache-Control "no-store" always;
+    }
+
+    location = /annotrieve/api/v0/annotations/upload-gff/rate-limit {
+        access_log /var/log/nginx/api.log analytics_json;
+
+        rewrite ^/annotrieve/api/v0/?(.*)$ /$1 break;
+        proxy_pass http://annotrieve-fastapi:5000/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $http_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Origin $http_origin;
+
+        proxy_connect_timeout 10s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+
+        proxy_buffering on;
+        proxy_buffer_size 4k;
+        proxy_buffers 8 4k;
+        proxy_busy_buffers_size 8k;
+
+        add_header Cache-Control "no-store" always;
+    }
+
     location /annotrieve/api/v0/ {
         
         access_log /var/log/nginx/api.log analytics_json;

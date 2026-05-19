@@ -6,10 +6,12 @@ import shlex
 from datetime import datetime
 from typing import Union
 import requests
-from db.models import GenomeAnnotation, AnnotationError, AnnotationSequenceMap
+from .utils import create_batches
+from db.models import GenomeAnnotation, AnnotationError
 from db.embedded_documents import PipelineInfo, IndexedFileInfo
 from mongoengine import Q
 from helpers import file as file_helper
+from helpers import assembly_sequence_files as seq_files
 from .classes import AnnotationToProcess
 from helpers import pysam_helper
 
@@ -22,6 +24,10 @@ PIPELINE_INFO = {
     'version': PIPELINE_VERSION,
     'method': PIPELINE_METHOD,
 }
+
+SOURCE_URL_CHECK_TIMEOUT = 30
+SOURCE_URL_NOT_FOUND_STATUSES = frozenset({404, 410})
+SOURCE_URL_CHECK_USER_AGENT = "annotrieve-source-check/1.0"
 
 def handle_annotation_error(annotation_to_process: AnnotationToProcess, error: str):
     """Handle annotation processing errors."""
@@ -104,7 +110,13 @@ def save_annotations(annotations: list[GenomeAnnotation], annotations_path: str)
 
     # delete existing annotations where md5 changed and url path is the same
     # we delete the metadata as the files are already updated
-    GenomeAnnotation.objects(source_file_info__url_path__in=url_paths).delete()
+    old_annotation_ids = list(
+        GenomeAnnotation.objects(source_file_info__url_path__in=url_paths).scalar(
+            "annotation_id"
+        )
+    )
+    if old_annotation_ids:
+        GenomeAnnotation.objects(source_file_info__url_path__in=url_paths).delete()
 
     try:
         #here we are sure that the annotations are not already in the database
@@ -116,12 +128,28 @@ def save_annotations(annotations: list[GenomeAnnotation], annotations_path: str)
         saved_annotations_ids = [annotation.annotation_id for annotation in annotations]
         print(f"Saved {len(saved_annotations_ids)} annotations")
     except Exception as e:
-        #remove files from the annotations present in the batch
+        print(f"Batch insert failed, saving annotations individually: {e}")
         for annotation in annotations:
-            bgzipped_path = file_helper.get_annotation_file_path(annotation)
-            csi_path = f"{bgzipped_path}.csi"
-            file_helper.remove_files([bgzipped_path, csi_path], annotations_path)
-        print(f"Error saving annotations to the database: {e}")
+            def record_saved():
+                source_md5 = annotation.source_file_info.uncompressed_md5
+                url_path = annotation.source_file_info.url_path
+                AnnotationError.objects(Q(source_md5=source_md5) | Q(url_path=url_path)).delete()
+                saved_annotations_ids.append(annotation.annotation_id)
+
+            try:
+                if not GenomeAnnotation.objects(annotation_id=annotation.annotation_id).first():
+                    GenomeAnnotation.objects.insert([annotation])
+                record_saved()
+            except Exception as single_e:
+                if GenomeAnnotation.objects(annotation_id=annotation.annotation_id).first():
+                    record_saved()
+                    continue
+                bgzipped_path = file_helper.get_annotation_file_path(annotation)
+                csi_path = f"{bgzipped_path}.csi"
+                file_helper.remove_files([bgzipped_path, csi_path], annotations_path)
+                print(f"Error saving annotation {annotation.annotation_id}: {single_e}")
+        if saved_annotations_ids:
+            print(f"Saved {len(saved_annotations_ids)} annotations individually")
     return saved_annotations_ids
 
 def filter_annotations_dict_by_field(annotations: list[AnnotationToProcess], field: str, list_of_values: list[str]) -> list[AnnotationToProcess]:
@@ -144,14 +172,15 @@ def filter_annotations_by_md5_checksum_and_url_path(annotations: list[Annotation
 
 def remove_files_from_annotations(annotations, annotations_path) -> int:
     """
-    Remove the files from the annotations
-    return the number of files that were deleted
+    Remove GFF.gz, tabix .csi, and .contigs.txt for each annotation.
+    Returns the number of files that were deleted.
     """
     #collect the paths to delete
     paths = []
     for annotation in annotations:
         path = file_helper.get_annotation_file_path(annotation)
         paths.append(path)
+        paths.append(f"{path}{seq_files.CONTIGS_SUFFIX}")
         paths.append(f"{path}.csi")
     deleted_files = file_helper.remove_files(paths, annotations_path)
     return len(deleted_files)
@@ -186,8 +215,7 @@ def process_annotation_file(annotation_to_process: AnnotationToProcess, tmp_subd
     md5_path = f"{tmp_subdir_path}/md5.txt"
 
     stream_cmd = (
-        f"(zcat {shlex.quote(gzipped_downloaded_gff_path)} | grep '^#'; "
-        f"zcat {shlex.quote(gzipped_downloaded_gff_path)} | grep -v '^#' | sort -t\"$(printf '\\t')\" -k1,1 -k4,4n) "
+        f"{_sorted_gff_stream_cmd(gzipped_downloaded_gff_path)} "
         f"| tee >(md5sum | awk '{{print $1}}' > {shlex.quote(md5_path)}) "
         f"| bgzip > {shlex.quote(bgzipped_path)}"
     )
@@ -333,33 +361,49 @@ def bgzip_gff_file(gff_file, output_file):
     except subprocess.CalledProcessError as e:
         raise Exception(f"An error occurred: {e}")
 
+def _gff_decompress_cmd(gff_file: str) -> str:
+    """Shell fragment to stream a GFF path (plain or .gz)."""
+    path = shlex.quote(gff_file)
+    return f"zcat {path}" if gff_file.endswith(".gz") else f"cat {path}"
+
+
+def _sorted_gff_stream_cmd(gff_file: str) -> str:
+    """
+    Shell pipeline: comment/header lines first, then data sorted by seqid and start.
+    Matches the import pipeline (sort | bgzip | tabix).
+    """
+    cat = _gff_decompress_cmd(gff_file)
+    return (
+        f"({cat} | grep '^#'; "
+        f"{cat} | grep -v '^#' | sort -t\"$(printf '\\t')\" -k1,1 -k4,4n)"
+    )
+
+
 def sort_gff_file(gff_file, output_file):
     """
-    Unzip and sort a GFF file, filtering out inconsistent features.
-    This function streams data without loading into memory.
+    Unzip and sort a GFF file (plain or .gz).
+    Streams data without loading into memory.
     """
-    # Handle bgzipped input with zcat
-    sort_cmd = f'(zcat {gff_file} | grep "^#"; zcat {gff_file} | grep -v "^#" | sort -t"`printf \'\\t\'`" -k1,1 -k4,4n)'
-    
+    sort_cmd = _sorted_gff_stream_cmd(gff_file)
+
     try:
-        with open(output_file, 'wb') as out_f:
+        with open(output_file, "wb") as out_f:
             combined_process = subprocess.Popen(
-                sort_cmd, 
-                shell=True,
+                ["bash", "-lc", sort_cmd],
                 stdout=out_f,
-                stderr=subprocess.PIPE
+                stderr=subprocess.PIPE,
             )
             _, combined_err = combined_process.communicate()
-            if combined_process.returncode != 0 and combined_err:
-                raise Exception(combined_err.decode('utf-8'))
+            if combined_process.returncode != 0:
+                raise Exception(combined_err.decode("utf-8") if combined_err else "Sort failed")
     except subprocess.CalledProcessError as e:
         raise Exception(f"An error occurred: {e}")
 
 
 def delete_annotations(query: Union[dict, Q], annotations_path: str):
     """
-    Delete annotations matching the query.
-    
+    Delete annotations matching the query and their on-disk GFF, CSI, and contigs.txt files.
+
     Args:
         query: Either a dict (for keyword arguments) or a Q object (for complex queries)
         annotations_path: Path to the annotations directory
@@ -376,10 +420,157 @@ def delete_annotations(query: Union[dict, Q], annotations_path: str):
         return
     print(f"Deleting {count} annotations")
     remove_files_from_annotations(annotations_to_delete, annotations_path)
-    annotation_ids = list(annotations_to_delete.scalar('annotation_id'))
-    AnnotationSequenceMap.objects(annotation_id__in=annotation_ids).delete()
     annotations_to_delete.delete()
     print(f"Deleted {count} annotations")
+
+
+def source_url_is_not_found(url: str, timeout: int = SOURCE_URL_CHECK_TIMEOUT) -> bool | None:
+    """
+    Return True when the remote source is definitively missing (404/410),
+    False when it appears reachable, None when the check is inconclusive.
+    """
+    headers = {"User-Agent": SOURCE_URL_CHECK_USER_AGENT}
+    try:
+        resp = requests.head(
+            url, timeout=timeout, allow_redirects=True, headers=headers
+        )
+        if resp.status_code in SOURCE_URL_NOT_FOUND_STATUSES:
+            return True
+        if resp.status_code < 400:
+            return False
+        if resp.status_code not in (405,):
+            return None
+    except requests.RequestException:
+        pass
+
+    try:
+        with requests.get(
+            url,
+            timeout=timeout,
+            stream=True,
+            allow_redirects=True,
+            headers=headers,
+        ) as resp:
+            if resp.status_code in SOURCE_URL_NOT_FOUND_STATUSES:
+                return True
+            if resp.status_code < 400:
+                next(resp.iter_content(chunk_size=1), None)
+                return False
+            return None
+    except requests.RequestException:
+        return None
+
+
+def delete_annotations_with_missing_source_urls(
+    *,
+    dry_run: bool = False,
+    batch_size: int = 500,
+) -> dict:
+    """
+    Remove annotations whose source_file_info.url_path returns HTTP 404 or 410.
+    """
+    annotations_path = os.getenv("LOCAL_ANNOTATIONS_DIR")
+    stats: dict = {
+        "dry_run": dry_run,
+        "scanned": 0,
+        "missing": 0,
+        "deleted": 0,
+        "skipped_no_url": 0,
+        "skipped_inconclusive": 0,
+    }
+
+    to_delete_ids: list[str] = []
+    for ann in GenomeAnnotation.objects(source_file_info__exists=True).only(
+        "annotation_id", "source_file_info"
+    ):
+        stats["scanned"] += 1
+        url = (
+            ann.source_file_info.url_path
+            if ann.source_file_info and ann.source_file_info.url_path
+            else None
+        )
+        if not url:
+            stats["skipped_no_url"] += 1
+            continue
+
+        if (stats["scanned"] % 100) == 0:
+            print(f"Checked {stats['scanned']} annotation source URLs...")
+
+        not_found = source_url_is_not_found(url)
+        if not_found is True:
+            stats["missing"] += 1
+            to_delete_ids.append(ann.annotation_id)
+        elif not_found is None:
+            stats["skipped_inconclusive"] += 1
+
+    if dry_run:
+        stats["would_delete"] = len(to_delete_ids)
+        print(f"Source URL prune dry run: {stats}")
+        return stats
+
+    for batch in create_batches(to_delete_ids, batch_size):
+        delete_annotations(
+            query=dict(annotation_id__in=batch),
+            annotations_path=annotations_path,
+        )
+
+    stats["deleted"] = len(to_delete_ids)
+    print(f"Source URL prune finished: {stats}")
+    return stats
+
+
+def update_stale_annotations(assembly_taxids: list[str]) -> None:
+    """
+    Update taxonomy fields on annotations whose taxid is not in assembly_taxids.
+    Deletes annotations whose assembly no longer exists.
+    """
+    from . import assembly as assembly_service
+
+    annotations_with_stale_taxids = GenomeAnnotation.objects(taxid__nin=assembly_taxids)
+    if annotations_with_stale_taxids.count() == 0:
+        return
+
+    pipeline = [
+        {
+            "$group": {
+                "_id": "$assembly_accession",
+                "annotation_ids": {"$push": "$annotation_id"},
+            }
+        }
+    ]
+
+    assemblies_not_found = set()
+    annotations_by_assembly = {}
+
+    for row in annotations_with_stale_taxids.aggregate(*pipeline):
+        acc = row["_id"]
+        annotation_ids = row["annotation_ids"]
+        annotations_by_assembly[acc] = annotation_ids
+
+    if not annotations_by_assembly:
+        return
+
+    related_assembly_accessions = list(annotations_by_assembly.keys())
+    assembly_map = assembly_service.build_assembly_lookup(related_assembly_accessions)
+
+    for acc, ann_ids in annotations_by_assembly.items():
+        assembly = assembly_map.get(acc)
+        if not assembly:
+            assemblies_not_found.add(acc)
+            continue
+        update_payload = dict(
+            taxid=assembly.taxid,
+            organism_name=assembly.organism_name,
+            taxon_lineage=assembly.taxon_lineage,
+        )
+        GenomeAnnotation.objects(annotation_id__in=ann_ids).update(**update_payload)
+
+    if assemblies_not_found:
+        annotations_path = os.getenv("LOCAL_ANNOTATIONS_DIR")
+        delete_annotations(
+            query=dict(assembly_accession__in=list(assemblies_not_found)),
+            annotations_path=annotations_path,
+        )
 
 
 def clean_up_annotations_with_errors():

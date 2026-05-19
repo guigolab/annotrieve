@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation"
 import { Card, Button, LoadingSpinner, NotFound } from "@/components/ui"
 import { ExternalLink, Download, ArrowLeft } from "lucide-react"
 import { getAssembly } from "@/lib/api/assemblies"
+import { assemblyHasChromosomesFile } from "@/lib/api/files"
 import type { AssemblyRecord } from "@/lib/api/types"
 import { ChromosomeViewer } from "@/components/chromosome-viewer"
 import Link from "next/link"
@@ -23,6 +24,7 @@ export function AssemblyDetailsView({ accession: accessionProp, onClose }: Assem
     const setSelectedAssemblies = useAnnotationsFiltersStore((state) => state.setSelectedAssemblies)
     const [assembly, setAssembly] = useState<AssemblyRecord | null>(null)
     const [isLoading, setIsLoading] = useState(true)
+    const [hasChromosomes, setHasChromosomes] = useState(false)
 
     const handleClose = () => {
         onClose()
@@ -51,6 +53,22 @@ export function AssemblyDetailsView({ accession: accessionProp, onClose }: Assem
 
         loadData()
     }, [accession])
+
+    useEffect(() => {
+        if (!assembly?.taxid || !assembly?.assembly_accession) {
+            setHasChromosomes(false)
+            return
+        }
+        let cancelled = false
+        assemblyHasChromosomesFile(
+            assembly.taxid,
+            assembly.assembly_accession,
+            assembly.paired_assembly_accession,
+        ).then((ok) => {
+            if (!cancelled) setHasChromosomes(ok)
+        })
+        return () => { cancelled = true }
+    }, [assembly?.taxid, assembly?.assembly_accession, assembly?.paired_assembly_accession])
 
     const formatNumber = (num: string | number) => {
         return Number(num).toLocaleString()
@@ -148,11 +166,12 @@ export function AssemblyDetailsView({ accession: accessionProp, onClose }: Assem
         return <NotFound title="Assembly Not Found" message="The requested assembly could not be found." buttonText="Back to Annotations" buttonLink="/annotations" />
     }
 
-    const hasChromosomes = assembly.assembly_stats?.total_number_of_chromosomes && assembly.assembly_stats.total_number_of_chromosomes > 0
     const hasRefseqCategory = (assembly as any).refseq_category
     const assemblyLevelValue = ((assembly as any).assembly_level || "").toString()
     const canShowGenomeBrowserButton = ["chromosome", "complete genome"].includes(assemblyLevelValue.toLowerCase())
-    const breadcrumbLineage = assembly.organism_name ? [{ label: assembly.organism_name, href: `/taxons?id=${assembly.taxid}` }] : []
+    const breadcrumbLineage = assembly.organism_name
+        ? [{ label: assembly.organism_name, href: `/taxonomy?taxon=${assembly.taxid}` }]
+        : []
 
     return (
         <div className="bg-background">
@@ -275,25 +294,19 @@ export function AssemblyDetailsView({ accession: accessionProp, onClose }: Assem
                             )}
                         </div>
                     </Card>
-                    <Card className="p-5 space-y-4">
-                        <div className="flex items-center justify-between gap-2">
-                            <div>
-                                <h2 className="text-lg font-semibold">Chromosomes</h2>
-                                <p className="text-sm text-muted-foreground">
-                                    Explore chromosome lengths and navigate to the genome browser.
-                                </p>
+                    {hasChromosomes && (
+                        <Card className="p-5 space-y-4">
+                            <div className="flex items-center justify-between gap-2">
+                                <div>
+                                    <h2 className="text-lg font-semibold">Chromosomes</h2>
+                                    <p className="text-sm text-muted-foreground">
+                                        Explore the related chromosomes.
+                                    </p>
+                                </div>
                             </div>
-                        </div>
-                        {hasChromosomes ? (
-                            <ChromosomeViewer
-                                accession={assembly.assembly_accession}
-                            />
-                        ) : (
-                            <p className="text-sm text-muted-foreground">
-                                Chromosome data is not available for this assembly.
-                            </p>
-                        )}
-                    </Card>
+                            <ChromosomeViewer accession={assembly.assembly_accession} />
+                        </Card>
+                    )}
                     {assembly.assembly_stats && (
                         <Card className="p-5 space-y-4">
                             <div className="flex items-center justify-between gap-2">

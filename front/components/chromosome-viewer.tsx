@@ -1,20 +1,10 @@
 "use client"
 
 import { useEffect, useState } from 'react';
-import { getAssembledMolecules } from '@/lib/api/assemblies';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from './ui/button';
-import { X } from 'lucide-react';
+import { getAssembly } from '@/lib/api/assemblies';
+import { fetchChromosomesFromFiles, type ChromosomeFileRow } from '@/lib/api/files';
 
-interface AssembledMolecule {
-  chr_name: string;
-  length: number;
-  genbank_accession?: string;
-  refseq_accession?: string;
-  sequence_name?: string;
-  aliases: string[];
-}
-
+/** Visualize related chromosomes for an assembly; lengths appear on hover. */
 interface ChromosomeInterface {
   accession_version: string;
   chr_name: string;
@@ -24,43 +14,41 @@ interface ChromosomeInterface {
 
 interface ChromosomeViewerProps {
   accession: string;
-  selectedChromosomes?: ChromosomeInterface[];
-  onChromosomeSelected?: (chromosome: ChromosomeInterface) => void;
-  showDetails?: boolean;
 }
 
-export function ChromosomeViewer({
-  accession,
-  onChromosomeSelected,
-  showDetails = true,
-}: ChromosomeViewerProps) {
-
+export function ChromosomeViewer({ accession }: ChromosomeViewerProps) {
   const [chromosomes, setChromosomes] = useState<ChromosomeInterface[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [selectedChromosome, setSelectedChromosome] = useState<ChromosomeInterface | null>(null);
 
-  const svgHeight = 120; // Fixed height for chromosomes
+  const svgHeight = 120;
 
-  // Fetch chromosomes from API
   useEffect(() => {
     const fetchChromosomes = async () => {
       try {
         setLoading(true);
         setError(null);
 
-        // Fetch all assembled molecules (no pagination limit)
-        const response = await getAssembledMolecules(accession, 0, 1000);
+        const assembly = await getAssembly(accession);
+        const rows = await fetchChromosomesFromFiles(
+          assembly.taxid,
+          accession,
+          assembly.paired_assembly_accession,
+        );
 
-        // Map API response to chromosome format
-        const mappedChromosomes: ChromosomeInterface[] = response.results.map((molecule: AssembledMolecule) => ({
+        const mappedChromosomes: ChromosomeInterface[] = rows.map((molecule: ChromosomeFileRow) => ({
           accession_version: molecule.refseq_accession || molecule.genbank_accession || molecule.sequence_name || '',
           chr_name: molecule.chr_name || molecule.sequence_name || '',
           length: molecule.length || 0,
-          aliases: molecule.aliases || [],
+          aliases: [
+            molecule.chr_name,
+            molecule.sequence_name,
+            molecule.ucsc_style_name,
+            molecule.genbank_accession,
+            molecule.refseq_accession,
+          ].filter((v): v is string => Boolean(v)),
         }));
 
-        // Sort by chromosome name (natural sort for chr1, chr2, chr10, etc.)
         mappedChromosomes.sort((a, b) => {
           const aNum = parseInt(a.chr_name.replace(/\D/g, ''));
           const bNum = parseInt(b.chr_name.replace(/\D/g, ''));
@@ -84,25 +72,14 @@ export function ChromosomeViewer({
 
   const formatLength = (length: number) => {
     if (length >= 1_000_000) {
-      return `${(length / 1_000_000).toFixed(1)}M`
+      return `${(length / 1_000_000).toFixed(1)}M`;
     }
-    return `${(length / 1_000).toFixed(0)}k`
-  }
-
-  const handleChromosomeClick = (chromosome: ChromosomeInterface) => {
-    setSelectedChromosome(chromosome);
-    //if chr is already selected, deselect it
-    if (selectedChromosome?.chr_name === chromosome.chr_name) {
-      setSelectedChromosome(null);
-    }
-    if (onChromosomeSelected) {
-      onChromosomeSelected(chromosome);
-    }
+    return `${(length / 1_000).toFixed(0)}k`;
   };
 
-
-  const MAX_HEIGHT = 120 // Maximum height in pixels for the longest chromosome
+  const MAX_HEIGHT = 120;
   const maxLength = chromosomes.reduce((max, c) => Math.max(max, c.length), 0);
+
   if (loading) {
     return (
       <div className="chromosome-viewer flex items-center justify-center" style={{ height: svgHeight }}>
@@ -127,81 +104,33 @@ export function ChromosomeViewer({
     );
   }
 
-  const displayedChromosome = selectedChromosome;
-
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-end justify-center gap-2">
-        {chromosomes.map((chr) => {
-          const height = Math.max((chr.length / maxLength) * MAX_HEIGHT, 20) // Minimum 20px for visibility
-          const isSelected = selectedChromosome?.chr_name === chr.chr_name;
+    <div className="flex flex-wrap items-end justify-center gap-2">
+      {chromosomes.map((chr) => {
+        const height = Math.max((chr.length / maxLength) * MAX_HEIGHT, 20);
 
-          return (
+        return (
+          <div
+            key={chr.chr_name}
+            className="flex flex-col items-center gap-1 group"
+            title={`${chr.chr_name}: ${formatLength(chr.length)}bp`}
+          >
             <div
-              key={chr.chr_name}
-              className="flex flex-col items-center gap-1 group cursor-pointer"
-              title={`${chr.chr_name}: ${formatLength(chr.length)}bp`}
-              onClick={() => handleChromosomeClick(chr)}
-            >
-              {/* Chromosome bar (vertical) */}
-              <div
-                className={`relative w-4 rounded-t transition-all ${isSelected ? 'ring-2 ring-primary ring-offset-2' : ''
-                  }`}
-                style={{
-                  height: `${height}px`,
-                  backgroundColor: 'var(--primary)',
-                  opacity: isSelected ? 1 : 0.8,
-                  transform: isSelected ? 'scale(1.1)' : 'scale(1)',
-                }}
-              />
-              {/* Chromosome label */}
-              <span className={`text-xs font-mono ${isSelected ? 'text-primary font-bold' : 'text-muted-foreground'}`}>
-                {chr.chr_name}
-              </span>
-              {/* Length (shown on hover) */}
-              <span className="text-[10px] font-mono text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity">
-                {formatLength(chr.length)}
-              </span>
-            </div>
-          )
-        })}
-      </div>
-
-      {/* Chromosome details card */}
-      {showDetails && displayedChromosome && (
-        <Card className="animate-in fade-in slide-in-from-top-2 duration-200">
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-lg">Chromosome Details</CardTitle>
-              {/* close button */}
-              <Button variant="ghost" size="icon" onClick={() => setSelectedChromosome(null)}>
-                <X className="h-4 w-4" />
-              </Button>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <div className="text-sm font-medium text-muted-foreground">Chromosome Name</div>
-                <div className="text-base font-mono font-semibold">{displayedChromosome.chr_name}</div>
-              </div>
-              <div>
-                <div className="text-sm font-medium text-muted-foreground">Accession Version</div>
-                <div className="text-base font-mono">{displayedChromosome.accession_version || 'N/A'}</div>
-              </div>
-              <div>
-                <div className="text-sm font-medium text-muted-foreground">Length</div>
-                <div className="text-base font-semibold">{displayedChromosome.length.toLocaleString()} bp</div>
-              </div>
-              <div>
-                <div className="text-sm font-medium text-muted-foreground">Aliases</div>
-                <div className="text-base font-mono">{displayedChromosome.aliases.join(', ')}</div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+              className="relative w-4 rounded-t opacity-80 transition-opacity group-hover:opacity-100"
+              style={{
+                height: `${height}px`,
+                backgroundColor: 'var(--primary)',
+              }}
+            />
+            <span className="text-xs font-mono text-muted-foreground">
+              {chr.chr_name}
+            </span>
+            <span className="text-[10px] font-mono text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity">
+              {formatLength(chr.length)}
+            </span>
+          </div>
+        );
+      })}
     </div>
   );
 }
-

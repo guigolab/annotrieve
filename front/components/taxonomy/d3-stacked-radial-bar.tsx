@@ -245,7 +245,6 @@ export function D3StackedRadialBar({
   const prevBuscoSetRef = useRef<Set<BuscoType>>(new Set<BuscoType>(["single_copy", "duplicated", "fragmented", "missing"]))
   const transitionRef = useRef(1)
 
-  useEffect(() => { fetchFlattenedTree() }, [fetchFlattenedTree])
   useEffect(() => { hoveredIndexRef.current = hoveredIndex }, [hoveredIndex])
 
   const data = useMemo((): StackedRadialBarRow[] => {

@@ -6,9 +6,10 @@ services:
       dockerfile: Dockerfile
     restart: always
     volumes:
-      - /home/emilior/annotrieve/files:/data/annotrieve/files:ro
+      - /home/emilior/annotrieve-project/annotrieve/files:/data/annotrieve/files:ro
+      - /home/emilior/annotrieve-project/annotrieve/logs:/var/log/nginx
     ports:
-        - "94:80"
+        - "94:80" 
 
   annotrieve-mongo:
     image: mongo:8.0
@@ -17,6 +18,7 @@ services:
     restart: always
     volumes:
      - ./mongo-init.sh:/docker-entrypoint-initdb.d/mongo-init.sh
+     - /home/emilior/annotrieve-project/annotrieve-db:/data/db
     ports:
       - "27021:27017"
     logging:
@@ -35,7 +37,8 @@ services:
 
     volumes:
       - ./server:/home/appuser/app
-      - /home/emilior/annotrieve/files:${LOCAL_ANNOTATIONS_DIR}
+      - /home/emilior/annotrieve-project/annotrieve/files:${LOCAL_ANNOTATIONS_DIR}
+      - /home/emilior/annotrieve-project/annotrieve/logs:${LOCAL_LOGS_PATH}:ro
     env_file:
       - .env
     depends_on:
@@ -49,7 +52,8 @@ services:
     command: celery --app celery_app.celery_worker.app worker --loglevel=info --autoscale=1,1 --max-tasks-per-child=1
     volumes:
       - ./server:/home/appuser/app
-      - /home/emilior/annotrieve/files:${LOCAL_ANNOTATIONS_DIR}
+      - /home/emilior/annotrieve-project/annotrieve/files:${LOCAL_ANNOTATIONS_DIR}
+      - /home/emilior/annotrieve-project/annotrieve/logs:${LOCAL_LOGS_PATH}:ro
     env_file:
       - .env
     depends_on:
@@ -62,7 +66,8 @@ services:
     command: celery --app celery_app.celery_worker.app beat --loglevel=info
     volumes:
       - ./server:/home/appuser/app
-      - /home/emilior/annotrieve/files:${LOCAL_ANNOTATIONS_DIR}
+      - /home/emilior/annotrieve-project/annotrieve/files:${LOCAL_ANNOTATIONS_DIR}
+      - /home/emilior/annotrieve-project/annotrieve/logs:${LOCAL_LOGS_PATH}:ro
     env_file:
       - .env
     depends_on:

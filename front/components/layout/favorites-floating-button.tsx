@@ -3,14 +3,13 @@
 import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Star } from "lucide-react"
-import { useSelectedAnnotationsStore } from "@/lib/stores/selected-annotations"
+import { useFavoritesCount } from "@/lib/hooks/use-favorites-state"
 import { useRouter } from "next/navigation"
 
 export function FavoritesFloatingButton() {
   const router = useRouter()
   const [mounted, setMounted] = useState(false)
-  const { getSelectionCount } = useSelectedAnnotationsStore()
-  const count = getSelectionCount()
+  const count = useFavoritesCount()
 
   // Prevent hydration mismatch by only showing count after client-side mount
   useEffect(() => {

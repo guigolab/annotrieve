@@ -1,31 +1,24 @@
 'use client'
-import { useState, useEffect, useMemo, memo } from 'react'
+import { useState, useEffect, useMemo, memo, useRef } from 'react'
 import RefGetPlugin from 'jbrowse-plugin-refget-api'
 import {
   createViewState,
   JBrowseLinearGenomeView,
   ViewModel,
 } from '@jbrowse/react-linear-genome-view2'
-import { getAssembledMolecules } from '@/lib/api/assemblies'
-import { getApiBase, getFilesBase, joinUrl } from '@/lib/config/env'
+import { getAssembly } from '@/lib/api/assemblies'
+import { fetchChromosomesFromFiles, resolveChrAliasesFileUrl } from '@/lib/api/files'
+import { getFilesBase, joinUrl } from '@/lib/config/env'
 import type { AnnotationRecord } from '@/lib/api/types'
+import { distributeEmbeddedTrackHeights } from '@/lib/jbrowse-viewport'
 import { AlertCircle } from 'lucide-react'
-
-interface ChromosomeInterface {
-  accession_version: string
-  chr_name: string
-  length: number
-  aliases: string[]
-}
 
 interface JBrowseLinearGenomeViewComponentProps {
   accession: string
   annotations: AnnotationRecord[]
-  selectedChromosome?: ChromosomeInterface | null
+  taxid?: string
+  pairedAssemblyAccession?: string | null
 }
-// Use relative URLs to leverage Next.js rewrites and avoid CORS issues
-// For GitHub Pages deployment, use absolute URLs
-const apiBaseURL = getApiBase()
 const filesBaseURL = getFilesBase()
 const configuration = {
   theme: {
@@ -60,10 +53,46 @@ const configuration = {
   },
 }
 
-function JBrowseLinearGenomeViewComponent({ accession, annotations, selectedChromosome }: JBrowseLinearGenomeViewComponentProps) {
+function JBrowseLinearGenomeViewComponent({
+  accession,
+  annotations,
+  taxid: taxidProp,
+  pairedAssemblyAccession: pairedProp,
+}: JBrowseLinearGenomeViewComponentProps) {
   const [viewState, setViewState] = useState<ViewModel>()
   const [chromosomes, setChromosomes] = useState<any[]>([])
+  const [chrAliasesUri, setChrAliasesUri] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [containerHeight, setContainerHeight] = useState(0)
+  const isRefSeqAssembly = accession.startsWith("GCF_")
+
+  // Measure the flex viewport (must stay mounted during loading — no early return).
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+
+    const updateHeight = () => {
+      const next = el.clientHeight
+      if (next > 0) setContainerHeight(next)
+    }
+
+    updateHeight()
+    const observer = new ResizeObserver(updateHeight)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [isRefSeqAssembly, isLoading, viewState])
+
+  // JBrowse LGV height = sum of track heights (not CSS %). Resize tracks to fill viewport.
+  useEffect(() => {
+    if (!viewState || containerHeight <= 0) return
+    try {
+      const view = viewState.session.view as Parameters<typeof distributeEmbeddedTrackHeights>[0]
+      distributeEmbeddedTrackHeights(view, containerHeight)
+    } catch (error) {
+      console.error("Failed to resize JBrowse tracks:", error)
+    }
+  }, [viewState, containerHeight, annotations.length])
 
   // Derive assembly name from annotations (memoized to prevent unnecessary updates)
   const assemblyName = useMemo(() => {
@@ -77,14 +106,38 @@ function JBrowseLinearGenomeViewComponent({ accession, annotations, selectedChro
 
     async function fetchData() {
       try {
-        const chromosomesResponse = await getAssembledMolecules(accession, 0, 100)
-
+        const taxid = taxidProp ?? annotations[0]?.taxid
+        if (!taxid) {
+          setChromosomes([])
+          return
+        }
+        let paired: string | null | undefined = pairedProp ?? undefined
+        if (paired === undefined && !pairedProp) {
+          try {
+            const assembly = await getAssembly(accession)
+            paired = assembly.paired_assembly_accession
+          } catch {
+            paired = undefined
+          }
+        }
+        const rows = await fetchChromosomesFromFiles(taxid, accession, paired)
         if (cancelled) return
-
-        const chromosomeResults = chromosomesResponse.results ?? []
+        const chromosomeResults = rows.map((row) => ({
+          chr_name: row.chr_name,
+          sequence_name: row.sequence_name,
+          ucsc_style_name: row.ucsc_style_name,
+          genbank_accession: row.genbank_accession,
+          refseq_accession: row.refseq_accession,
+          sequence_id: row.chr_name || row.sequence_name,
+          length: row.length,
+        }))
         setChromosomes(chromosomeResults)
+        setChrAliasesUri(
+          await resolveChrAliasesFileUrl(taxid, accession, paired ?? undefined),
+        )
       } catch (error) {
         console.error('Error fetching JBrowse data:', error)
+        setChrAliasesUri(null)
       } finally {
         if (!cancelled) setIsLoading(false)
       }
@@ -92,7 +145,7 @@ function JBrowseLinearGenomeViewComponent({ accession, annotations, selectedChro
 
     fetchData()
     return () => { cancelled = true }
-  }, [accession])
+  }, [accession, annotations, taxidProp, pairedProp])
 
   // Memoize tracks to prevent recreation on every render
   const tracks = useMemo(() => {
@@ -139,11 +192,21 @@ function JBrowseLinearGenomeViewComponent({ accession, annotations, selectedChro
   const sequenceData = useMemo(() => {
     return Object.fromEntries(
       chromosomes.map((chromosome) => {
-        const key = `insdc:${chromosome.genbank_accession}`
-        return [key, {
-          name: chromosome.chr_name || chromosome.ucsc_style_name || chromosome.sequence_name,
-          size: Number(chromosome.length || 0)
-        }]
+        const refName =
+          chromosome.chr_name ||
+          chromosome.ucsc_style_name ||
+          chromosome.sequence_name ||
+          chromosome.sequence_id
+        const key = chromosome.genbank_accession
+          ? `insdc:${chromosome.genbank_accession}`
+          : String(refName)
+        return [
+          key,
+          {
+            name: refName,
+            size: Number(chromosome.length || 0),
+          },
+        ]
       })
     )
   }, [chromosomes])
@@ -151,15 +214,15 @@ function JBrowseLinearGenomeViewComponent({ accession, annotations, selectedChro
   // Memoize assembly configuration
   const assembly = useMemo(() => ({
     name: assemblyName,
-    refNameAliases: {
+    refNameAliases: chrAliasesUri ? {
       adapter: {
         type: "RefNameAliasAdapter",
         location: {
-              uri: joinUrl(apiBaseURL, `assemblies/${accession}/chr_aliases`),
+          uri: chrAliasesUri,
           locationType: "UriLocation"
         }
       }
-    },
+    } : undefined,
     sequence: {
       name: assemblyName,
       trackId: `${accession}-seq`,
@@ -169,7 +232,7 @@ function JBrowseLinearGenomeViewComponent({ accession, annotations, selectedChro
         sequenceData
       }
     }
-  }), [assemblyName, sequenceData, accession])
+  }), [assemblyName, sequenceData, chrAliasesUri])
 
   // Create view state only when dependencies change
   useEffect(() => {
@@ -179,8 +242,12 @@ function JBrowseLinearGenomeViewComponent({ accession, annotations, selectedChro
 
     // Get the first chromosome for default location
     const firstChromosome = chromosomes[0]
-    const defaultLocation = firstChromosome
-      ? `${firstChromosome.chr_name || firstChromosome.sequence_name}:1-${Math.min(100000, firstChromosome.length)}`
+    const defaultRefName =
+      firstChromosome?.chr_name ||
+      firstChromosome?.sequence_name ||
+      firstChromosome?.sequence_id
+    const defaultLocation = firstChromosome && defaultRefName
+      ? `${defaultRefName}:1-${Math.min(100000, firstChromosome.length || 100000)}`
       : undefined
 
     // Create session tracks with all tracks visible by default
@@ -212,12 +279,12 @@ function JBrowseLinearGenomeViewComponent({ accession, annotations, selectedChro
         view: {
           id: 'linearGenomeView',
           type: 'LinearGenomeView',
-          ...(defaultLocation && firstChromosome && {
+          ...(defaultLocation && firstChromosome && defaultRefName && {
             displayedRegions: [
               {
-                refName: firstChromosome.chr_name || firstChromosome.sequence_name,
+                refName: defaultRefName,
                 start: 0,
-                end: Math.min(100000, firstChromosome.length),
+                end: Math.min(100000, firstChromosome.length || 100000),
                 assemblyName,
               }
             ]
@@ -232,54 +299,43 @@ function JBrowseLinearGenomeViewComponent({ accession, annotations, selectedChro
     setViewState(state)
   }, [assembly, tracks, chromosomes, assemblyName])
 
-  // Update view when chromosome is selected
-  useEffect(() => {
-    if (!viewState || !selectedChromosome || !assemblyName) return
-
-    try {
-      // Navigate to the selected chromosome
-      const view = viewState.session.view
-      view.navToLocString(
-        `${selectedChromosome.chr_name}:1-${Math.min(100000, selectedChromosome.length)}`,
-        assemblyName
-      )
-    } catch (error) {
-      console.error('Error navigating to chromosome:', error)
-    }
-  }, [selectedChromosome, viewState, assemblyName])
-
-  if (isLoading || !viewState) {
-    return (
-      <div className="flex items-center justify-center h-96">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
-          <p className="text-muted-foreground">
-            {isLoading ? 'Loading genome data...' : 'Initializing genome browser...'}
-          </p>
-        </div>
-      </div>
-    )
-  }
-
-  // Check if this is a RefSeq assembly (GCF_ prefix)
-  const isRefSeqAssembly = accession.startsWith('GCF_')
+  const showLoading = isLoading || !viewState
 
   return (
-    <div className="w-full space-y-4">
-      {isRefSeqAssembly && (
-        <div className="flex items-start gap-3 p-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg">
+    <div className="relative flex h-full w-full flex-col min-h-0 overflow-hidden">
+      {isRefSeqAssembly && !showLoading && (
+        <div className="shrink-0 flex items-start gap-3 p-3 mx-3 mt-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg">
           <AlertCircle className="h-5 w-5 text-yellow-600 dark:text-yellow-500 mt-0.5 flex-shrink-0" />
-          <div className="flex-1">
+          <div className="flex-1 min-w-0">
             <p className="text-sm font-medium text-yellow-800 dark:text-yellow-200 mb-1">
-              RefSeq Assembly Detected
+              RefSeq assembly detected
             </p>
             <p className="text-sm text-yellow-700 dark:text-yellow-300">
-              Some of the genome browser features do not work for RefSeq assemblies as it uses a plugin to fetch FASTA sequences of GenBank (INSDC) assemblies.
+              Some genome browser features do not work for RefSeq assemblies because FASTA is fetched via the GenBank (INSDC) plugin.
             </p>
           </div>
         </div>
       )}
-      <JBrowseLinearGenomeView viewState={viewState} />
+      <div ref={containerRef} className="relative flex-1 min-h-0 w-full">
+        {viewState ? (
+          <div
+            className="jbrowse-embed h-full w-full"
+            style={containerHeight > 0 ? { height: containerHeight } : undefined}
+          >
+            <JBrowseLinearGenomeView viewState={viewState} />
+          </div>
+        ) : null}
+        {showLoading && (
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-background">
+            <div className="text-center">
+              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4" />
+              <p className="text-muted-foreground">
+                {isLoading ? "Loading genome data…" : "Initializing genome browser…"}
+              </p>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   )
 }

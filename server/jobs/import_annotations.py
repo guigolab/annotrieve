@@ -6,12 +6,12 @@ from helpers import file as file_helper
 from .services.classes import AnnotationToProcess
 from .services import annotation as annotation_service
 from .services import assembly as assembly_service
-from .services import contigs as contigs_service
 from .services import taxonomy as taxonomy_service
 from .services import stats as stats_service
 from .services import feature_summary as feature_summary_service
 from .services import feature_stats as feature_stats_service
 from db.models import GenomeAnnotation
+from helpers import assembly_sequence_files as seq_files
 from .services.utils import create_batches
 from mongoengine import Q
 
@@ -32,6 +32,7 @@ def import_annotations():
     Orchestrate the import job: fetch → filter → enrich → process → persist → stats → cleanup.
     """
     os.makedirs(TMP_DIR, exist_ok=True)
+    new_saved_assemblies: list[str] = []
     print("Starting import annotations job...")
     # fetch annotations and deduplicate by md5 checksum and url path (exact match)
     new_annotations = []
@@ -45,8 +46,23 @@ def import_annotations():
         new_annotations.extend(filtered_annotations)
     
     if DEV:
-        #GenomeAnnotation.drop_collection()
-        new_annotations = random.sample(new_annotations, 30)
+        # Group by stripped accession so GCA_/GCF_ pairs share one key
+        #new_annotations = random.sample(new_annotations, 50)
+
+        ass_to_ann: dict[str, list] = {}
+        for ann in new_annotations:
+            ass_key = ann.assembly_accession.removeprefix('GCA_').removeprefix('GCF_')
+            ass_to_ann.setdefault(ass_key, []).append(ann)
+
+        # Top 10 assemblies with more than one annotation (includes both pair accessions)
+        multi_ann = {k: v for k, v in ass_to_ann.items() if len(v) > 1}
+        top_ass = sorted(multi_ann.items(), key=lambda x: len(x[1]), reverse=True)[10:30]
+        new_annotations = [ann for _, anns in top_ass for ann in anns]
+        print(
+            f"DEV: importing {len(new_annotations)} annotations from "
+            f"{len(top_ass)} assemblies: {[k for k, _ in top_ass]}"
+        )
+
     print(f"Found {len(new_annotations)} new annotations to process")
     # LINEAGE HANDLING STEP
     valid_lineages = taxonomy_service.handle_taxonomy(new_annotations, TMP_DIR) #lineages saved in the database, return a dict of taxid:lineage
@@ -60,7 +76,9 @@ def import_annotations():
         return
     
     # ASSEMBLY HANDLING STEP (here we also hanlde bioprojects)
-    valid_accessions = assembly_service.handle_assemblies(new_annotations_to_process, TMP_DIR, valid_lineages)
+    valid_accessions, new_saved_assemblies = assembly_service.handle_assemblies(
+        new_annotations_to_process, TMP_DIR, valid_lineages
+    )
     new_annotations_to_process = annotation_service.filter_annotations_dict_by_field(
         new_annotations_to_process, 'assembly_accession', valid_accessions
     )
@@ -69,7 +87,7 @@ def import_annotations():
         return
 
     print(f"Found {len(new_annotations_to_process)} new annotations to process")
-    
+
     existing_annotation_md5s = GenomeAnnotation.objects().scalar('annotation_id') #the annotation id is the md5 of the uncompressed sorted file
     for annotations in create_batches(new_annotations_to_process, BATCH_SIZE):
         processed_annotations = process_annotations_pipeline(annotations, valid_lineages, existing_annotation_md5s)
@@ -88,6 +106,14 @@ def import_annotations():
     #UPDATE DB AND TAXON GENE STATS
     stats_service.update_db_stats()
     stats_service.update_taxon_gene_and_transcript_stats()
+
+    from .assemblies import sync_new_assemblies_from_summary
+    from .taxonomy import export_flattened_taxonomy
+
+    if new_saved_assemblies:
+        sync_new_assemblies_from_summary.delay(accessions=new_saved_assemblies)
+    export_flattened_taxonomy.delay()
+
     print("Import annotations job successfully finished")
 
 def process_annotations_pipeline(annotations: list[AnnotationToProcess], valid_lineages: dict[str, list[str]], existing_annotation_md5s: list[str]) -> list[GenomeAnnotation]:
@@ -99,14 +125,19 @@ def process_annotations_pipeline(annotations: list[AnnotationToProcess], valid_l
         full_csi_path = f"{full_bgzipped_path}.csi"
         relative_csi_path = f"{relative_bgzipped_path}.csi"
         
+        md5_checksum = None
         try:
             md5_checksum, file_size = annotation_service.process_annotation_file(annotation_to_process, tmp_subdir_path, full_bgzipped_path, existing_annotation_md5s)
             indexed_file_info = annotation_service.init_indexed_file_info(md5_checksum, file_size, relative_bgzipped_path, relative_csi_path)
-            feature_summary = feature_summary_service.compute_features_summary(full_bgzipped_path)
+            feature_summary = feature_summary_service.compute_features_summary(
+                full_bgzipped_path
+            )
             #if it has no types or sources we skip the annotation as it means it is empty
             if not feature_summary or not feature_summary.types or not feature_summary.sources:
                 raise Exception("Annotation has no types or sources, skipping...")
-                
+
+            seq_files.write_contigs_from_tabix(full_bgzipped_path)
+
             feature_stats = feature_stats_service.compute_features_statistics(full_bgzipped_path)   
             parsed_annotation = annotation_to_process.to_genome_annotation(
                 annotation_id=md5_checksum,
@@ -115,7 +146,7 @@ def process_annotations_pipeline(annotations: list[AnnotationToProcess], valid_l
                 features_summary=feature_summary,
                 features_statistics=feature_stats,
             )
-            contigs_service.handle_alias_mapping(parsed_annotation, full_bgzipped_path)
+            # Alias enrichment: existing assemblies after import; new assemblies via sync_new_assemblies_from_summary
             #TODO: do we need to set bioprojects to the annotations or just the assemblies?
             #handle_bioprojects(parsed_annotation)
             processed_annotations.append(parsed_annotation)

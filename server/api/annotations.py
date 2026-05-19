@@ -1,8 +1,13 @@
-from fastapi import APIRouter, Depends, Body
+from fastapi import APIRouter, Depends, Body, UploadFile, File, Form, Request
+from fastapi.responses import JSONResponse
 from typing import Optional, Dict, Any
+from celery.result import AsyncResult
+
 from services import annotations_service
+from services import upload_gff_service
 from helpers import parameters as params_helper
 from helpers import query_visitors as query_visitors_helper
+from celery_app.celery_worker import app as celery_app
 
 router = APIRouter()
 
@@ -242,4 +247,64 @@ async def get_mapped_regions(md5_checksum: str, offset: int = 0, limit: int = 20
     Get mapped (assembled-molecules in INSDC) regions of an annotation file, seqid to sequence alias
     """
     return annotations_service.get_mapped_regions(md5_checksum, offset, limit)
+
+
+@router.post("/annotations/upload-gff")
+async def upload_gff(
+    request: Request,
+    file: UploadFile = File(...),
+    custom_name: str = Form(...),
+):
+    """
+    Upload a custom GFF/GFF3 file and enqueue a background job to compute
+    feature summary and statistics.
+    """
+    client_ip = request.headers.get("x-forwarded-for", request.client.host) if request.client else "unknown"
+    user_agent = request.headers.get("user-agent", "unknown")
+
+    return await upload_gff_service.enqueue_upload_gff_job(
+        ip=client_ip,
+        user_agent=user_agent,
+        file=file,
+        custom_name=custom_name,
+    )
+
+
+@router.get("/annotations/upload-gff/jobs/{task_id}")
+async def get_upload_gff_job_status(task_id: str):
+    """
+    Get the status of a custom GFF upload job.
+    """
+    result = AsyncResult(task_id, app=celery_app)
+    response: Dict[str, Any] = {"task_id": task_id}
+
+    # Prefer ready() so clients see SUCCESS/FAILURE even if meta state is stale.
+    no_store = {"Cache-Control": "no-store"}
+    if result.ready():
+        if result.successful():
+            response["state"] = "SUCCESS"
+            response["result"] = result.result
+        else:
+            response["state"] = "FAILURE"
+            response["error"] = str(result.result)
+        return JSONResponse(content=response, headers=no_store)
+
+    state = result.state or "PENDING"
+    response["state"] = state
+    if state == "PROGRESS" and result.info:
+        response["meta"] = result.info
+    return JSONResponse(content=response, headers={"Cache-Control": "no-store"})
+
+
+@router.get("/annotations/upload-gff/rate-limit")
+async def get_upload_gff_rate_limit(request: Request):
+    """
+    Get the current upload rate-limit status for the calling client.
+    """
+    client_ip = request.headers.get("x-forwarded-for", request.client.host) if request.client else "unknown"
+    user_agent = request.headers.get("user-agent", "unknown")
+    return JSONResponse(
+        content=upload_gff_service.get_rate_limit_status(client_ip, user_agent),
+        headers={"Cache-Control": "no-store"},
+    )
 

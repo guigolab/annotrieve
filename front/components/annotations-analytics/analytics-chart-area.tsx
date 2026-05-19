@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useMemo, useCallback, useRef } from "react"
-import { BarChart2, BarChart3, Activity, SlidersHorizontal, Star, Database, Dna, X, Beaker } from "lucide-react"
+import { BarChart2, BarChart3, Activity, SlidersHorizontal, Star, Database, Dna, X, Beaker, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -29,6 +29,13 @@ import type { AnalyticsEntry, EntityType } from "./analytics-sidebar"
 import { CURRENT_ENTRY_ID } from "./analytics-sidebar"
 import { formatLabel } from "@/lib/annotations-formatting"
 import type { Annotation } from "@/lib/types"
+import {
+  getAnnotationDisplayName,
+  getAnnotationSubtitle,
+  isCustomAnnotation,
+  isPortalAnnotation,
+} from "@/lib/annotation-display"
+import { extractAnnotationMetricValues } from "@/lib/annotation-metric-values"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -56,7 +63,6 @@ interface AnalyticsChartAreaProps {
   selectedEntries: AnalyticsEntry[]
   entityType: EntityType
   onEntityTypeChange: (type: EntityType) => void
-  favoriteAnnotationIds: string[]
   favoriteAnnotations: Annotation[]
   buildCurrentParams: () => Record<string, any>
   buildFavoritesParams: (ids: string[]) => Record<string, any>
@@ -69,7 +75,6 @@ export function AnalyticsChartArea({
   selectedEntries,
   entityType,
   onEntityTypeChange,
-  favoriteAnnotationIds,
   favoriteAnnotations,
   buildCurrentParams,
   buildFavoritesParams,
@@ -397,8 +402,26 @@ export function AnalyticsChartArea({
     const fetchAll = async () => {
       const fetchOne = async (id: string, i: number): Promise<RefLineData> => {
         const ann = favoriteAnnotations.find(a => a.annotation_id === id)
-        const label = ann ? `${ann.organism_name} (${ann.assembly_name || ann.assembly_accession})` : id
+        const label = ann
+          ? isCustomAnnotation(ann)
+            ? getAnnotationDisplayName(ann)
+            : isPortalAnnotation(ann)
+              ? `${ann.organism_name} (${ann.assembly_name || ann.assembly_accession})`
+              : getAnnotationDisplayName(ann)
+          : id
         const color = REF_PALETTE[i % REF_PALETTE.length]
+
+        if (ann && isCustomAnnotation(ann)) {
+          const vals = extractAnnotationMetricValues(
+            ann,
+            entityType,
+            selectedCatOrType,
+            selectedMetric,
+          )
+          const scalar = vals[0] ?? 0
+          return { id, label, color, value: scalar, values: vals }
+        }
+
         try {
           const params = buildFavoritesParams([id])
           const result =
@@ -463,7 +486,7 @@ export function AnalyticsChartArea({
     [refLinesData]
   )
 
-  const favCount = favoriteAnnotationIds.length
+  const favCount = favoriteAnnotations.length
   const hasFavorites = favCount > 0
   const isLoading = statsLoading || metricLoading
 
@@ -517,7 +540,7 @@ export function AnalyticsChartArea({
   return (
     <div className="flex flex-col h-full relative">
       {/* ── Toolbar ─────────────────────────────────────────────────────────── */}
-      <div className="flex items-center gap-2 px-4 sm:px-5 py-3 sm:py-3.5 border-b border-border bg-background/90 shrink-0 flex-wrap">
+      <div className="flex items-center gap-2 px-3 sm:px-5 py-3 sm:py-3.5 border-b border-border bg-background/90 shrink-0 flex-wrap">
 
         {/* Left group: what to analyze */}
         <div className="flex items-center gap-2.5 flex-wrap">
@@ -580,7 +603,7 @@ export function AnalyticsChartArea({
                 }}
                 disabled={statsLoading || categories.length === 0}
               >
-                <SelectTrigger className="h-8 text-xs w-[168px]">
+                <SelectTrigger className="h-8 text-xs w-full min-w-0 max-w-[140px] sm:max-w-[168px]">
                   <SelectValue placeholder={statsLoading ? "Loading…" : `Select ${catLabel.toLowerCase()}`} />
                 </SelectTrigger>
                 <SelectContent className="max-h-72">
@@ -602,7 +625,7 @@ export function AnalyticsChartArea({
               onValueChange={setSelectedMetric}
               disabled={metrics.length === 0 || (showCategorySelect && !selectedCatOrType)}
             >
-              <SelectTrigger className="h-8 text-xs w-[196px]">
+              <SelectTrigger className="h-8 text-xs w-full min-w-0 max-w-[140px] sm:max-w-[196px]">
                 <SelectValue
                   placeholder={
                     statsLoading
@@ -716,10 +739,10 @@ export function AnalyticsChartArea({
         </div>
       </div>
 
-      {/* ── Chart card ──────────────────────────────────────────────────────── */}
-      <div className="flex flex-1 min-h-0 overflow-hidden px-4 sm:px-5 pb-4 pt-3">
-        <div className="flex-1 min-h-0 flex flex-col rounded-xl border border-border bg-card/50 shadow-sm overflow-hidden">
-          <div className="flex-1 min-h-0 p-5">
+      {/* ── Chart + favorites refs ───────────────────────────────────────────── */}
+      <div className="relative flex flex-1 min-h-0 flex-col overflow-hidden px-3 sm:px-5 pb-4 pt-3 gap-3 md:flex-row">
+        <div className="flex-1 min-h-0 flex flex-col rounded-xl border border-border bg-card/50 shadow-sm overflow-hidden min-w-0">
+          <div className="flex-1 min-h-0 p-3 sm:p-5">
             <div ref={chartContainerRef} className="h-full w-full min-h-[280px]">
               {isLoading && chartSeries.length === 0 ? (
                 <div className="flex h-full items-center justify-center">
@@ -767,16 +790,25 @@ export function AnalyticsChartArea({
           </div>
         </div>
 
-        {/* Refs panel (right sidebar) */}
         {refsPanelOpen && (
-          <RefsPanel
-            favoriteAnnotations={favoriteAnnotations}
-            selectedRefIds={selectedRefIds}
-            onSelectionChange={setSelectedRefIds}
-            onClose={() => setRefsPanelOpen(false)}
-            refPalette={REF_PALETTE}
-            maxSelection={MAX_REF_SELECTION}
-          />
+          <>
+            <button
+              type="button"
+              aria-hidden="true"
+              className="fixed inset-0 z-40 bg-black/30 transition-opacity md:hidden"
+              onClick={() => setRefsPanelOpen(false)}
+            />
+            <RefsPanel
+              favoriteAnnotations={favoriteAnnotations}
+              selectedRefIds={selectedRefIds}
+              onSelectionChange={setSelectedRefIds}
+              onClose={() => setRefsPanelOpen(false)}
+              refPalette={REF_PALETTE}
+              maxSelection={MAX_REF_SELECTION}
+              loading={refsLoading}
+              className="md:relative md:shrink-0 fixed inset-y-14 right-0 z-50 w-[min(100%,280px)] shadow-xl md:shadow-sm md:inset-auto"
+            />
+          </>
         )}
       </div>
     </div>
@@ -792,6 +824,8 @@ function RefsPanel({
   onClose,
   refPalette,
   maxSelection,
+  loading = false,
+  className,
 }: {
   favoriteAnnotations: Annotation[]
   selectedRefIds: string[]
@@ -799,6 +833,8 @@ function RefsPanel({
   onClose: () => void
   refPalette: string[]
   maxSelection: number
+  loading?: boolean
+  className?: string
 }) {
   const toggle = (id: string) => {
     if (selectedRefIds.includes(id)) {
@@ -808,59 +844,120 @@ function RefsPanel({
     }
   }
 
+  const atLimit = selectedRefIds.length >= maxSelection
+
   return (
-    <div className="w-72 shrink-0 border-l border-border bg-background/95 flex flex-col overflow-hidden">
-      <div className="flex items-center justify-between px-3 py-2 border-b border-border">
-        <span className="text-sm font-semibold">Favorites as refs</span>
-        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onClose} aria-label="Close">
+    <aside
+      className={cn(
+        "flex flex-col min-h-0 rounded-xl border border-border bg-card/50 overflow-hidden",
+        "w-[min(100%,280px)] sm:w-72 shrink-0 shadow-sm",
+        className
+      )}
+    >
+      <div className="flex items-start justify-between gap-2 px-4 pt-4 pb-3 border-b border-border/60 shrink-0">
+        <div className="min-w-0 space-y-1">
+          <div className="flex items-center gap-2">
+            <Star className="h-4 w-4 text-primary shrink-0" />
+            <h3 className="text-sm font-semibold text-foreground">Favorite references</h3>
+          </div>
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            Pick up to {maxSelection} favorites to draw reference lines on the chart.
+          </p>
+          {selectedRefIds.length > 0 && (
+            <p className="text-xs text-muted-foreground">
+              <span className="font-semibold text-foreground">{selectedRefIds.length}</span>
+              {" "}
+              of {maxSelection} selected
+              {loading && (
+                <Loader2 className="inline h-3 w-3 ml-1.5 animate-spin align-[-2px] text-muted-foreground" />
+              )}
+            </p>
+          )}
+        </div>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
+          onClick={onClose}
+          aria-label="Close favorites panel"
+        >
           <X className="h-4 w-4" />
         </Button>
       </div>
-      <p className="text-xs text-muted-foreground px-3 py-1.5">
-        Select up to {maxSelection} to show as lines on the chart.
-      </p>
-      <div className="flex-1 overflow-y-auto p-2 space-y-1">
+
+      <div className="flex-1 min-h-0 overflow-y-auto p-3">
         {favoriteAnnotations.length === 0 ? (
-          <p className="text-xs text-muted-foreground p-2">No favorites saved.</p>
+          <div className="flex min-h-[120px] items-center justify-center rounded-lg border border-dashed border-border bg-muted/20 p-4 text-center">
+            <p className="text-xs text-muted-foreground">No favorites saved yet.</p>
+          </div>
         ) : (
-          favoriteAnnotations.map((ann, idx) => {
-            const id = ann.annotation_id
-            const isSelected = selectedRefIds.includes(id)
-            const refIndex = selectedRefIds.indexOf(id)
-            const color = refIndex >= 0 ? refPalette[refIndex % refPalette.length] : undefined
-            const disabled = !isSelected && selectedRefIds.length >= maxSelection
-            return (
-              <button
-                key={id}
-                type="button"
-                onClick={() => !disabled && toggle(id)}
-                disabled={disabled}
-                className={cn(
-                  "w-full text-left rounded-md border px-2.5 py-2 text-xs transition-colors",
-                  isSelected ? "border-primary bg-primary/5" : "border-transparent hover:bg-muted/50",
-                  disabled && !isSelected && "opacity-50 cursor-not-allowed"
-                )}
-              >
-                <div className="flex items-center gap-2">
-                  <div
-                    className="h-4 w-4 rounded border shrink-0 flex items-center justify-center"
-                    style={{ borderColor: color ?? "var(--border)", backgroundColor: color ? `${color}30` : "transparent" }}
+          <ul className="space-y-2">
+            {favoriteAnnotations.map((ann) => {
+              const id = ann.annotation_id
+              const isCustom = isCustomAnnotation(ann)
+              const isSelected = selectedRefIds.includes(id)
+              const refIndex = selectedRefIds.indexOf(id)
+              const color = refIndex >= 0 ? refPalette[refIndex % refPalette.length] : undefined
+              const disabled = !isSelected && atLimit
+
+              return (
+                <li key={id}>
+                  <button
+                    type="button"
+                    onClick={() => !disabled && toggle(id)}
+                    disabled={disabled}
+                    className={cn(
+                      "w-full text-left rounded-lg border px-3 py-2.5 text-xs transition-colors",
+                      "bg-background/60 hover:bg-muted/40",
+                      isCustom &&
+                        "border-accent/65 bg-accent/[0.06] outline outline-1 -outline-offset-1 outline-accent/40 hover:bg-accent/10",
+                      isSelected
+                        ? "border-primary/60 bg-primary/5 shadow-sm ring-1 ring-primary/15"
+                        : !isCustom && "border-border",
+                      isCustom &&
+                        isSelected &&
+                        "border-accent/55 outline-accent/50",
+                      disabled && !isSelected && "opacity-50 cursor-not-allowed hover:bg-background/60",
+                    )}
                   >
-                    {isSelected && <span className="h-2 w-2 rounded-full" style={{ backgroundColor: color }} />}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="font-medium truncate">{ann.organism_name}</div>
-                    <div className="text-muted-foreground truncate text-[10px]">
-                      {ann.assembly_name || ann.assembly_accession} · {ann.source_file_info?.database}
+                    <div className="flex items-start gap-2.5">
+                      <span
+                        className="mt-0.5 h-3 w-3 shrink-0 rounded-full border-2"
+                        style={{
+                          borderColor: color ?? "hsl(var(--border))",
+                          backgroundColor: isSelected && color ? color : "transparent",
+                        }}
+                        aria-hidden
+                      />
+                      <div className="min-w-0 flex-1 space-y-0.5">
+                        <div className="font-medium text-foreground truncate leading-tight">
+                          {getAnnotationDisplayName(ann)}
+                        </div>
+                        <p className="text-[10px] text-muted-foreground truncate leading-snug">
+                          {getAnnotationSubtitle(ann)}
+                        </p>
+                      </div>
+                      <Checkbox
+                        checked={isSelected}
+                        disabled={disabled}
+                        className="pointer-events-none shrink-0 mt-0.5"
+                      />
                     </div>
-                  </div>
-                  <Checkbox checked={isSelected} disabled={disabled} className="pointer-events-none shrink-0" />
-                </div>
-              </button>
-            )
-          })
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
         )}
       </div>
-    </div>
+
+      {atLimit && favoriteAnnotations.length > 0 && (
+        <div className="shrink-0 border-t border-border/60 px-4 py-2.5 bg-muted/20">
+          <p className="text-[10px] text-muted-foreground text-center">
+            Maximum {maxSelection} reference lines. Deselect one to add another.
+          </p>
+        </div>
+      )}
+    </aside>
   )
 }

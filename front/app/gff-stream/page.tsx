@@ -7,10 +7,11 @@ import { ArrowLeft, AlertCircle, Loader2 } from "lucide-react"
 
 import {
   listAnnotations,
-  getMappedRegions,
+  fetchAnnotationReferenceOptions,
   streamAnnotationGff,
   downloadContigs,
 } from "@/lib/api/annotations"
+import { getAssembly } from "@/lib/api/assemblies"
 import type { MappedRegion } from "@/lib/api/annotations"
 import type { AnnotationRecord } from "@/lib/api/types"
 import { Button } from "@/components/ui/button"
@@ -46,10 +47,6 @@ interface IndexedAnnotationRecord extends AnnotationRecord {
     file_size?: number
     processed_at?: string
   }
-  mapped_regions?: Array<{
-    sequence_id: string
-    aliases?: string[]
-  }>
 }
 
 type GffFeature = {
@@ -539,7 +536,7 @@ export default function GffStreamPage() {
   }, [annotationId])
 
   useEffect(() => {
-    if (!annotationId || !annotation?.annotation_id) {
+    if (!annotationId || annotation == null || !annotation.annotation_id) {
       resetStreamingBuffers()
       setReferenceOptions([])
       referenceEditedRef.current = false
@@ -548,56 +545,46 @@ export default function GffStreamPage() {
       return
     }
 
+    const ann = annotation
     resetStreamingBuffers()
-    const annotationMd5 = annotation.annotation_id
+    const annotationMd5 = ann.annotation_id
 
     let cancelled = false
-    const fallbackOptions = (): ReferenceOption[] => {
-      if (!annotation?.mapped_regions || !Array.isArray(annotation.mapped_regions)) {
-        return []
-      }
-      const fallback: ReferenceOption[] = annotation.mapped_regions.map((region) => ({
-        sequence_id: region.sequence_id,
-        aliases: region.aliases?.filter(Boolean) ?? [],
-      }))
-      return dedupeReferenceOptions(fallback)
-    }
 
     async function fetchMappedRegions() {
       setIsReferencesLoading(true)
       setReferenceOptions([])
       referenceEditedRef.current = false
       updateReference("", { immediate: true })
-      const collected: ReferenceOption[] = []
-      const PAGE_SIZE = 200
-      let offset = 0
-      let total = Infinity
 
       try {
-        while (!cancelled) {
-          const response = await getMappedRegions(annotationMd5, offset, PAGE_SIZE)
-          if (cancelled) return
-          const results = response.results ?? []
-          if (!results.length) {
-            break
-          }
-          collected.push(
-            ...results.map((item) => ({
-              sequence_id: item.sequence_id,
-              aliases: item.aliases,
-            })),
-          )
-          if (typeof response.total === "number") {
-            total = response.total
-          }
-          offset += results.length
-          if (offset >= total || results.length < PAGE_SIZE) {
-            break
+        let pairedAccession: string | null | undefined
+        if (ann.assembly_accession && ann.taxid) {
+          try {
+            const assembly = await getAssembly(ann.assembly_accession)
+            pairedAccession = assembly.paired_assembly_accession
+          } catch {
+            pairedAccession = undefined
           }
         }
+        if (cancelled) return
 
-        const normalized =
-          collected.length > 0 ? dedupeReferenceOptions(collected) : fallbackOptions()
+        const collected =
+          ann.taxid && ann.assembly_accession
+            ? await fetchAnnotationReferenceOptions(
+                ann.taxid,
+                ann.assembly_accession,
+                annotationMd5,
+                pairedAccession,
+              )
+            : []
+
+        const normalized = dedupeReferenceOptions(
+          collected.map((item) => ({
+            sequence_id: item.sequence_id,
+            aliases: item.aliases,
+          })),
+        )
         if (cancelled) return
         setReferenceOptions(normalized)
         if (!referenceEditedRef.current) {
@@ -612,14 +599,7 @@ export default function GffStreamPage() {
           setAnnotationError((prev) =>
             prev ?? (err instanceof Error ? err.message : String(err)),
           )
-          const fallback = fallbackOptions()
-          setReferenceOptions(fallback)
-          if (!referenceEditedRef.current) {
-            const defaultOption = fallback[0]?.sequence_id ?? ""
-            if (defaultOption) {
-              updateReference(defaultOption, { immediate: true })
-            }
-          }
+          setReferenceOptions([])
         }
       } finally {
         if (!cancelled) {
@@ -632,7 +612,7 @@ export default function GffStreamPage() {
     return () => {
       cancelled = true
     }
-  }, [annotationId, annotation?.annotation_id, annotation?.mapped_regions, updateReference, resetStreamingBuffers])
+  }, [annotationId, annotation?.annotation_id, updateReference, resetStreamingBuffers])
 
   useEffect(() => {
     setRegionLookupError(null)

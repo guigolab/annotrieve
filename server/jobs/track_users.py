@@ -3,8 +3,8 @@ import hmac
 import hashlib
 import os
 import time
-from datetime import datetime
-from typing import Dict, List
+from datetime import date, datetime, timezone
+from typing import Dict, List, Tuple
 from collections import defaultdict
 
 from celery import shared_task
@@ -149,36 +149,51 @@ def get_single_ip_country(ip: str) -> str:
     return 'Unknown'
 
 
+def _visit_utc_date(visit_time: datetime) -> date:
+    """Calendar day (UTC) for a log timestamp."""
+    if visit_time.tzinfo is not None:
+        return visit_time.astimezone(timezone.utc).date()
+    return visit_time.date()
+
+
+def summarize_daily_visits(visit_times: List[datetime]) -> Tuple[datetime, datetime, int]:
+    """
+    Collapse many API requests into daily visit stats.
+
+    - visits_count: distinct UTC calendar days with at least one request
+    - first_visit: earliest request timestamp (oldest active day)
+    - last_visit: latest request timestamp (most recent active day)
+    """
+    if not visit_times:
+        raise ValueError("visit_times must not be empty")
+
+    distinct_days = {_visit_utc_date(t) for t in visit_times}
+    return min(visit_times), max(visit_times), len(distinct_days)
+
+
 def update_user_stats(ip: str, country: str, visit_times: List[datetime]):
     """
     Update or create UserAnalytics document for an IP address.
     """
     fingerprint = create_ip_fingerprint(ip)
-    first_visit = min(visit_times)
-    last_visit = max(visit_times)
-    visits_count = len(visit_times)
-    
-    # Find existing document or create new one
+    first_visit, last_visit, visits_count = summarize_daily_visits(visit_times)
+
     user = UserAnalytics.objects(fingerprint=fingerprint).first()
-    
+
     if user:
-        # Update last_visit if this is later
+        user.first_visit = first_visit
         user.last_visit = last_visit
-        # Overwrite visit count with current count from log file
         user.visits_count = visits_count
-        # Update country (in case geolocation database was updated/corrected)
         user.country = country
         user.save()
     else:
-        # Create new document
-        user = UserAnalytics(
+        UserAnalytics(
             fingerprint=fingerprint,
             country=country,
             first_visit=first_visit,
             last_visit=last_visit,
-            visits_count=visits_count
-        )
-        user.save()
+            visits_count=visits_count,
+        ).save()
 
 
 @shared_task(name='track_unique_users_by_country', ignore_result=False)
@@ -187,13 +202,13 @@ def track_unique_users_by_country():
     Read the entire API log file, extract unique IPs, get their countries via ip-api.com,
     and store/update user analytics by country.
     
-    This job processes the entire log file each time it runs:
-    - visits_count: Overwritten with the total count of visits for each IP in the log file
-    - last_visit: Updated if a later visit is found
-    - first_visit: Updated if an earlier visit is found (preserves the earliest)
-    - country: Updated (handles cases where geolocation database is updated/corrected)
-    
-    Since the log file grows continuously, each run will reflect the total visits up to that point.
+    This job processes the entire log file each time it runs. Per IP (fingerprint):
+    - visits_count: distinct UTC calendar days with at least one API request (not raw request count)
+    - first_visit: timestamp of the earliest request in the log
+    - last_visit: timestamp of the latest request in the log
+    - country: updated (handles geolocation database corrections)
+
+    Since the log file grows continuously, each run reflects all activity up to that point.
     """
     print("Starting track_unique_users_by_country job...")
     

@@ -1,7 +1,9 @@
+import gzip
 import pysam
+from typing import Iterable, Iterator, Optional
 
 
-def stream_gff_file(file_path:str, index_format:str="csi", seqid:str=None, start:int=None, end:int=None, feature_type:str | None=None, feature_source:str | None=None, biotype:str | None=None):
+def stream_gff_file(file_path: str, index_format: str = "csi", seqid: Optional[str] = None, start: Optional[int] = None, end: Optional[int] = None, feature_type: Optional[str] = None, feature_source: Optional[str] = None, biotype: Optional[str] = None) -> Iterator[str]:
     has_filters = feature_type or feature_source or biotype
     if has_filters:
         with pysam.TabixFile(file_path, index=f"{file_path}.{index_format}") as file:
@@ -19,23 +21,44 @@ def stream_gff_file(file_path:str, index_format:str="csi", seqid:str=None, start
     else:
         with pysam.TabixFile(file_path, index=f"{file_path}.{index_format}") as file:
             for line in file.fetch(seqid, start, end):
-                yield line + '\n'
+                yield line + "\n"
 
-def stream_contigs(file_path:str, index_format:str="csi"):
+
+def stream_contigs(file_path: str, index_format: str = "csi") -> Iterator[str]:
     with pysam.TabixFile(file_path, index=f"{file_path}.{index_format}") as file:
         for contig in file.contigs:
-            yield contig + '\n'
+            yield contig + "\n"
 
 
-def stream_contigs_names(file_path:str, index_format:str="csi"):
+def stream_contigs_names(file_path: str, index_format: str = "csi") -> Iterator[str]:
     with pysam.TabixFile(file_path, index=f"{file_path}.{index_format}") as file:
         for contig in file.contigs:
             yield contig
 
-def stream_tabix_gff_file(file_path:str, index_format:str="csi"):
-    
+
+def stream_tabix_gff_file(file_path: str, index_format: str = "csi") -> Iterator[str]:
     with pysam.TabixFile(file_path, index=f"{file_path}.{index_format}") as file:
         for line in file.fetch():
             yield line
 
+
+def stream_plain_gff_file(file_path: str) -> Iterator[str]:
+    """
+    Stream a GFF (optionally gzipped) without requiring a tabix index.
+    Header lines starting with '#' are skipped to mirror stream_tabix_gff_file.
+    """
+    if file_path.endswith(".gz"):
+        opener = gzip.open  # type: ignore[assignment]
+        mode = "rt"
+    else:
+        opener = open  # type: ignore[assignment]
+        mode = "r"
+
+    with opener(file_path, mode, encoding="utf-8", errors="replace") as fh:  # type: ignore[arg-type]
+        for line in fh:
+            if not line:
+                continue
+            if line.startswith("#"):
+                continue
+            yield line.rstrip("\n")
 

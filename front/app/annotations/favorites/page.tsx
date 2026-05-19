@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useMemo, type ReactNode } from "react"
+import { useState, useMemo, useCallback, type ReactNode } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
@@ -13,82 +13,65 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { AnnotationsCompare } from "@/components/annotations-compare/annotations-compare"
-import { listAnnotations } from "@/lib/api/annotations"
 import { useSelectedAnnotationsStore } from "@/lib/stores/selected-annotations"
-import type { Annotation } from "@/lib/types"
-import { RightSidebar } from "@/components/sidebar/right-sidebar"
-import { AlertCircle, ArrowLeft, GitCompare, Loader2, RefreshCw, Star, Trash2, AlertTriangle } from "lucide-react"
+import { getAnnotationDisplayName } from "@/lib/annotation-display"
+import type { CustomAnnotation } from "@/lib/types"
+import { useMergedFavoriteAnnotations } from "@/lib/hooks/use-merged-favorite-annotations"
+import {
+  useFavoritesCart,
+  useActiveCustomAnnotations,
+  usePruneOrphanedCustomAnnotations,
+} from "@/lib/hooks/use-favorites-state"
 
-export default function FavoritesComparePage() {
+type DrawerMode = "upload" | "view"
+import { RightSidebar } from "@/components/sidebar/right-sidebar"
+import { UploadCustomDrawer } from "@/components/annotations/upload-custom-drawer"
+import { CustomUploadProvider } from "@/components/annotations/custom-upload-context"
+import { ExportCustomAnnotationsButton } from "@/components/annotations/export-custom-annotations-button"
+import { UploadHeaderButton } from "@/components/annotations/upload-header-button"
+import { AlertCircle, ArrowLeft, GitCompare, Loader2, PanelLeft, PanelLeftClose, RefreshCw, Star, Trash2, AlertTriangle } from "lucide-react"
+import { useResponsiveSidebar } from "@/lib/hooks/use-responsive-sidebar"
+
+function FavoritesComparePageContent({
+  refreshToken,
+  onRefresh,
+  onViewCustomAnnotation,
+  onOpenUploadDrawer,
+  listSidebarOpen,
+  onListSidebarOpenChange,
+  toggleListSidebar,
+}: {
+  refreshToken: number
+  onRefresh: () => void
+  onViewCustomAnnotation: (annotation: CustomAnnotation) => void
+  onOpenUploadDrawer: () => void
+  listSidebarOpen: boolean
+  onListSidebarOpenChange: (open: boolean) => void
+  toggleListSidebar: () => void
+}) {
   const router = useRouter()
 
-  const annotationsCart = useSelectedAnnotationsStore((state) => state.annotationsCart)
+  usePruneOrphanedCustomAnnotations(true)
+  const { annotationsCart, favoriteSelections } = useFavoritesCart()
+  const activeCustomAnnotations = useActiveCustomAnnotations()
   const removeFromCart = useSelectedAnnotationsStore((state) => state.removeFromCart)
-  const favoriteSelections = useMemo(
-    () => Array.from(annotationsCart.values()),
-    [annotationsCart]
+
+  const customIdsSet = useMemo(
+    () => new Set(activeCustomAnnotations.map((a) => a.annotation_id)),
+    [activeCustomAnnotations],
   )
 
-  const favoriteIds = useMemo(() => {
-    const unique = new Set<string>()
-    favoriteSelections.forEach((annotation) => {
-      if (annotation?.annotation_id) {
-        unique.add(annotation.annotation_id)
-      }
-    })
-    return Array.from(unique)
-  }, [favoriteSelections])
-
-  const [favoriteAnnotations, setFavoriteAnnotations] = useState<Annotation[]>([])
-  const [totalFavorites, setTotalFavorites] = useState(0)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [refreshToken, setRefreshToken] = useState(0)
-
-  useEffect(() => {
-    let cancelled = false
-
-    const fetchFavorites = async () => {
-      if (favoriteIds.length === 0) {
-        setFavoriteAnnotations([])
-        setTotalFavorites(0)
-        setError(null)
-        setLoading(false)
-        return
-      }
-
-      setLoading(true)
-      setError(null)
-      try {
-        const params: Record<string, any> = {
-          md5_checksums: favoriteIds.join(','),
-          limit: favoriteIds.length + 1,
-          offset: 0,
-        }
-        const res = await listAnnotations(params as any)
-        if (cancelled) return
-        const results = (res as any)?.results || []
-        setFavoriteAnnotations(results as Annotation[])
-        setTotalFavorites((res as any)?.total ?? results.length)
-      } catch (err) {
-        if (cancelled) return
-        console.error('Error loading favorite annotations:', err)
-        setFavoriteAnnotations([])
-        setTotalFavorites(0)
-        setError('Unable to load favorite annotations. Please try again.')
-      } finally {
-        if (!cancelled) {
-          setLoading(false)
-        }
-      }
-    }
-
-    fetchFavorites()
-
-    return () => {
-      cancelled = true
-    }
-  }, [favoriteIds, refreshToken])
+  const {
+    favoriteAnnotations,
+    totalFavorites,
+    loading,
+    error,
+    favoriteIds,
+  } = useMergedFavoriteAnnotations({
+    favoriteSelections,
+    customAnnotations: activeCustomAnnotations,
+    refreshToken,
+  })
 
   const selectionCount = favoriteIds.length
   const loadedCount = favoriteAnnotations.length
@@ -96,12 +79,12 @@ export default function FavoritesComparePage() {
   const notFoundIds = useMemo(() => {
     if (loading || favoriteIds.length === 0) return []
     const loadedIds = new Set(favoriteAnnotations.map((a) => a.annotation_id))
-    return favoriteIds.filter((id) => !loadedIds.has(id))
-  }, [loading, favoriteIds, favoriteAnnotations])
+    return favoriteIds.filter((id) => !loadedIds.has(id) && !customIdsSet.has(id))
+  }, [loading, favoriteIds, favoriteAnnotations, customIdsSet])
 
   const [notFoundDialogOpen, setNotFoundDialogOpen] = useState(false)
 
-  const handleRetry = () => setRefreshToken((prev) => prev + 1)
+  const handleRetry = () => onRefresh()
 
   const handleRemoveNotFound = (id: string) => {
     removeFromCart(id)
@@ -179,11 +162,16 @@ export default function FavoritesComparePage() {
     )
   } else {
     content = (
-      <div className="h-full lg:overflow-hidden overflow-y-auto">
+      <div className="h-full min-h-0 overflow-hidden">
         <AnnotationsCompare
           favoriteAnnotations={favoriteAnnotations}
           showFavs
           totalAnnotations={totalFavorites || selectionCount}
+          selectionCount={selectionCount}
+          customCount={activeCustomAnnotations.length}
+          onViewCustomAnnotation={onViewCustomAnnotation}
+          listSidebarOpen={listSidebarOpen}
+          onListSidebarOpenChange={onListSidebarOpenChange}
         />
       </div>
     )
@@ -193,43 +181,58 @@ export default function FavoritesComparePage() {
     <>
       <RightSidebar />
       <div className="flex flex-col h-[calc(100vh-4rem)] overflow-hidden">
-        <header aria-label="Favorite annotations" className="px-6 pt-6 pb-4 border-b border-border bg-background/95 supports-[backdrop-filter]:bg-background/75 backdrop-blur flex flex-col gap-4">
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <div className="space-y-4">
-            <div className="flex items-center gap-2 flex-wrap">
-              <Button variant="ghost" size="sm" onClick={() => router.push('/annotations')}>
+        <header aria-label="Favorite annotations" className="px-4 sm:px-6 py-3 border-b border-border bg-background/95 supports-[backdrop-filter]:bg-background/75 backdrop-blur">
+          <div
+            className="flex flex-wrap items-center justify-between gap-3"
+          >
+            <div
+              className="flex items-center gap-2 min-w-0 flex-1"
+            >
+              {loadedCount > 0 && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 px-2 gap-1.5 shrink-0 md:hidden"
+                  onClick={toggleListSidebar}
+                  aria-label={listSidebarOpen ? "Close annotations list" : "Open annotations list"}
+                >
+                  {listSidebarOpen ? (
+                    <PanelLeftClose className="h-4 w-4" />
+                  ) : (
+                    <PanelLeft className="h-4 w-4" />
+                  )}
+                  <span className="text-sm">{listSidebarOpen ? "Hide" : "List"}</span>
+                </Button>
+              )}
+              <Button variant="ghost" size="sm" onClick={() => router.push('/annotations')} className="shrink-0">
                 <ArrowLeft className="h-4 w-4" />
-                Back to annotations
+                <span className="sr-only sm:not-sr-only sm:inline">Back</span>
               </Button>
+              <h1 className="text-lg sm:text-xl font-semibold text-foreground flex items-center gap-2 truncate min-w-0">
+                <Star className="h-4 w-4 text-accent shrink-0" />
+                <span className="truncate">Favorite Annotations</span>
+              </h1>
             </div>
-              <h1 className="text-2xl font-semibold text-foreground flex items-center gap-2">                 <Star className="h-4 w-4 text-accent" />
-              Favorite Annotations</h1>
-              <p className="text-sm text-muted-foreground">
-                Select up to 10 annotations to visualize overlaps, gene metrics, and transcript composition side by side.
-              </p>
+            <div
+              className="flex items-center gap-2 shrink-0 flex-wrap justify-end"
+            >
+              {notFoundIds.length > 0 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5 sm:gap-2 border-amber-500/60 text-amber-600 dark:text-amber-400 hover:bg-amber-500/10 hover:border-amber-500/80"
+                  onClick={() => setNotFoundDialogOpen(true)}
+                >
+                  <AlertTriangle className="h-4 w-4 shrink-0" />
+                  <span className="hidden sm:inline">
+                    {notFoundIds.length} favorite{notFoundIds.length !== 1 ? "s" : ""} not found
+                  </span>
+                  <span className="sm:hidden">{notFoundIds.length} missing</span>
+                </Button>
+              )}
+              <ExportCustomAnnotationsButton customAnnotations={activeCustomAnnotations} />
+              <UploadHeaderButton onOpenDrawer={onOpenUploadDrawer} />
             </div>
-
-          </div>
-          <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
-            <span>
-              Selected favorites: <span className="text-foreground font-semibold">{selectionCount}</span>
-            </span>
-            {selectionCount > 0 && (
-              <span>
-                Loaded annotations: <span className="text-foreground font-semibold">{loadedCount}</span>
-              </span>
-            )}
-            {notFoundIds.length > 0 && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-2 border-amber-500/60 text-amber-600 dark:text-amber-400 hover:bg-amber-500/10 hover:border-amber-500/80"
-                onClick={() => setNotFoundDialogOpen(true)}
-              >
-                <AlertTriangle className="h-4 w-4" />
-                {notFoundIds.length} favorite{notFoundIds.length !== 1 ? "s" : ""} not found
-              </Button>
-            )}
           </div>
         </header>
 
@@ -247,7 +250,7 @@ export default function FavoritesComparePage() {
             <ul className="max-h-[240px] overflow-y-auto rounded-md border border-border bg-muted/30 py-2 text-sm">
               {notFoundIds.map((id) => {
                 const cartEntry = annotationsCart.get(id)
-                const label = cartEntry?.organism_name ?? cartEntry?.assembly_name ?? id
+                const label = cartEntry ? getAnnotationDisplayName(cartEntry) : id
                 return (
                   <li
                     key={id}
@@ -295,4 +298,58 @@ export default function FavoritesComparePage() {
   )
 }
 
+export default function FavoritesComparePage() {
+  const { sidebarOpen: listSidebarOpen, setSidebarOpen: onListSidebarOpenChange, toggleSidebar: toggleListSidebar } =
+    useResponsiveSidebar()
+  const [refreshToken, setRefreshToken] = useState(0)
+  const [uploadDrawerOpen, setUploadDrawerOpen] = useState(false)
+  const [drawerMode, setDrawerMode] = useState<DrawerMode>("upload")
+  const [viewAnnotation, setViewAnnotation] = useState<CustomAnnotation | null>(null)
+
+  const onFavoritesChanged = useCallback(() => setRefreshToken((t) => t + 1), [])
+  const onAddedToFavorites = useCallback(() => setUploadDrawerOpen(false), [])
+
+  const handleUploadDrawerOpenChange = useCallback((open: boolean) => {
+    setUploadDrawerOpen(open)
+    if (!open) {
+      setDrawerMode("upload")
+      setViewAnnotation(null)
+    }
+  }, [])
+
+  const handleViewCustomAnnotation = useCallback((annotation: CustomAnnotation) => {
+    setViewAnnotation(annotation)
+    setDrawerMode("view")
+    setUploadDrawerOpen(true)
+  }, [])
+
+  const handleOpenUploadDrawer = useCallback(() => {
+    setDrawerMode("upload")
+    setViewAnnotation(null)
+    setUploadDrawerOpen(true)
+  }, [])
+
+  return (
+    <CustomUploadProvider
+      onFavoritesChanged={onFavoritesChanged}
+      onAddedToFavorites={onAddedToFavorites}
+    >
+      <FavoritesComparePageContent
+        refreshToken={refreshToken}
+        onRefresh={onFavoritesChanged}
+        onViewCustomAnnotation={handleViewCustomAnnotation}
+        onOpenUploadDrawer={handleOpenUploadDrawer}
+        listSidebarOpen={listSidebarOpen}
+        onListSidebarOpenChange={onListSidebarOpenChange}
+        toggleListSidebar={toggleListSidebar}
+      />
+      <UploadCustomDrawer
+        open={uploadDrawerOpen}
+        onOpenChange={handleUploadDrawerOpenChange}
+        mode={drawerMode}
+        viewAnnotation={viewAnnotation}
+      />
+    </CustomUploadProvider>
+  )
+}
 

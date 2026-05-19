@@ -3,10 +3,10 @@ from typing import Optional, Dict, List, Any
 from db.embedded_documents import GeneStats, GeneLengthStats, TranscriptStats, LengthStats, FeatureStats, TranscriptTypeStats, FeatureTypeStats, GFFStats, GeneCategoryFeatureStats, GenericTranscriptTypeStats, GenericLengthStats, AssociatedGenesStats, SubFeatureStats
 import statistics
 from fastapi import HTTPException
-from db.models import AnnotationSequenceMap, GenomeAnnotation, GenomeAssembly
+from db.models import GenomeAnnotation, GenomeAssembly
 from helpers import pysam_helper
+from helpers import assembly_sequence_files as seq_files
 from helpers import query_visitors as query_visitors_helper
-from helpers import annotation as annotation_helper
 
 
 DEFAULT_FIELD_MAP: Dict[str, str] = {
@@ -30,19 +30,19 @@ DEFAULT_FIELD_MAP: Dict[str, str] = {
 
 
 def get_annotation_records(
-    filter:str = None, #text search on assembly, taxonomy or annotation id
-    taxids: Optional[str] = None, 
-    db_sources: Optional[str] = None, #GenBank, RefSeq, Ensembl
-    feature_sources: Optional[str] = None, #second column in the gff file
+    filter: str = None,
+    taxids: Optional[str] = None,
+    db_sources: Optional[str] = None,
+    feature_sources: Optional[str] = None,
     assembly_accessions: Optional[str] = None,
     bioproject_accessions: Optional[str] = None,
-    biotypes: Optional[str] = None, #biotype present in the 9th column in the gff file
-    feature_types: Optional[str] = None,# third column in the gff file
-    has_stats: Optional[bool] = None, #True, False, None for all
-    pipelines: Optional[str] = None, #pipeline name
-    providers: Optional[str] = None, #annotation provider list separated by comma
-    md5_checksums: Optional[str] = None, 
-    refseq_categories: str = None, #true
+    biotypes: Optional[str] = None,
+    feature_types: Optional[str] = None,
+    has_stats: Optional[bool] = None,
+    pipelines: Optional[str] = None,
+    providers: Optional[str] = None,
+    md5_checksums: Optional[str] = None,
+    refseq_categories: str = None,
     assembly_levels: str = None,
     assembly_statuses: str = None,
     assembly_types: str = None,
@@ -53,8 +53,7 @@ def get_annotation_records(
     busco_complete_from: str = None,
     busco_complete_to: str = None,
 ):
-
-    mongoengine_query = annotation_helper.query_params_to_mongoengine_query(
+    mongoengine_query = query_params_to_mongoengine_query(
         taxids=taxids,
         db_sources=db_sources,
         assembly_accessions=assembly_accessions,
@@ -70,29 +69,140 @@ def get_annotation_records(
         busco_complete_from=busco_complete_from,
         busco_complete_to=busco_complete_to,
     )
-    annotations = GenomeAnnotation.objects(**mongoengine_query).exclude('id')
-    #check if any assembly related param is present
-    if any([refseq_categories, assembly_levels, assembly_statuses, assembly_types, bioproject_accessions]):
+    annotations = GenomeAnnotation.objects(**mongoengine_query).exclude("id")
+    if any(
+        [
+            refseq_categories,
+            assembly_levels,
+            assembly_statuses,
+            assembly_types,
+            bioproject_accessions,
+        ]
+    ):
         query = {}
         if refseq_categories:
-            query['refseq_category__in'] = refseq_categories.split(',') if isinstance(refseq_categories, str) else refseq_categories
+            query["refseq_category__in"] = (
+                refseq_categories.split(",")
+                if isinstance(refseq_categories, str)
+                else refseq_categories
+            )
         if assembly_levels:
-            query['assembly_level__in'] = assembly_levels.split(',') if isinstance(assembly_levels, str) else assembly_levels
+            query["assembly_level__in"] = (
+                assembly_levels.split(",")
+                if isinstance(assembly_levels, str)
+                else assembly_levels
+            )
         if assembly_statuses:
-            query['assembly_status__in'] = assembly_statuses.split(',') if isinstance(assembly_statuses, str) else assembly_statuses
+            query["assembly_status__in"] = (
+                assembly_statuses.split(",")
+                if isinstance(assembly_statuses, str)
+                else assembly_statuses
+            )
         if assembly_types:
-            query['assembly_type__in'] = assembly_types.split(',') if isinstance(assembly_types, str) else assembly_types
+            query["assembly_type__in"] = (
+                assembly_types.split(",")
+                if isinstance(assembly_types, str)
+                else assembly_types
+            )
         if bioproject_accessions:
-            query['bioprojects__in'] = bioproject_accessions.split(',') if isinstance(bioproject_accessions, str) else bioproject_accessions
-        #fetch assemblies from the assemblies collection
-        assemblies = GenomeAssembly.objects(**query).scalar('assembly_accession')
+            query["bioprojects__in"] = (
+                bioproject_accessions.split(",")
+                if isinstance(bioproject_accessions, str)
+                else bioproject_accessions
+            )
+        assemblies = GenomeAssembly.objects(**query).scalar("assembly_accession")
         annotations = annotations.filter(assembly_accession__in=assemblies)
     if filter:
         annotations = annotations.filter(query_visitors_helper.annotation_query(filter))
     if sort_by:
-        sort = '-' + sort_by if sort_order == 'desc' else sort_by
+        sort = "-" + sort_by if sort_order == "desc" else sort_by
         annotations = annotations.order_by(sort)
     return annotations
+
+
+def _chromosome_identifiers(row: dict) -> set[str]:
+    ids: set[str] = set()
+    for key in (
+        "chr_name",
+        "sequence_name",
+        "ucsc_style_name",
+        "genbank_accession",
+        "refseq_accession",
+        "canonical_id",
+    ):
+        val = row.get(key)
+        if val:
+            v = str(val).strip()
+            if v:
+                ids.add(v)
+                if "|" in v:
+                    ids.update(part.strip() for part in v.split("|") if part.strip())
+                if "." in v:
+                    ids.add(v.split(".")[0])
+    return ids
+
+
+def resolve_sequence_id(region: str | int, md5_checksum: str, file_path: str):
+    """
+    Resolve a region name to the GFF sequence_id using chr_aliases.tsv, chromosomes.json,
+    and contigs.txt (exact seqid match).
+    """
+    region_str = str(region)
+    annotation = GenomeAnnotation.objects(annotation_id=md5_checksum).only(
+        "assembly_accession", "taxid", "indexed_file_info"
+    ).first()
+    if not annotation or not annotation.indexed_file_info:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Annotation {md5_checksum} not found",
+        )
+
+    rel_path = annotation.indexed_file_info.bgzipped_path.lstrip("/")
+    contig_candidates: set[str] = {region_str}
+
+    assembly = GenomeAssembly.objects(
+        assembly_accession=annotation.assembly_accession
+    ).only("paired_assembly_accession").first()
+    paired = assembly.paired_assembly_accession if assembly else None
+
+    alias_index = seq_files.load_chr_aliases_index(
+        annotation.taxid, annotation.assembly_accession, paired
+    )
+    ref_name = alias_index.get(region_str)
+    if ref_name:
+        contig_candidates.add(ref_name)
+
+    chr_path = seq_files.resolve_chromosomes_path(
+        annotation.taxid, annotation.assembly_accession, paired
+    )
+    if chr_path:
+        import json
+
+        with open(chr_path, encoding="utf-8") as fh:
+            chromosomes = json.load(fh)
+        for row in chromosomes:
+            identifiers = _chromosome_identifiers(row)
+            if region_str in identifiers or (ref_name and ref_name in identifiers):
+                contig_candidates.update(identifiers)
+
+    contig_ids = seq_files.load_contig_ids_set(rel_path)
+    if contig_ids:
+        for candidate in contig_candidates:
+            if candidate and candidate in contig_ids:
+                return candidate
+    else:
+        for contig in pysam_helper.stream_contigs_names(file_path):
+            if contig in contig_candidates:
+                return contig
+
+    if region_str in contig_ids:
+        return region_str
+
+    raise HTTPException(
+        status_code=404,
+        detail=f"Region '{region}' not found in annotation {md5_checksum}",
+    )
+
 
 # Utility to flatten nested dictionaries
 def flatten_dict(d: Dict[str, Any], parent_key: str = '', sep: str = '.') -> Dict[str, Any]:
@@ -105,26 +215,6 @@ def flatten_dict(d: Dict[str, Any], parent_key: str = '', sep: str = '.') -> Dic
             items.append((new_key, v))
     return dict(items)
 
-def resolve_sequence_id(region:str| int, md5_checksum:str, file_path:str):
-    """
-    Resolve the sequence id from the region or aliases
-    """
-    region_str = str(region)
-    seq_id = None
-    #resolve aliases to sequence_id
-    gff_region = AnnotationSequenceMap.objects(annotation_id=md5_checksum, aliases__in=[region, region_str]).first()
-    if not gff_region:
-        print(f"Region '{region}' not found in annotation {md5_checksum}")
-        #check if the region is present in the contigs
-        for contig in pysam_helper.stream_contigs_names(file_path):
-            if region == contig:
-                seq_id = region
-                break
-        if not seq_id:
-            raise HTTPException(status_code=404, detail=f"Region '{region}' not found in annotation {md5_checksum}")
-    else:
-        seq_id = gff_region.sequence_id
-    return seq_id
 
 def map_to_gff_stats(features_stats: Dict[str, Any]) -> GFFStats:
     """
@@ -318,34 +408,10 @@ def query_params_to_mongoengine_query(
     busco_complete_from: Optional[str] = None,
     busco_complete_to: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """
-    Convert API query parameters to MongoDB query format.
-    
-    Args:
-        taxids: Taxonomic IDs (organism identifiers)
-        db_sources: Database sources to filter by
-        assembly_accessions: Assembly accession numbers
-        md5_checksums: MD5 checksums of annotation files
-        feature_types: Types of genomic features
-        feature_sources: Sources of features
-        biotypes: Biological types of features
-        has_stats: Whether annotations have computed statistics
-        pipelines: Annotation pipelines used
-        providers: Data providers
-        release_date_from: Filter annotations from this date (ISO format)
-        release_date_to: Filter annotations to this date (ISO format)
-        field_map: Custom field mapping overrides
-    
-    Returns:
-        Dict containing MongoDB query conditions
-        
-    Raises:
-        ValueError: If invalid parameter values are provided
-    """
+    """Convert API query parameters to MongoDB query format."""
     query: Dict[str, Any] = {}
     mapping = {**DEFAULT_FIELD_MAP, **(field_map or {})}
 
-    # Define parameter configurations with their processing rules
     param_configs = {
         "taxids": {"type": "list", "normalize": True, "required": False},
         "db_sources": {"type": "list", "normalize": True, "required": False},
@@ -381,7 +447,6 @@ def query_params_to_mongoengine_query(
     }
 
     for param_name, raw_value in inputs.items():
-        # Skip if no value provided
         if raw_value is None:
             continue
             
@@ -402,19 +467,6 @@ def query_params_to_mongoengine_query(
 
 
 def _process_parameter_value(raw_value: Any, config: Dict[str, Any]) -> Any:
-    """
-    Process a single parameter value according to its configuration.
-    
-    Args:
-        raw_value: The raw parameter value
-        config: Configuration dict with type and normalization rules
-        
-    Returns:
-        Processed value ready for MongoDB query
-        
-    Raises:
-        ValueError: If value cannot be processed according to config
-    """
     param_type = config.get("type", "list")
     should_normalize = config.get("normalize", True)
     
@@ -435,7 +487,6 @@ def _process_parameter_value(raw_value: Any, config: Dict[str, Any]) -> Any:
 
 
 def _process_boolean_value(raw_value: Any) -> bool:
-    """Process boolean parameter values."""
     if isinstance(raw_value, bool):
         return raw_value
     elif isinstance(raw_value, str):
@@ -452,7 +503,6 @@ def _process_boolean_value(raw_value: Any) -> bool:
         raise ValueError(f"Cannot convert to boolean: {type(raw_value).__name__}")
 
 def _process_float_value(raw_value: Any) -> float:
-    """Process float parameter values."""
     if isinstance(raw_value, float):
         return raw_value
     elif isinstance(raw_value, str):
@@ -466,34 +516,20 @@ def _process_float_value(raw_value: Any) -> float:
         raise ValueError(f"Invalid float value: {raw_value}")
 
 def _process_list_value(raw_value: Any, should_normalize: bool = True) -> List[str] | None:
-    """
-    Process list parameter values.
-    
-    Args:
-        raw_value: The raw parameter value
-        should_normalize: Whether to normalize the value (trim, dedupe, etc.)
-        
-    Returns:
-        Processed list or None if empty after processing
-    """
     if isinstance(raw_value, list):
         values = raw_value
     elif isinstance(raw_value, str):
         if should_normalize:
             values = parameters_helper.normalize_to_list(raw_value)
         else:
-            # Simple split without normalization
             values = [v.strip() for v in raw_value.split(',') if v.strip()]
     else:
-        # Convert single value to list
         values = [str(raw_value)] if raw_value is not None else []
     
-    # Return None for empty lists to avoid adding empty filters
     return values if values else None
 
 
 def _process_int_value(raw_value: Any) -> int:
-    """Process integer parameter values."""
     if isinstance(raw_value, int):
         return raw_value
     elif isinstance(raw_value, str):
@@ -508,10 +544,8 @@ def _process_int_value(raw_value: Any) -> int:
 
 
 def _process_date_value(raw_value: Any) -> str:
-    """Process date parameter values."""
     if isinstance(raw_value, str):
         date_str = raw_value.strip()
-        # Basic validation - could be enhanced with proper date parsing
         if not date_str:
             raise ValueError("Empty date string")
         return date_str
@@ -520,14 +554,12 @@ def _process_date_value(raw_value: Any) -> str:
 
 
 def _process_string_value(raw_value: Any, should_normalize: bool = True) -> str:
-    """Process string parameter values."""
     if isinstance(raw_value, str):
         if should_normalize:
             return raw_value.strip()
         else:
             return raw_value
     else:
-        # Convert to string
         return str(raw_value).strip() if should_normalize else str(raw_value)
         
 def map_to_gene_category_stats(data: Dict[str, Any], counts: List[int], mean_lengths: List[float]) -> dict[str, Any]:

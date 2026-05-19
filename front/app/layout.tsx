@@ -3,7 +3,6 @@ import localFont from "next/font/local";
 import { Fraunces, DM_Mono } from "next/font/google";
 import "./globals.css";
 import { AppNavbar } from "@/components/layout/app-navbar";
-import { BetaBannerProvider } from "@/components/layout/beta-banner-provider";
 import { ReactQueryProvider } from "@/components/layout/providers/react-query-provider";
 import { ThemeProvider } from "@/components/layout/theme-provider";
 import { InsdcModalProvider } from "@/components/layout/providers/insdc-modal-provider"
@@ -74,7 +73,6 @@ export default function RootLayout({
       >
         <ThemeProvider>
           <ReactQueryProvider>
-            <BetaBannerProvider>
               <InsdcModalProvider />
               <div className="min-h-screen flex flex-col h-full">
                 <AppNavbar />
@@ -82,7 +80,6 @@ export default function RootLayout({
                   {children}
                 </main>
               </div>
-            </BetaBannerProvider>
           </ReactQueryProvider>
         </ThemeProvider>
         <Toaster richColors position="top-center" />

@@ -1,8 +1,17 @@
 from fastapi import HTTPException
-from db.models import GenomeAssembly, GenomicSequence
+from db.models import GenomeAssembly
 from helpers import response as response_helper, query_visitors as query_visitors_helper
-from fastapi.responses import StreamingResponse
-import io
+from helpers.parameters import format_boolean_param
+from jobs.services.assembly import (
+    assemblies_with_complete_report,
+    assemblies_with_failed_report,
+    assemblies_with_incomplete_report,
+    assemblies_with_pending_report,
+)
+from fastapi.responses import FileResponse
+import os
+
+from helpers import assembly_sequence_files as seq_files
 
 def get_assemblies(filter: str = None, 
                     taxids: str = None, 
@@ -17,7 +26,9 @@ def get_assemblies(filter: str = None,
                     assembly_levels: str = None,
                     refseq_categories: str = None,
                     assembly_statuses: str = None,
-                    assembly_types: str = None
+                    assembly_types: str = None,
+                    report_status: str = None,
+                    report_incomplete: str | bool = None,
                     ):
     try:
 
@@ -37,6 +48,24 @@ def get_assemblies(filter: str = None,
         if assembly_types:
             query['assembly_type__in'] = assembly_types.split(',') if isinstance(assembly_types, str) else assembly_types
         assemblies = GenomeAssembly.objects(**query)
+        if report_status is not None:
+            status = report_status.strip().lower()
+            if status == "failed":
+                assemblies = assemblies.filter(assemblies_with_failed_report())
+            elif status == "ok":
+                assemblies = assemblies.filter(assemblies_with_complete_report())
+            elif status == "pending":
+                assemblies = assemblies.filter(assemblies_with_pending_report())
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail="report_status must be one of: pending, ok, failed",
+                )
+        if report_incomplete is not None:
+            if format_boolean_param(report_incomplete):
+                assemblies = assemblies.filter(assemblies_with_incomplete_report())
+            else:
+                assemblies = assemblies.filter(assemblies_with_complete_report())
         
         q_filter =  query_visitors_helper.assembly_query(filter) if filter else None
         if q_filter:
@@ -51,6 +80,8 @@ def get_assemblies(filter: str = None,
             assemblies = assemblies.order_by(sort)
 
         return response_helper.json_response_with_pagination(assemblies, assemblies.count(), offset, limit)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching assemblies: {e}")
 
@@ -60,9 +91,28 @@ def get_assembly(assembly_accession: str):
         raise HTTPException(status_code=404, detail=f"Assembly {assembly_accession} not found")
     return assembly
 
-def get_assembled_molecules(assembly_accession: str, offset: int = 0, limit: int = 20):
-    genomic_sequences = GenomicSequence.objects(assembly_accession=assembly_accession).exclude('id').skip(offset).limit(limit).as_pymongo()
-    return response_helper.json_response_with_pagination(genomic_sequences, genomic_sequences.count(), offset, limit)
+
+def get_chromosomes_file(accession: str):
+    """Stream chromosomes.json from LOCAL_ANNOTATIONS_DIR for the assembly (or its pair)."""
+    assembly = get_assembly(accession)
+    path = seq_files.resolve_chromosomes_path(
+        assembly.taxid, accession, assembly.paired_assembly_accession
+    )
+    if not path or not os.path.isfile(path):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Assembly {accession} lacks chromosomes.json on disk",
+        )
+    return FileResponse(
+        path,
+        media_type="application/json",
+        filename=f"{accession}_chromosomes.json",
+        headers={
+            "Cache-Control": "public, max-age=86400",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
 
 def get_paired_assembly(assembly_accession: str):
     assembly = get_assembly(assembly_accession)
@@ -71,21 +121,22 @@ def get_paired_assembly(assembly_accession: str):
         raise HTTPException(status_code=404, detail=f"Assembly {assembly_accession} is not a paired assembly")
     return get_assembly(paired_assembly_accession)
 
-def get_chr_aliases_file(accession: str):    
-    # Query chromosomes based on accession_version
-    chromosomes = GenomicSequence.objects(assembly_accession=accession)
-    if not chromosomes:
-        raise HTTPException(status_code=404, detail=f"Assembly {accession} lacks chromosomes")
-    
-    #stream a tsv file with aliases fields in each line
-    tsv_data = io.StringIO()
-    for chromosome in chromosomes:
-        aliases = "\t".join(chromosome.aliases)
-        tsv_data.write(f"{chromosome.chr_name}\t{chromosome.sequence_name}\t{chromosome.genbank_accession}\t{chromosome.refseq_accession}\t{chromosome.ucsc_style_name}\t{aliases}\n")
-    tsv_data.seek(0)
-    return StreamingResponse(tsv_data, media_type='text/tab-separated-values', headers={
-        "Content-Disposition": f'attachment; filename="{accession}_chr_aliases.tsv"',
-        "Cache-Control": "public, max-age=86400",
-        "X-Accel-Buffering": "no",
-    })
-
+def get_chr_aliases_file(accession: str):
+    assembly = get_assembly(accession)
+    path = seq_files.resolve_chr_aliases_path(
+        assembly.taxid, accession, assembly.paired_assembly_accession
+    )
+    if not path or not os.path.isfile(path):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Assembly {accession} lacks chr_aliases.tsv on disk",
+        )
+    return FileResponse(
+        path,
+        media_type="text/tab-separated-values",
+        filename=f"{accession}_chr_aliases.tsv",
+        headers={
+            "Cache-Control": "public, max-age=86400",
+            "X-Accel-Buffering": "no",
+        },
+    )

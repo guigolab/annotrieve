@@ -53,16 +53,12 @@ export function D3CirclePack({
   const theme = useUIStore((state) => state.theme)
   const isDark = theme === "dark"
 
-  const { isLoading: loading, error, fetchFlattenedTree } = useFlattenedTreeStore()
+  const { isLoading: loading, error } = useFlattenedTreeStore()
   const treeStructure = useFilteredTreeByRootAndRank(rootTaxid, controlledRank ?? null)
 
   useEffect(() => {
     hoveredNodeRef.current = hoveredNode
   }, [hoveredNode])
-
-  useEffect(() => {
-    fetchFlattenedTree()
-  }, [fetchFlattenedTree])
 
   useEffect(() => {
     if (!treeStructure || !canvasRef.current || !containerRef.current) return

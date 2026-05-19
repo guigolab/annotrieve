@@ -126,6 +126,14 @@
   }
 }
 
+/* JBrowse embed: explicit pixel height set inline; scroll when tracks exceed viewport */
+.jbrowse-embed {
+  position: relative;
+  width: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
 /* Chromosome Viewer Styles */
 .chromosome-viewer {
   position: relative;
@@ -218,4 +226,24 @@
     animation: none !important;
     transition: none !important;
   }
+}
+
+/* Visitor analytics choropleth (D3 SVG) */
+.visitor-choropleth-svg {
+  touch-action: pan-y;
+}
+
+.visitor-choropleth-tooltip {
+  background: hsl(var(--popover));
+  color: hsl(var(--popover-foreground));
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius);
+  box-shadow: 0 4px 12px rgb(0 0 0 / 0.15);
+  padding: 0.5rem 0.75rem;
+  font-size: 0.8125rem;
+  max-width: 200px;
+}
+
+.dark .visitor-choropleth-tooltip {
+  box-shadow: 0 4px 12px rgb(0 0 0 / 0.4);
 }

@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { Github, Sun, Moon, Shield, HelpCircle, BookOpen, MessageSquare } from "lucide-react"
+import { Github, Sun, Moon, Shield, HelpCircle, BookOpen, MessageSquare, Terminal } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -96,6 +96,17 @@ export function AppNavbar() {
                   <BookOpen className="h-3.5 w-3.5" />
                   API Docs
                 </Link>
+              </DropdownMenuItem>
+              <DropdownMenuItem asChild>
+                <a
+                  href="https://github.com/apollo994/annocli"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2"
+                >
+                  <Terminal className="h-3.5 w-3.5" />
+                  CLI (annocli)
+                </a>
               </DropdownMenuItem>
               <DropdownMenuItem asChild>
                 <Link href="/privacy/" className="flex items-center gap-2">

@@ -1,13 +1,17 @@
 "use client"
 
-import { useState, useMemo, useCallback, useEffect } from "react"
+import { useState, useMemo, useCallback } from "react"
 import { useRouter } from "next/navigation"
 import { ArrowLeft, TrendingUp, HelpCircle, ChevronDown, PanelLeft, PanelLeftClose } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { useAnnotationsFiltersStore } from "@/lib/stores/annotations-filters"
 import { useAnnotationSubsetsStore } from "@/lib/stores/annotation-subsets"
-import { useSelectedAnnotationsStore } from "@/lib/stores/selected-annotations"
+import {
+  useFavoritesCart,
+  useActiveCustomAnnotations,
+  usePruneOrphanedCustomAnnotations,
+} from "@/lib/hooks/use-favorites-state"
 import { buildParamsFromFilters } from "@/lib/utils"
 import {
   AnalyticsSidebar,
@@ -20,6 +24,9 @@ import { AnalyticsChartArea } from "@/components/annotations-analytics/analytics
 import { cn } from "@/lib/utils"
 import { formatLabel } from "@/lib/annotations-formatting"
 import type { FiltersState } from "@/lib/stores/annotations-filters"
+import { useMergedFavoriteAnnotations } from "@/lib/hooks/use-merged-favorite-annotations"
+import { useResponsiveSidebar } from "@/lib/hooks/use-responsive-sidebar"
+import { CollapsiblePageSidebar } from "@/components/layout/collapsible-page-sidebar"
 
 const SIDEBAR_WIDTH = 280
 
@@ -68,22 +75,28 @@ export default function AnnotationsAnalyticsPage() {
   const buscoCompleteTo = useAnnotationsFiltersStore(s => s.buscoCompleteTo)
 
   const subsets = useAnnotationSubsetsStore(s => s.subsets)
-  const getSelectedIds = useSelectedAnnotationsStore(s => s.getSelectedIds)
-  const getSelectedAnnotations = useSelectedAnnotationsStore(s => s.getSelectedAnnotations)
+  usePruneOrphanedCustomAnnotations(true)
+  const { favoriteSelections } = useFavoritesCart()
+  const activeCustomAnnotations = useActiveCustomAnnotations()
+
+  const { favoriteAnnotations } = useMergedFavoriteAnnotations({
+    favoriteSelections,
+    customAnnotations: activeCustomAnnotations,
+  })
 
   // ── Page state (lazy init to avoid new array ref on every render) ───────────
   const [selectedIds, setSelectedIds] = useState<string[]>(() => [CURRENT_ENTRY_ID])
   const [entityType, setEntityType] = useState<EntityType>("genes")
-  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const { sidebarOpen, setSidebarOpen, toggleSidebar, closeSidebar, isDesktop } =
+    useResponsiveSidebar()
 
-  // Default sidebar open on desktop, closed on mobile so main content is visible
-  useEffect(() => {
-    const mq = window.matchMedia("(min-width: 768px)")
-    const handler = () => setSidebarOpen(mq.matches)
-    handler()
-    mq.addEventListener("change", handler)
-    return () => mq.removeEventListener("change", handler)
-  }, [])
+  const handleSelectionChange = useCallback(
+    (ids: string[]) => {
+      setSelectedIds(ids)
+      if (!isDesktop) closeSidebar()
+    },
+    [isDesktop, closeSidebar]
+  )
 
   // ── Derived: all sidebar entries (stable deps = no unnecessary new array refs) ─
   const allEntries: AnalyticsEntry[] = useMemo(() => {
@@ -170,49 +183,21 @@ export default function AnnotationsAnalyticsPage() {
     return Object.fromEntries(subsets.map(s => [s.id, buildParamsFromFilters(s.filters)]))
   }, [subsets])
 
-  // ── Favorites (for refs panel and reference lines) ─────────────────────────
-  const favoriteAnnotationIds = useMemo(() => Array.from(getSelectedIds()), [getSelectedIds])
-  const favoriteAnnotations = useMemo(() => getSelectedAnnotations(), [getSelectedAnnotations])
-
   return (
     <div className="flex h-[calc(100vh-4rem)] min-h-0">
-      {/* ── Collapsible filter sets sidebar ──────────────────────────────────── */}
-      <>
-        {/* Backdrop when sidebar is open on mobile */}
-        <button
-          type="button"
-          aria-hidden="true"
-          className={cn(
-            "fixed inset-0 z-40 bg-black/30 transition-opacity md:hidden",
-            sidebarOpen ? "opacity-100" : "pointer-events-none opacity-0"
-          )}
-          onClick={() => setSidebarOpen(false)}
+      <CollapsiblePageSidebar
+        open={sidebarOpen}
+        onOpenChange={setSidebarOpen}
+        width={SIDEBAR_WIDTH}
+        title="Filter sets"
+      >
+        <AnalyticsSidebar
+          entries={allEntries}
+          selectedIds={selectedIds}
+          onSelectionChange={handleSelectionChange}
+          maxSelected={MAX_SELECTED}
         />
-        <aside
-          className={cn(
-            "flex-shrink-0 overflow-y-auto border-r border-border bg-background transition-[transform,width] duration-200 ease-out",
-            "fixed left-0 top-[4rem] bottom-0 z-50 w-[var(--analytics-sidebar-width)] flex flex-col md:relative md:left-auto md:top-auto md:bottom-auto md:z-auto",
-            sidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0",
-            sidebarOpen ? "md:w-[var(--analytics-sidebar-width)]" : "md:w-0 md:overflow-hidden"
-          )}
-          style={{ "--analytics-sidebar-width": `${SIDEBAR_WIDTH}px` } as React.CSSProperties}
-        >
-          <div className="w-full h-full min-w-0 flex flex-col">
-            <div className="flex items-center justify-between px-3 py-2 border-b border-border md:hidden shrink-0">
-              <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Filter sets</span>
-              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setSidebarOpen(false)} aria-label="Close sidebar">
-                <PanelLeftClose className="h-4 w-4" />
-              </Button>
-            </div>
-            <AnalyticsSidebar
-              entries={allEntries}
-              selectedIds={selectedIds}
-              onSelectionChange={setSelectedIds}
-              maxSelected={MAX_SELECTED}
-            />
-          </div>
-        </aside>
-      </>
+      </CollapsiblePageSidebar>
 
       {/* ── Main content (header + filter pills + chart) ─────────────────────── */}
       <main className="flex-1 min-w-0 flex flex-col overflow-hidden">
@@ -224,11 +209,12 @@ export default function AnnotationsAnalyticsPage() {
                 variant="ghost"
                 size="sm"
                 className="h-8 px-2 gap-1.5 shrink-0"
-                onClick={() => setSidebarOpen(v => !v)}
+                onClick={toggleSidebar}
                 aria-label={sidebarOpen ? "Close filter sets" : "Open filter sets"}
                 title={sidebarOpen ? "Close filter sets" : "Open filter sets"}
               >
                 {sidebarOpen ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeft className="h-4 w-4" />}
+                <span className="text-sm sm:hidden">{sidebarOpen ? "Hide" : "Sets"}</span>
                 <span className="hidden sm:inline text-sm">{sidebarOpen ? "Hide" : "Filter sets"}</span>
               </Button>
               <div className="h-5 w-px bg-border/60 shrink-0 hidden sm:block" />
@@ -261,7 +247,9 @@ export default function AnnotationsAnalyticsPage() {
 
         {/* Row 2: Active filter set pills (same horizontal padding as chart area) */}
         {selectedEntries.length > 0 && (
-          <div className="flex-shrink-0 flex items-center gap-2 px-4 py-2 sm:px-5 border-b border-border/60 bg-muted/20 flex-wrap">
+          <div
+            className="flex-shrink-0 flex items-center gap-2 px-3 py-2 sm:px-5 border-b border-border/60 bg-muted/20 flex-wrap"
+          >
             {selectedEntries.map((entry) => (
               <FilterPill
                 key={entry.id}
@@ -279,7 +267,6 @@ export default function AnnotationsAnalyticsPage() {
             selectedEntries={selectedEntries}
             entityType={entityType}
             onEntityTypeChange={setEntityType}
-            favoriteAnnotationIds={favoriteAnnotationIds}
             favoriteAnnotations={favoriteAnnotations}
             buildCurrentParams={buildCurrentParams}
             buildFavoritesParams={buildFavoritesParams}

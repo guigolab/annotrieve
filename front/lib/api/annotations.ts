@@ -1,5 +1,7 @@
 import { apiGet, apiPost, buildQuery, type Query } from './base'
+import { getApiBase, joinUrl } from '@/lib/config/env'
 import type { AnnotationRecord, Pagination } from './types'
+import { contigsFileUrl, resolveChrAliasesFileUrl } from './files'
 
 export interface FetchAnnotationsParams extends Query {
   filter?: string
@@ -23,6 +25,20 @@ export interface FetchAnnotationsParams extends Query {
 
 export function listAnnotations(params: FetchAnnotationsParams) {
   return apiGet<Pagination<AnnotationRecord>>('/annotations', params)
+}
+
+/** Fetch annotations by MD5 checksums via POST (avoids URL length limits for large favorite lists). */
+export function listAnnotationsByMd5Checksums(
+  md5_checksums: string[],
+  options?: { limit?: number; offset?: number },
+) {
+  const limit = options?.limit ?? md5_checksums.length + 1
+  const offset = options?.offset ?? 0
+  return apiPost<Pagination<AnnotationRecord>>('/annotations', {
+    md5_checksums,
+    limit,
+    offset,
+  })
 }
 
 export async function downloadAnnotationsReport(params: FetchAnnotationsParams): Promise<Blob> {
@@ -125,10 +141,82 @@ export function getMappedRegions(md5_checksum: string, offset = 0, limit = 20) {
   return apiGet<Pagination<MappedRegion>>(`/annotations/${md5_checksum}/contigs/aliases`, { offset, limit })
 }
 
-export function downloadContigs(md5_checksum: string): Promise<Response> {
-  const API_BASE = 'https://genome.crg.es/annotrieve/api/v0'
-  const url = `${API_BASE}/annotations/${md5_checksum}/contigs`
-  return fetch(url, { method: 'GET', headers: { 'Accept': 'text/plain' } })
+/**
+ * Merge assembly chr_aliases.tsv (when present) with paginated contigs from disk/API.
+ */
+export async function fetchAnnotationReferenceOptions(
+  taxid: string,
+  assemblyAccession: string,
+  annotationId: string,
+  pairedAssemblyAccession?: string | null,
+): Promise<MappedRegion[]> {
+  const bySeqId = new Map<string, Set<string>>()
+
+  try {
+    const aliasUrl = await resolveChrAliasesFileUrl(
+      taxid,
+      assemblyAccession,
+      pairedAssemblyAccession,
+    )
+    const aliasResponse = await fetch(aliasUrl)
+    if (aliasResponse.ok) {
+      const text = await aliasResponse.text()
+      for (const line of text.split('\n')) {
+        const parts = line.split('\t').map((p) => p.trim()).filter(Boolean)
+        if (!parts.length) continue
+        const seqId = parts[0]
+        const aliasSet = bySeqId.get(seqId) ?? new Set<string>()
+        for (const part of parts) {
+          aliasSet.add(part)
+        }
+        bySeqId.set(seqId, aliasSet)
+      }
+    }
+  } catch {
+    // chr_aliases.tsv is optional for contig-level assemblies
+  }
+
+  const PAGE_SIZE = 500
+  let offset = 0
+  let total = Infinity
+  while (offset < total) {
+    const response = await getMappedRegions(annotationId, offset, PAGE_SIZE)
+    const results = response.results ?? []
+    if (!results.length) break
+    for (const item of results) {
+      const aliasSet = bySeqId.get(item.sequence_id) ?? new Set<string>()
+      aliasSet.add(item.sequence_id)
+      for (const alias of item.aliases ?? []) {
+        if (alias) aliasSet.add(alias)
+      }
+      bySeqId.set(item.sequence_id, aliasSet)
+    }
+    if (typeof response.total === 'number') {
+      total = response.total
+    }
+    offset += results.length
+    if (results.length < PAGE_SIZE) break
+  }
+
+  return Array.from(bySeqId.entries()).map(([sequence_id, aliases]) => ({
+    sequence_id,
+    annotation_id: annotationId,
+    aliases: [...aliases],
+  }))
+}
+
+export function downloadContigs(
+  md5_checksum: string,
+  bgzippedPath?: string | null,
+): Promise<Response> {
+  if (bgzippedPath) {
+    return fetch(contigsFileUrl(bgzippedPath), {
+      method: 'GET',
+      headers: { Accept: 'text/plain' },
+    })
+  }
+  const url = `${getApiBase()}/annotations/${md5_checksum}/contigs`
+  return fetch(url, { method: 'GET', headers: { Accept: 'text/plain' } })
 }
 
 // Gene Stats API
@@ -296,5 +384,58 @@ export function getAnnotationsAggregatesByTaxonRank(rank: string) {
   return apiGet<AnnotationsAggregatesByTaxonResponse>(
     '/annotations/aggregates/taxons',
     { rank }
+  )
+}
+
+// Custom GFF upload APIs
+
+export interface UploadGffResponse {
+  task_id: string
+  remaining_quota: number
+}
+
+export function uploadCustomGff(file: File, customName: string): Promise<UploadGffResponse> {
+  const formData = new FormData()
+  formData.append('file', file)
+  formData.append('custom_name', customName)
+
+  return fetch(joinUrl(getApiBase(), '/annotations/upload-gff'), {
+    method: 'POST',
+    body: formData,
+  }).then(async (res) => {
+    if (!res.ok) {
+      const text = await res.text()
+      throw new Error(text || `Upload failed with status ${res.status}`)
+    }
+    return res.json() as Promise<UploadGffResponse>
+  })
+}
+
+export interface UploadJobStatus {
+  task_id: string
+  state: string
+  meta?: Record<string, any>
+  result?: any
+  error?: string
+}
+
+export function getUploadJobStatus(taskId: string) {
+  return apiGet<UploadJobStatus>(
+    `/annotations/upload-gff/jobs/${encodeURIComponent(taskId)}`,
+    undefined,
+    { cache: 'no-store', headers: { 'Cache-Control': 'no-cache' } },
+  )
+}
+
+export interface UploadRateLimitStatus {
+  used: number
+  remaining: number
+}
+
+export function getUploadRateLimit() {
+  return apiGet<UploadRateLimitStatus>(
+    '/annotations/upload-gff/rate-limit',
+    undefined,
+    { cache: 'no-store', headers: { 'Cache-Control': 'no-cache' } },
   )
 }

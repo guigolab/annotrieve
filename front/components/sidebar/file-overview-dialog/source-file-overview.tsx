@@ -3,10 +3,10 @@
 import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Database } from "lucide-react"
-import type { Annotation } from "@/lib/types"
+import type { PortalAnnotation } from "@/lib/types"
 
 interface SourceFileOverviewProps {
-  annotation: Annotation
+  annotation: PortalAnnotation
 }
 
 export function SourceFileOverview({ annotation }: SourceFileOverviewProps) {

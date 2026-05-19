@@ -9,12 +9,19 @@ import {
   MessageSquare,
   Github,
   Mail,
+  Terminal,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 const RESOURCE_LINKS = [
   { href: "/faqs/", label: "FAQs", icon: HelpCircle },
   { href: "/api-docs/", label: "API Docs", icon: BookOpen },
+  {
+    href: "https://github.com/apollo994/annocli",
+    label: "CLI (annocli)",
+    icon: Terminal,
+    external: true,
+  },
   { href: "/privacy/", label: "Privacy Policy", icon: Shield },
 ]
 
@@ -81,9 +88,9 @@ export function HomeFooter() {
           <div>
             <SectionHeading>Resources</SectionHeading>
             <ul className="space-y-2">
-              {RESOURCE_LINKS.map(({ href, label, icon: Icon }) => (
+              {RESOURCE_LINKS.map(({ href, label, icon: Icon, external }) => (
                 <li key={label}>
-                  <FooterLink href={href}>
+                  <FooterLink href={href} external={external}>
                     <Icon className="mr-1.5 inline-block h-3.5 w-3.5" />
                     {label}
                   </FooterLink>

@@ -9,7 +9,13 @@ celerybeat-schedule
 /server/static/tree.json
 test.py
 post_stats.py
+run_backfill_parent_id.py
 Pipfile.lock
 Pipfile
 test_logs/
 .cursor/
+logs/
+annotrieve_missing_from_tracker.tsv
+broken_source_urls.jsonl
+TODO.txt
+.pytest_cache/

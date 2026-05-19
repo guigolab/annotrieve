@@ -1011,7 +1011,7 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
-  /assemblies/{assembly_accession}/chr_aliases:
+  /assemblies/{assembly_accession}/chr-aliases:
     get:
       tags:
         - "assemblies"
@@ -1037,27 +1037,115 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
-  /assemblies/{assembly_accession}/assembled_molecules:
+  /assemblies/{assembly_accession}/chr_aliases:
     get:
       tags:
         - "assemblies"
-      operationId: "getAssembledMolecules"
-      summary: "List assembled molecules for an assembly"
+      operationId: "getChromosomeAliasesDeprecated"
+      summary: "Download chromosome alias table (deprecated)"
+      deprecated: true
+      description: "Deprecated. Use /assemblies/{assembly_accession}/chr-aliases instead. Streams a TSV file listing chromosome aliases for the assembly (chr_name, sequence_name, GenBank accession, RefSeq accession, UCSC name, aliases)."
       parameters:
         - name: assembly_accession
           in: path
           required: true
           schema:
             type: string
-        - $ref: "#/components/parameters/offset"
-        - $ref: "#/components/parameters/limit"
       responses:
         "200":
-          description: "Assembled molecules"
+          description: "TSV stream"
+          content:
+            text/tab-separated-values:
+              schema:
+                type: string
+                description: "Tab-separated alias table"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /assemblies/{assembly_accession}/assembled-molecules:
+    get:
+      tags:
+        - "assemblies"
+      operationId: "getAssembledMolecules"
+      summary: "Download chromosomes.json for an assembly"
+      description: "Streams chromosomes.json from LOCAL_ANNOTATIONS_DIR ({taxid}/{assembly_accession}/chromosomes.json), or from the paired assembly when the primary file is missing."
+      parameters:
+        - name: assembly_accession
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: offset
+          in: query
+          deprecated: true
+          description: "Deprecated; ignored. Kept for backward compatibility."
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: limit
+          in: query
+          deprecated: true
+          description: "Deprecated; ignored. Kept for backward compatibility."
+          schema:
+            type: integer
+            minimum: 1
+            default: 20
+      responses:
+        "200":
+          description: "chromosomes.json (array of NCBI assembly report molecules)"
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/PaginatedGenomicSequencesResponse"
+                type: array
+                items:
+                  $ref: "#/components/schemas/ChromosomeReportEntry"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /assemblies/{assembly_accession}/assembled_molecules:
+    get:
+      tags:
+        - "assemblies"
+      operationId: "getAssembledMoleculesDeprecatedUnderscore"
+      summary: "Download chromosomes.json for an assembly (deprecated)"
+      deprecated: true
+      description: "Deprecated. Use /assemblies/{assembly_accession}/assembled-molecules instead. Streams chromosomes.json from LOCAL_ANNOTATIONS_DIR."
+      parameters:
+        - name: assembly_accession
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: offset
+          in: query
+          deprecated: true
+          description: "Deprecated; ignored. Kept for backward compatibility."
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: limit
+          in: query
+          deprecated: true
+          description: "Deprecated; ignored. Kept for backward compatibility."
+          schema:
+            type: integer
+            minimum: 1
+            default: 20
+      responses:
+        "200":
+          description: "chromosomes.json (array of NCBI assembly report molecules)"
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ChromosomeReportEntry"
         "404":
           $ref: "#/components/responses/NotFound"
         "500":
@@ -1741,6 +1829,8 @@ components:
             type: string
         mapped_regions:
           type: array
+          deprecated: true
+          description: Deprecated; use GET /annotations/{md5}/contigs/aliases (AnnotationSequenceMap).
           items:
             type: string
         source_file_info:
@@ -2184,6 +2274,29 @@ components:
         number_of_organelles:
           type: integer
 
+    ChromosomeReportEntry:
+      type: object
+      description: "One molecule row from chromosomes.json (NCBI assembly report)."
+      properties:
+        canonical_id:
+          type: string
+        chr_name:
+          type: string
+          description: "NCBI assembly report Assigned-Molecule (e.g. 1, 2, MT)"
+        sequence_name:
+          type: string
+        ucsc_style_name:
+          type: string
+        genbank_accession:
+          type: string
+        refseq_accession:
+          type: string
+        sequence_role:
+          type: string
+          description: "NCBI assembly report Sequence-Role (e.g. assembled-molecule)"
+        length:
+          type: integer
+
     GenomicSequence:
       type: object
       properties:
@@ -2193,6 +2306,10 @@ components:
           type: string
         chr_name:
           type: string
+          description: NCBI assembly report Assigned-Molecule (e.g. 1, 2, MT)
+        sequence_role:
+          type: string
+          description: NCBI assembly report Sequence-Role (e.g. assembled-molecule, alt-scaffold)
         sequence_name:
           type: string
         ucsc_style_name:

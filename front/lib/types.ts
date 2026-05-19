@@ -61,13 +61,198 @@ export interface Assembly {
   annotationCount: number
 }
 
-export interface Annotation {
+export interface FeaturesSummary {
+  root_type_counts: Record<string, number>
+  attribute_keys: string[]
+  types: string[]
+  sources: string[]
+  biotypes: string[]
+  root_types: string[]
+  types_missing_id: string[]
+  has_biotype: boolean
+  has_cds: boolean
+  has_exon: boolean
+}
+
+export interface FeaturesStatistics {
+  gene_category_stats?: Record<string, {
+    total_count?: number
+    length_stats?: {
+      min?: number
+      max?: number
+      mean?: number
+    }
+    biotype_counts?: Record<string, number>
+    transcript_type_counts?: Record<string, number>
+  }>
+  transcript_type_stats?: Record<string, {
+    total_count?: number
+    length_stats?: {
+      min?: number
+      max?: number
+      mean?: number
+    }
+    biotype_counts?: Record<string, number>
+    associated_genes?: {
+      total_count?: number
+      gene_categories?: Record<string, number>
+    }
+    exon_stats?: {
+      total_count?: number
+      length?: {
+        min?: number
+        max?: number
+        mean?: number
+      }
+      concatenated_length?: {
+        min?: number
+        max?: number
+        mean?: number
+      }
+    }
+    cds_stats?: {
+      total_count?: number
+      length?: {
+        min?: number
+        max?: number
+        mean?: number
+      }
+      concatenated_length?: {
+        min?: number
+        max?: number
+        mean?: number
+      }
+    }
+  }>
+  /** @deprecated Use gene_category_stats['coding'] instead */
+  coding_genes?: {
+    count?: number
+    length_stats?: {
+      min?: number
+      max?: number
+      mean?: number
+      median?: number
+    }
+    transcripts?: {
+      count?: number
+      per_gene?: number
+      types?: Record<string, any>
+    }
+    features?: {
+      exons?: {
+        count?: number
+        length_stats?: {
+          mean?: number
+          median?: number
+        }
+      }
+      cds?: {
+        count?: number
+        length_stats?: {
+          mean?: number
+          median?: number
+        }
+      }
+      introns?: {
+        count?: number
+        length_stats?: {
+          mean?: number
+          median?: number
+        }
+      }
+    }
+  }
+  /** @deprecated Use gene_category_stats['non_coding'] instead */
+  non_coding_genes?: {
+    count?: number
+    length_stats?: {
+      min?: number
+      max?: number
+      mean?: number
+      median?: number
+    }
+    transcripts?: {
+      count?: number
+      per_gene?: number
+      types?: Record<string, any>
+    }
+    features?: {
+      exons?: {
+        count?: number
+        length_stats?: {
+          mean?: number
+          median?: number
+        }
+      }
+      cds?: {
+        count?: number
+        length_stats?: {
+          mean?: number
+          median?: number
+        }
+      }
+      introns?: {
+        count?: number
+        length_stats?: {
+          mean?: number
+          median?: number
+        }
+      }
+    }
+  }
+  /** @deprecated Use gene_category_stats['pseudogene'] instead */
+  pseudogenes?: {
+    count?: number
+    length_stats?: {
+      min?: number
+      max?: number
+      mean?: number
+      median?: number
+    }
+    transcripts?: {
+      count?: number
+      per_gene?: number
+      types?: Record<string, any>
+    }
+    features?: {
+      exons?: {
+        count?: number
+        length_stats?: {
+          mean?: number
+          median?: number
+        }
+      }
+      cds?: {
+        count?: number
+        length_stats?: {
+          mean?: number
+          median?: number
+        }
+      }
+      introns?: {
+        count?: number
+        length_stats?: {
+          mean?: number
+          median?: number
+        }
+      }
+    }
+  }
+}
+
+export interface AnnotationBase {
+  annotation_id: string
+  features_summary: FeaturesSummary
+  features_statistics?: FeaturesStatistics
+}
+
+export interface PortalAnnotation extends AnnotationBase {
+  kind: "portal"
   taxid: string
   taxon_lineage: string[]
   organism_name: string
   assembly_accession: string
   assembly_name: string
-  annotation_id: string
   busco?: {
     busco_lineage?: string
     busco_version?: string
@@ -103,186 +288,17 @@ export interface Annotation {
       method: string
     }
   }
-  features_summary: {
-    root_type_counts: Record<string, number>
-    attribute_keys: string[]
-    types: string[]
-    sources: string[]
-    biotypes: string[]
-    root_types: string[]
-    types_missing_id: string[]
-    has_biotype: boolean
-    has_cds: boolean
-    has_exon: boolean
-  }
-  features_statistics?: {
-    // New structure - primary fields to use
-    gene_category_stats?: Record<string, {
-      total_count?: number
-      length_stats?: {
-        min?: number
-        max?: number
-        mean?: number
-      }
-      biotype_counts?: Record<string, number>
-      transcript_type_counts?: Record<string, number>
-    }>
-    transcript_type_stats?: Record<string, {
-      total_count?: number
-      length_stats?: {
-        min?: number
-        max?: number
-        mean?: number
-      }
-      biotype_counts?: Record<string, number>
-      associated_genes?: {
-        total_count?: number
-        gene_categories?: Record<string, number>
-      }
-      exon_stats?: {
-        total_count?: number
-        length?: {
-          min?: number
-          max?: number
-          mean?: number
-        }
-        concatenated_length?: {
-          min?: number
-          max?: number
-          mean?: number
-        }
-      }
-      cds_stats?: {
-        total_count?: number
-        length?: {
-          min?: number
-          max?: number
-          mean?: number
-        }
-        concatenated_length?: {
-          min?: number
-          max?: number
-          mean?: number
-        }
-      }
-    }>
-    // Deprecated: Old fields kept for backwards compatibility only - do not use
-    /** @deprecated Use gene_category_stats['coding'] instead */
-    coding_genes?: {
-      count?: number
-      length_stats?: {
-        min?: number
-        max?: number
-        mean?: number
-        median?: number
-      }
-      transcripts?: {
-        count?: number
-        per_gene?: number
-        types?: Record<string, any>
-      }
-      features?: {
-        exons?: {
-          count?: number
-          length_stats?: {
-            mean?: number
-            median?: number
-          }
-        }
-        cds?: {
-          count?: number
-          length_stats?: {
-            mean?: number
-            median?: number
-          }
-        }
-        introns?: {
-          count?: number
-          length_stats?: {
-            mean?: number
-            median?: number
-          }
-        }
-      }
-    }
-    /** @deprecated Use gene_category_stats['non_coding'] instead */
-    non_coding_genes?: {
-      count?: number
-      length_stats?: {
-        min?: number
-        max?: number
-        mean?: number
-        median?: number
-      }
-      transcripts?: {
-        count?: number
-        per_gene?: number
-        types?: Record<string, any>
-      }
-      features?: {
-        exons?: {
-          count?: number
-          length_stats?: {
-            mean?: number
-            median?: number
-          }
-        }
-        cds?: {
-          count?: number
-          length_stats?: {
-            mean?: number
-            median?: number
-          }
-        }
-        introns?: {
-          count?: number
-          length_stats?: {
-            mean?: number
-            median?: number
-          }
-        }
-      }
-    }
-    /** @deprecated Use gene_category_stats['pseudogene'] instead */
-    pseudogenes?: {
-      count?: number
-      length_stats?: {
-        min?: number
-        max?: number
-        mean?: number
-        median?: number
-      }
-      transcripts?: {
-        count?: number
-        per_gene?: number
-        types?: Record<string, any>
-      }
-      features?: {
-        exons?: {
-          count?: number
-          length_stats?: {
-            mean?: number
-            median?: number
-          }
-        }
-        cds?: {
-          count?: number
-          length_stats?: {
-            mean?: number
-            median?: number
-          }
-        }
-        introns?: {
-          count?: number
-          length_stats?: {
-            mean?: number
-            median?: number
-          }
-        }
-      }
-    }
-  }
 }
+
+export interface CustomAnnotation extends AnnotationBase {
+  kind: "custom"
+  custom_name: string
+  uploaded_md5: string
+  uploaded_at: string
+  uploaded_file_size: number
+}
+
+export type Annotation = PortalAnnotation | CustomAnnotation
 
 export interface SearchResult {
   type: "taxon" | "organism" | "assembly"

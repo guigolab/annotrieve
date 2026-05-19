@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useRef, useCallback } from "react"
-import { ChevronDown, Network, BookOpen, SlidersHorizontal, GripVertical, LayoutDashboard, BarChart2 } from "lucide-react"
+import { ChevronDown, Network, BookOpen, SlidersHorizontal, GripVertical, HelpCircle, LayoutDashboard, BarChart2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   Popover,
@@ -63,6 +63,10 @@ export interface FloatingVizStripProps {
   onTabChange: (tab: ViewTab) => void
   /** Slot for search (ExpandableSearch) so it stays in page and can use page state */
   searchSlot: React.ReactNode
+  /** Optional title shown in-strip on mobile only (when the standalone header is hidden) */
+  title?: string
+  /** Help button handler shown in-strip on mobile only */
+  onHelpClick?: () => void
 }
 
 export function FloatingVizStrip({
@@ -78,6 +82,8 @@ export function FloatingVizStrip({
   activeTab,
   onTabChange,
   searchSlot,
+  title,
+  onHelpClick,
 }: FloatingVizStripProps) {
   const [rootOpen, setRootOpen] = useState(false)
   const [leafRankOpen, setLeafRankOpen] = useState(false)
@@ -175,8 +181,13 @@ export function FloatingVizStrip({
     <div
       ref={stripRef}
       className={cn(
-        "pointer-events-auto absolute top-4 w-fit",
-        position === null ? "left-1/2 -translate-x-1/2" : ""
+        "pointer-events-auto absolute",
+        // Mobile: full-width, flush to top
+        "top-0 left-0 right-0",
+        // Desktop: floating pill centered (or dragged)
+        position === null
+          ? "md:top-4 md:left-1/2 md:-translate-x-1/2 md:right-auto md:w-fit"
+          : "md:right-auto md:w-fit"
       )}
       style={
         position
@@ -188,17 +199,38 @@ export function FloatingVizStrip({
         className={cn(
           GLASS_PANEL,
           GLASS_PANEL_PADDING,
-          "flex flex-wrap items-center gap-2 shadow-md"
+          "flex items-center gap-2 shadow-md",
+          // Mobile: full-width, flush edges, horizontal scroll
+          "rounded-none border-x-0 border-t-0 overflow-x-auto flex-nowrap",
+          // Desktop: wrap, rounded, no overflow
+          "md:flex-wrap md:rounded-md md:border-x md:border-t md:overflow-visible"
         )}
         role="toolbar"
         aria-label="Visualization controls"
       >
-      {/* Drag handle */}
+      {/* Mobile title + help (hidden on desktop) */}
+      {title && (
+        <div className="flex items-center gap-1.5 shrink-0 md:hidden">
+          <span className="text-sm font-medium text-foreground">{title}</span>
+          {onHelpClick && (
+            <button
+              type="button"
+              aria-label="Help"
+              className="text-muted-foreground hover:text-foreground transition-colors p-0.5 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              onClick={onHelpClick}
+            >
+              <HelpCircle className="h-3.5 w-3.5" aria-hidden />
+            </button>
+          )}
+          <div className="w-px h-5 bg-border/60 shrink-0" aria-hidden />
+        </div>
+      )}
+      {/* Drag handle (desktop only) */}
       <button
         type="button"
         onMouseDown={handleDragStart}
         className={cn(
-          "flex items-center justify-center rounded-md p-[5px] text-muted-foreground hover:text-foreground hover:bg-muted cursor-grab active:cursor-grabbing touch-none",
+          "hidden md:flex items-center justify-center rounded-md p-[5px] text-muted-foreground hover:text-foreground hover:bg-muted cursor-grab active:cursor-grabbing touch-none",
           "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         )}
         aria-label="Drag to move strip"
@@ -481,3 +513,5 @@ export function FloatingVizStrip({
     </div>
   )
 }
+
+export { formatCount }

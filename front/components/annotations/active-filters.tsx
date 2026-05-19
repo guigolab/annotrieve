@@ -3,7 +3,7 @@
 import { useCallback, useMemo, useState, useEffect, useRef, type ReactNode } from "react"
 import { createPortal } from "react-dom"
 import { useRouter } from "next/navigation"
-import { Database, Network, Filter, Save, ChevronLeft, ChevronRight } from "lucide-react"
+import { Database, Network, Filter, Save, SlidersHorizontal, PanelLeftClose, Trash2 } from "lucide-react"
 import { useAnnotationsFiltersStore, type FiltersState } from "@/lib/stores/annotations-filters"
 import { useAnnotationSubsetsStore } from "@/lib/stores/annotation-subsets"
 import { useShownTooltipsStore } from "@/lib/stores/shown-tooltips"
@@ -17,9 +17,11 @@ import { useUIStore } from "@/lib/stores/ui"
 
 interface ActiveFiltersProps {
   readOnly?: boolean
+  /** When true, the filter toggle button is omitted (caller renders it separately) */
+  hideToggle?: boolean
 }
 
-export function ActiveFilters({ readOnly = false }: ActiveFiltersProps = {}) {
+export function ActiveFilters({ readOnly = false, hideToggle = false }: ActiveFiltersProps = {}) {
   const router = useRouter()
   const store = useAnnotationsFiltersStore()
   const addSubset = useAnnotationSubsetsStore((state) => state.addSubset)
@@ -426,6 +428,9 @@ export function ActiveFilters({ readOnly = false }: ActiveFiltersProps = {}) {
 
   const hasActiveFilters = store.hasActiveFilters()
 
+  // When used as chips-only row (hideToggle), don't render anything if there are no chips
+  // (caller can use this to conditionally render the entire row)
+
   // Compute current filters hash only when filters change
   const currentFiltersHash = useMemo(() => {
     const currentFilters: FiltersState = {
@@ -562,30 +567,30 @@ export function ActiveFilters({ readOnly = false }: ActiveFiltersProps = {}) {
     )
   )
 
+  if (hideToggle && filterChips.length === 0) return null
+
   return (
     <>
       <div className="flex items-center gap-3 w-full overflow-x-auto mb-2">
-        {/* Toggle Filter Button - always visible on extreme left (except when readOnly) */}
-        {!readOnly && (
+        {/* Toggle Filter Button — hidden when caller provides its own toggle */}
+        {!readOnly && !hideToggle && (
           <Button
             variant="outline"
             size="sm"
             onClick={handleFiltersToggle}
             aria-pressed={isSidebarOpen}
-            title={
-              isSidebarOpen ? 'Hide filters sidebar' : 'Show filters sidebar'
-            }
+            title={isSidebarOpen ? "Hide filters sidebar" : "Show filters sidebar"}
           >
             {isSidebarOpen ? (
-              <ChevronLeft className="h-4 w-4" />
+              <PanelLeftClose className="h-4 w-4" />
             ) : (
-              <ChevronRight className="h-4 w-4" />
+              <SlidersHorizontal className="h-4 w-4" />
             )}
             Filters
           </Button>
         )}
 
-        <div className="flex items-center gap-2 overflow-x-auto flex-1">
+        <div className="flex items-center gap-2 overflow-x-auto flex-1 min-w-0">
           {filterChips.map((chip) => {
             const showTooltip = tooltipKeys.has(chip.key) && chip.onClick
             const isTaxon = chip.key.startsWith("taxon-")
@@ -621,34 +626,32 @@ export function ActiveFilters({ readOnly = false }: ActiveFiltersProps = {}) {
             )
           })}
         </div>
-        {!readOnly && (
+        {!readOnly && hasActiveFilters && (
           <div className="flex items-center gap-2 flex-shrink-0">
-            <Button 
-              variant="outline" 
-              size="sm" 
+            <Button
+              variant="outline"
+              size="sm"
               onClick={handleSaveCurrent}
-              disabled={!hasActiveFilters || isSaveDisabled}
+              disabled={isSaveDisabled}
               title={
-                !hasActiveFilters
-                  ? "No filters to save"
-                  : isSaveDisabled 
-                    ? matchingSubset 
-                      ? `Filters match existing set: "${matchingSubset.name}"`
-                      : "Cannot save duplicate filters"
-                    : "Save current filters as a new set"
+                isSaveDisabled
+                  ? matchingSubset
+                    ? `Filters match existing set: "${matchingSubset.name}"`
+                    : "Cannot save duplicate filters"
+                  : "Save current filters as a new set"
               }
             >
               <Save className="h-4 w-4" />
-              Save Filters
+              <span className="hidden sm:inline ml-1.5">Save Filters</span>
             </Button>
-            <Button 
-              variant="secondary" 
-              size="sm" 
+            <Button
+              variant="secondary"
+              size="sm"
               onClick={clearAllFilters}
-              disabled={!hasActiveFilters}
-              title={!hasActiveFilters ? "No filters to clear" : "Clear all filters"}
+              title="Clear all filters"
             >
-              Clear all
+              <Trash2 className="h-4 w-4" />
+              <span className="hidden sm:inline ml-1.5">Clear all</span>
             </Button>
           </div>
         )}

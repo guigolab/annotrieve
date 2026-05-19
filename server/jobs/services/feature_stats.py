@@ -1,5 +1,16 @@
-from db.embedded_documents import GFFStats, GeneCategoryFeatureStats, GenericLengthStats, AssociatedGenesStats, GenericTranscriptTypeStats, SubFeatureStats as SubFeatureStatsDoc
+from typing import Iterable
+from db.embedded_documents import (
+    GFFStats,
+    GeneCategoryFeatureStats,
+    GenericLengthStats,
+    AssociatedGenesStats,
+    GenericTranscriptTypeStats,
+    SubFeatureStats as SubFeatureStatsDoc,
+)
 from helpers import pysam_helper
+
+
+MISSING_BIOTYPE = "biotype_missing"
 
 GENE_CODES = set([
     "gene",
@@ -44,15 +55,13 @@ DNA_REGION_CODES = set([
 ])
 
 
-def compute_features_statistics(bgzipped_path: str) -> GFFStats:
+def _compute_features_statistics_from_lines(lines: Iterable[str]) -> GFFStats:
     """
-    Compute the feature statistics using logic from verify.py.
-    Processes by seqid boundaries for memory efficiency.
-    Returns GFFStats with only the new fields: gene_category_stats and transcript_type_stats.
+    Internal helper that computes statistics from an iterable of GFF lines.
     """
     from collections import defaultdict
     from array import array
-    
+
     # Helper classes for tracking stats (similar to verify.py)
     class FeatureStats:
         __slots__ = ('total_count', 'mean_length', 'min_length', 'max_length', 'sum_lengths')
@@ -247,8 +256,9 @@ def compute_features_statistics(bgzipped_path: str) -> GFFStats:
                     continue
                 
                 gene_ftype = feature_type.lower()
-                gene_biotype = (attr.get('biotype') or attr.get('gene_biotype')).lower()
-                
+                gene_biotype = (attr.get('biotype') or attr.get('gene_biotype') or 
+                                   attr.get('type')).lower()
+                gene_biotype = gene_biotype if gene_biotype else MISSING_BIOTYPE                
                 if gene_id not in gene_info:
                     gene_info[gene_id] = {
                         'feature_type': gene_ftype,
@@ -269,7 +279,8 @@ def compute_features_statistics(bgzipped_path: str) -> GFFStats:
                     
                     gene_ftype = feature_type.lower()
                     gene_biotype = (attr.get('biotype') or attr.get('gene_biotype') or 
-                                   attr.get('type') or '').lower()
+                                   attr.get('type'))
+                    gene_biotype = gene_biotype.lower() if gene_biotype else MISSING_BIOTYPE
                     
                     if gene_id not in gene_info:
                         gene_info[gene_id] = {
@@ -286,10 +297,14 @@ def compute_features_statistics(bgzipped_path: str) -> GFFStats:
             has_cds = gene_id in gene_has_cds
             has_exon = gene_id in gene_has_exon
             
+            related_biotype = None
+            #handle missing biotypes 
             if ftype == 'pseudogene':
                 category = 'pseudogene'
+                related_biotype = 'pseudogene'
             elif has_cds or biotype == 'protein_coding':
                 category = 'coding'
+                related_biotype = 'protein_coding'
             elif has_exon:
                 category = 'non_coding'
             else:
@@ -298,7 +313,7 @@ def compute_features_statistics(bgzipped_path: str) -> GFFStats:
             gene_categories[category].count += 1
             gene_categories[category].length_stats.update_length(length)
             
-            biotype_key = biotype if biotype else 'biotype_missing'
+            biotype_key = biotype if biotype else MISSING_BIOTYPE
             gene_categories[category].biotype_counts[biotype_key] += 1
             
             gene_info[gene_id]['category'] = category
@@ -349,7 +364,7 @@ def compute_features_statistics(bgzipped_path: str) -> GFFStats:
                         ts.gene_categories[gene_category].add(ts_gene)
                         gene_categories[gene_category].transcript_type_counts[ts_type] += 1
             
-            biotype_key = ts_biotype if ts_biotype else 'biotype_missing'
+            biotype_key = ts_biotype if ts_biotype else MISSING_BIOTYPE
             ts.biotype_counts[biotype_key] += 1
     
     # Main processing loop - accumulate lines across seqids until threshold
@@ -358,8 +373,8 @@ def compute_features_statistics(bgzipped_path: str) -> GFFStats:
     seqid_lines = []
     line_counter = 0
     
-    for line in pysam_helper.stream_tabix_gff_file(bgzipped_path):
-        if line.startswith('#') or not line.strip():
+    for line in lines:
+        if line.startswith("#") or not line.strip():
             continue
         
         f = line.rstrip('\n').split('\t')
@@ -481,5 +496,15 @@ def compute_features_statistics(bgzipped_path: str) -> GFFStats:
     
     return GFFStats(
         gene_category_stats=gene_category_stats_dict,
-        transcript_type_stats=transcript_type_stats_dict
+        transcript_type_stats=transcript_type_stats_dict,
+    )
+
+
+def compute_features_statistics(bgzipped_path: str) -> GFFStats:
+    """
+    Public entry point used by the import pipeline.
+    Keeps the existing bgzipped+indexed behaviour via the tabix-backed stream.
+    """
+    return _compute_features_statistics_from_lines(
+        pysam_helper.stream_tabix_gff_file(bgzipped_path)
     )

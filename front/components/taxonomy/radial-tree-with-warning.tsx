@@ -1,12 +1,26 @@
 "use client"
 
+import { useMemo } from "react"
 import { AlertTriangle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { D3RadialTree } from "./d3-radial-tree"
+import type { LegendItem } from "./d3-radial-tree"
 import type { FlatTreeNode } from "@/lib/api/taxons"
 import type { NodeClickEvent } from "./taxonomy-types"
 import { LARGE_TAXON_THRESHOLD } from "./taxonomy-types"
 import type { TreeRankOption } from "./taxonomy-tree-controls"
+import type { RankDistributionEntry } from "@/lib/stores/flattened-tree"
+import { getRankIndex } from "@/lib/stores/flattened-tree"
+
+function formatCount(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1).replace(/\.0$/, "")}K`
+  return String(n)
+}
+
+function capitalize(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1)
+}
 
 interface RadialTreeWithWarningProps {
   rootTaxid: string | null
@@ -26,6 +40,14 @@ interface RadialTreeWithWarningProps {
   controlledRank?: TreeRankOption | null
   /** When true, show taxon labels on the radial tree. */
   controlledShowLabels?: boolean
+  /** Rank distribution for quick-fix button */
+  distribution?: RankDistributionEntry[]
+  /** Called when user selects a suggested rank */
+  onSelectRank?: (rank: string | null) => void
+  /** Current root taxon rank (used to filter suggestions) */
+  currentRootRank?: string | null
+  /** Forwarded to D3RadialTree for legend updates */
+  onLegendChange?: (items: LegendItem[]) => void
 }
 
 export function RadialTreeWithWarning({
@@ -41,11 +63,36 @@ export function RadialTreeWithWarning({
   scopeHint,
   controlledRank,
   controlledShowLabels,
+  distribution,
+  onSelectRank,
+  currentRootRank,
+  onLegendChange,
 }: RadialTreeWithWarningProps) {
   const isRootTree = rootTaxid === null
   const showWarning =
     leafCountAtSelectedRank > LARGE_TAXON_THRESHOLD &&
     !acknowledgedKeys.has(viewKey)
+
+  // Find the best rank suggestion: deepest rank strictly below root with count ≤ threshold
+  const suggestedRank = useMemo(() => {
+    if (!distribution || !onSelectRank) return null
+    const rootIdx = currentRootRank ? getRankIndex(currentRootRank) : -1
+    // Ranks strictly below current root (higher index = deeper = more specific)
+    const candidates = distribution.filter((d) => {
+      const idx = getRankIndex(d.rank)
+      return idx > rootIdx && d.count > 0
+    })
+    // Prefer the one with the largest count ≤ threshold (most detail while safe)
+    const safe = candidates.filter((d) => d.count <= LARGE_TAXON_THRESHOLD)
+    if (safe.length > 0) {
+      return safe.reduce((best, d) => (d.count > best.count ? d : best))
+    }
+    // Fallback: smallest non-zero count rank
+    if (candidates.length > 0) {
+      return candidates.reduce((best, d) => (d.count < best.count ? d : best))
+    }
+    return null
+  }, [distribution, onSelectRank, currentRootRank])
 
   if (showWarning) {
     return (
@@ -71,14 +118,25 @@ export function RadialTreeWithWarning({
                 (e.g. Class, Order, or Family) to reduce the number of leaves, or choose another rank from the rank
                 selector.
               </p>
-              <Button
-                variant="outline"
-                size="sm"
-                className="border-amber-500/40 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20"
-                onClick={() => onAcknowledge(viewKey)}
-              >
-                Show tree anyway
-              </Button>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="border-amber-500/40 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20"
+                  onClick={() => onAcknowledge(viewKey)}
+                >
+                  Show tree anyway
+                </Button>
+                {suggestedRank && onSelectRank && (
+                  <Button
+                    size="sm"
+                    className="gap-1.5"
+                    onClick={() => onSelectRank(suggestedRank.rank)}
+                  >
+                    Switch to {capitalize(suggestedRank.rank)} ({formatCount(suggestedRank.count)})
+                  </Button>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -94,6 +152,7 @@ export function RadialTreeWithWarning({
       onTaxonSelect={onTaxonSelect}
       controlledRank={controlledRank}
       controlledShowLabels={controlledShowLabels}
+      onLegendChange={onLegendChange}
     />
   )
 }

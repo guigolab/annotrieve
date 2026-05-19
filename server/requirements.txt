@@ -1,5 +1,6 @@
 # FastAPI and server
 fastapi
+python-multipart
 uvicorn[standard]
 gunicorn
 

@@ -76,7 +76,7 @@ export const ROOT_PILL =
 export const GLASS_STYLE: import("react").CSSProperties = {}
 
 /** Threshold above which the radial tree shows a performance warning (leaf count at selected rank). */
-export const LARGE_TAXON_THRESHOLD = 5000
+export const LARGE_TAXON_THRESHOLD = 2000
 
 /** Hex color for taxonomy node highlight/hover (selected, hover). Use for canvas and inline styles. */
 export const TAXONOMY_HIGHLIGHT_COLOR = {

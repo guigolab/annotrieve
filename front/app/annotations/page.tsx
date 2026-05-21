@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef, useCallback } from "react"
+import { useState, useEffect, useRef, useCallback, Suspense } from "react"
 import { useSearchParams, useRouter } from "next/navigation"
 import {
   SlidersHorizontal,
@@ -38,8 +38,12 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { buildEntityDetailsUrl } from "@/lib/utils"
+import { getTaxon } from "@/lib/api/taxons"
+import { getAssembly } from "@/lib/api/assemblies"
+import type { TaxonRecord, AssemblyRecord } from "@/lib/api/types"
+import { LoadingSpinner } from "@/components/ui/loading"
 
-export default function AnnotationsPage() {
+function AnnotationsContent() {
   const searchParams = useSearchParams()
   const router = useRouter()
 
@@ -60,6 +64,8 @@ export default function AnnotationsPage() {
   const setAnnotationsSortOption = useAnnotationsFiltersStore((s) => s.setAnnotationsSortOption)
   const selectedTaxons = useAnnotationsFiltersStore((s) => s.selectedTaxons)
   const selectedAssemblies = useAnnotationsFiltersStore((s) => s.selectedAssemblies)
+  const setSelectedTaxons = useAnnotationsFiltersStore((s) => s.setSelectedTaxons)
+  const setSelectedAssemblies = useAnnotationsFiltersStore((s) => s.setSelectedAssemblies)
   const selectedBioprojects = useAnnotationsFiltersStore((s) => s.selectedBioprojects)
   const selectedAssemblyLevels = useAnnotationsFiltersStore((s) => s.selectedAssemblyLevels)
   const selectedAssemblyStatuses = useAnnotationsFiltersStore((s) => s.selectedAssemblyStatuses)
@@ -116,6 +122,42 @@ export default function AnnotationsPage() {
       setReportLoading(false)
     }
   }, [buildAnnotationsParams])
+
+  // ── Hydrate filters from URL (survives hard reload / RSC fallback) ────────
+  useEffect(() => {
+    const taxids =
+      searchParams?.get("filter_taxids")?.split(",").filter(Boolean) ?? []
+    const accessions =
+      searchParams?.get("filter_accessions")?.split(",").filter(Boolean) ?? []
+    if (!taxids.length && !accessions.length) return
+
+    let cancelled = false
+    ;(async () => {
+      if (taxids.length) {
+        const taxons = (
+          await Promise.all(taxids.map((t) => getTaxon(t).catch(() => null)))
+        ).filter((t): t is TaxonRecord => !!t)
+        if (!cancelled && taxons.length) setSelectedTaxons(taxons)
+      }
+      if (accessions.length) {
+        const asms = (
+          await Promise.all(
+            accessions.map((a) => getAssembly(a).catch(() => null))
+          )
+        ).filter((a): a is AssemblyRecord => !!a)
+        if (!cancelled && asms.length) setSelectedAssemblies(asms)
+      }
+      if (cancelled) return
+      const next = new URLSearchParams(searchParams?.toString() ?? "")
+      next.delete("filter_taxids")
+      next.delete("filter_accessions")
+      const qs = next.toString()
+      router.replace(qs ? `/annotations?${qs}` : "/annotations")
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [searchParams, router, setSelectedTaxons, setSelectedAssemblies])
 
   // ── Redirect legacy entity query params ───────────────────────────────────
   useEffect(() => {
@@ -421,5 +463,19 @@ export default function AnnotationsPage() {
         </div>
       </div>
     </>
+  )
+}
+
+export default function AnnotationsPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex items-center justify-center p-6 min-h-[50vh]">
+          <LoadingSpinner />
+        </div>
+      }
+    >
+      <AnnotationsContent />
+    </Suspense>
   )
 }

@@ -9,7 +9,7 @@ import type { FlatTreeNode } from "@/lib/api/taxons"
 import { useAnnotationsFiltersStore } from "@/lib/stores/annotations-filters"
 import { useFlattenedTreeStore } from "@/lib/stores/flattened-tree"
 import { useTaxonomyGeneTypesStore } from "@/lib/stores/taxonomy-gene-types"
-import { buildEntityDetailsUrl } from "@/lib/utils"
+import { buildAnnotationsListUrl, buildEntityDetailsUrl } from "@/lib/utils"
 import { getTreeGeneColors, getTreeTranscriptColors, getTreeBuscoColors } from "./taxonomy-tree-controls"
 import type { FeatureCountCategory } from "./taxonomy-node-tooltip"
 import { TAXONOMY_HIGHLIGHT_COLOR } from "./taxonomy-types"
@@ -132,8 +132,8 @@ export function TaxonomyDetailsPanel({
 
   const handleViewRelatedAnnotations = useCallback(() => {
     setSelectedTaxons([selectedTaxon.taxon])
-    router.push("/annotations")
-  }, [selectedTaxon.taxon, setSelectedTaxons, router])
+    router.push(buildAnnotationsListUrl({ taxids: [String(selectedTaxon.taxid)] }))
+  }, [selectedTaxon.taxon, selectedTaxon.taxid, setSelectedTaxons, router])
 
   const hasChildren = childrenFromTree.length > 0
   const isLeaf = !hasChildren

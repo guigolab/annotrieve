@@ -7,10 +7,22 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 const ENTITY_DETAILS_BASE_PATH = "/annotations/details"
+const ANNOTATIONS_LIST_PATH = "/annotations"
 
 export function buildEntityDetailsUrl(type: "taxon" | "assembly", id: string) {
   const param = type === "taxon" ? "taxon" : "assembly"
   return `${ENTITY_DETAILS_BASE_PATH}?${param}=${encodeURIComponent(id)}`
+}
+
+export function buildAnnotationsListUrl(opts: {
+  taxids?: string[]
+  accessions?: string[]
+}) {
+  const params = new URLSearchParams()
+  if (opts.taxids?.length) params.set("filter_taxids", opts.taxids.join(","))
+  if (opts.accessions?.length) params.set("filter_accessions", opts.accessions.join(","))
+  const qs = params.toString()
+  return qs ? `${ANNOTATIONS_LIST_PATH}?${qs}` : ANNOTATIONS_LIST_PATH
 }
 
 /**

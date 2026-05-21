@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef, useCallback, useMemo } from "react"
+import { useState, useEffect, useRef, useCallback, useMemo, Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { HelpCircle } from "lucide-react"
 
@@ -31,6 +31,7 @@ import {
 } from "@/components/taxonomy/taxonomy-types"
 import { TaxonomyHelpDialog } from "@/components/taxonomy/taxonomy-help-dialog"
 import { cn } from "@/lib/utils"
+import { LoadingSpinner } from "@/components/ui/loading"
 
 const EUKARYOTA_TAXID = "2759"
 const MAX_ROOT_HISTORY = 10
@@ -75,7 +76,7 @@ function isDescendantOf(
 
 // ─── Main page ────────────────────────────────────────────────────────────────
 
-export default function TaxonomyPage() {
+function TaxonomyContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const flatNodes = useFlattenedTreeStore((s) => s.flatNodes)
@@ -506,5 +507,19 @@ export default function TaxonomyPage() {
         )}
     </div>
   </div>
+  )
+}
+
+export default function TaxonomyPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex items-center justify-center p-6 min-h-[50vh]">
+          <LoadingSpinner />
+        </div>
+      }
+    >
+      <TaxonomyContent />
+    </Suspense>
   )
 }

@@ -110,14 +110,13 @@ def save_annotations(annotations: list[GenomeAnnotation], annotations_path: str)
 
     # delete existing annotations where md5 changed and url path is the same
     # we delete the metadata as the files are already updated
-    old_annotation_ids = list(
-        GenomeAnnotation.objects(source_file_info__url_path__in=url_paths).scalar(
-            "annotation_id"
-        )
-    )
-    if old_annotation_ids:
-        GenomeAnnotation.objects(source_file_info__url_path__in=url_paths).delete()
+    old_annotations = GenomeAnnotation.objects(source_file_info__url_path__in=url_paths)
 
+    if old_annotations.count() > 0:
+        #delete files from the local directory
+        remove_files_from_annotations(old_annotations, annotations_path)
+        #delete the annotations from the database
+        old_annotations.delete()
     try:
         #here we are sure that the annotations are not already in the database
         GenomeAnnotation.objects.insert(annotations)

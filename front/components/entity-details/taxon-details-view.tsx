@@ -22,7 +22,7 @@ import { getAssembliesStats, listAssemblies } from "@/lib/api/assemblies"
 import { getAnnotationsFrequencies } from "@/lib/api/annotations"
 import { Bar } from 'react-chartjs-2'
 import { CategoryScale, LinearScale, BarElement } from 'chart.js'
-import { buildEntityDetailsUrl, cn } from "@/lib/utils"
+import { buildAnnotationsListUrl, buildEntityDetailsUrl, cn } from "@/lib/utils"
 import { getTreeGeneColors, getTreeTranscriptColors, getTreeBuscoColors } from "@/components/taxonomy/taxonomy-tree-controls"
 import type { FeatureCountCategory } from "@/components/taxonomy/taxonomy-node-tooltip"
 
@@ -359,7 +359,7 @@ export function TaxonDetailsView({ taxid: taxidProp, onClose }: TaxonDetailsView
   const handleViewAnnotations = () => {
     if (!taxon) return
     setSelectedTaxons([{ ...taxon, taxid: String(taxon.taxid) }])
-    router.push("/annotations")
+    router.push(buildAnnotationsListUrl({ taxids: [String(taxon.taxid)] }))
     onClose?.()
   }
 
@@ -401,8 +401,11 @@ export function TaxonDetailsView({ taxid: taxidProp, onClose }: TaxonDetailsView
           <div className="flex items-center flex-wrap gap-1">
             {breadcrumbLineage.map((ancestor) => (
               <div key={ancestor.taxid} className="flex items-center gap-1">
-                <Link href={buildEntityDetailsUrl("taxon", String(ancestor.taxid))} 
-                  className="text-xs text-primary hover:underline">
+                <Link
+                  prefetch={false}
+                  href={buildEntityDetailsUrl("taxon", String(ancestor.taxid))}
+                  className="text-xs text-primary hover:underline"
+                >
                   {ancestor.scientific_name} 
                 </Link>
                 <span className="text-xs text-muted-foreground">&gt;</span>
@@ -434,7 +437,7 @@ export function TaxonDetailsView({ taxid: taxidProp, onClose }: TaxonDetailsView
                   className="gap-2"
                   asChild
                 >
-                  <Link href={`/taxonomy?taxon=${encodeURIComponent(taxon.taxid)}`}>
+                  <Link href={`/taxonomy/?taxon=${encodeURIComponent(taxon.taxid)}`}>
                     <Compass className="h-4 w-4" />
                     Explore lineage
                   </Link>

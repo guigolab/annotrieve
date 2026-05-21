@@ -9,7 +9,7 @@ import { assemblyHasChromosomesFile } from "@/lib/api/files"
 import type { AssemblyRecord } from "@/lib/api/types"
 import { ChromosomeViewer } from "@/components/chromosome-viewer"
 import Link from "next/link"
-import { buildEntityDetailsUrl } from "@/lib/utils"
+import { buildAnnotationsListUrl, buildEntityDetailsUrl } from "@/lib/utils"
 import { useAnnotationsFiltersStore } from "@/lib/stores/annotations-filters"
 
 interface AssemblyDetailsViewProps {
@@ -80,7 +80,7 @@ export function AssemblyDetailsView({ accession: accessionProp, onClose }: Assem
         if(!selectedAssemblies.some(a => a.assembly_accession === assembly.assembly_accession)) {
             setSelectedAssemblies([...selectedAssemblies, assembly])
         }
-        router.push('/annotations')
+        router.push(buildAnnotationsListUrl({ accessions: [assembly.assembly_accession] }))
         onClose?.()
     }
     const formatStatValue = (key: string, value: any): string => {
@@ -170,7 +170,7 @@ export function AssemblyDetailsView({ accession: accessionProp, onClose }: Assem
     const assemblyLevelValue = ((assembly as any).assembly_level || "").toString()
     const canShowGenomeBrowserButton = ["chromosome", "complete genome"].includes(assemblyLevelValue.toLowerCase())
     const breadcrumbLineage = assembly.organism_name
-        ? [{ label: assembly.organism_name, href: `/taxonomy?taxon=${assembly.taxid}` }]
+        ? [{ label: assembly.organism_name, href: `/taxonomy/?taxon=${assembly.taxid}` }]
         : []
 
     return (

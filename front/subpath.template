@@ -27,6 +27,13 @@ map $request_uri $log_access {
     default 1;                       # Log everything else
 }
 
+# Next.js soft navigations include ?_rsc=... and expect the flight payload
+# stored at <route>/index.txt instead of <route>/index.html.
+map $arg__rsc $rsc_fallback {
+    ""      "";
+    default "index.txt";
+}
+
 server {
 
     gzip on;
@@ -65,7 +72,7 @@ server {
         access_log /var/log/nginx/front.log analytics_json if=$log_access;
         
         alias /usr/share/nginx/html/annotrieve/;
-        try_files $uri $uri/ /annotrieve/index.html;
+        try_files $uri$rsc_fallback $uri $uri/ /annotrieve/index.html;
                 
         location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
             expires 1y;

@@ -1,7 +1,6 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { useRouter } from "next/navigation"
 import Link from "next/link"
 import { Card, Button, LoadingSpinner, NotFound } from "@/components/ui"
 import { Dna, Database, FileText, ChevronRight, Compass } from "lucide-react"
@@ -9,7 +8,6 @@ import { getTaxon, getTaxonAncestors, getTaxonChildren } from "@/lib/api/taxons"
 import { WikiSummary } from "@/components/wiki-summary"
 import type { TaxonRecord } from "@/lib/api/types"
 import type { OrganismRecord } from "@/lib/api/types"
-import { useAnnotationsFiltersStore } from "@/lib/stores/annotations-filters"
 import { useUIStore } from "@/lib/stores/ui"
 import { Pie } from 'react-chartjs-2'
 import {
@@ -22,7 +20,8 @@ import { getAssembliesStats, listAssemblies } from "@/lib/api/assemblies"
 import { getAnnotationsFrequencies } from "@/lib/api/annotations"
 import { Bar } from 'react-chartjs-2'
 import { CategoryScale, LinearScale, BarElement } from 'chart.js'
-import { buildAnnotationsListUrl, buildEntityDetailsUrl, cn } from "@/lib/utils"
+import { buildEntityDetailsUrl, cn } from "@/lib/utils"
+import { useNavigateToAnnotationsWithFilter } from "@/lib/hooks/use-navigate-to-annotations-with-filter"
 import { getTreeGeneColors, getTreeTranscriptColors, getTreeBuscoColors } from "@/components/taxonomy/taxonomy-tree-controls"
 import type { FeatureCountCategory } from "@/components/taxonomy/taxonomy-node-tooltip"
 
@@ -50,9 +49,8 @@ interface TaxonDetailsViewProps {
 }
 
 export function TaxonDetailsView({ taxid: taxidProp, onClose }: TaxonDetailsViewProps) {
-  const router = useRouter()
   const taxid = taxidProp ?? null
-  const setSelectedTaxons = useAnnotationsFiltersStore((state) => state.setSelectedTaxons)
+  const navigateToAnnotationsWithFilter = useNavigateToAnnotationsWithFilter()
   const theme = useUIStore((state) => state.theme)
   const isDark = theme === "dark"
   const legendColor = isDark ? '#e5e7eb' : '#0f172a'
@@ -358,9 +356,7 @@ export function TaxonDetailsView({ taxid: taxidProp, onClose }: TaxonDetailsView
 
   const handleViewAnnotations = () => {
     if (!taxon) return
-    setSelectedTaxons([{ ...taxon, taxid: String(taxon.taxid) }])
-    router.push(buildAnnotationsListUrl({ taxids: [String(taxon.taxid)] }))
-    onClose?.()
+    navigateToAnnotationsWithFilter({ taxon })
   }
 
   if (!taxid) {

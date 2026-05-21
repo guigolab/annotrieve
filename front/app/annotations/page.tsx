@@ -86,6 +86,7 @@ function AnnotationsContent() {
   const [reportLoading, setReportLoading] = useState(false)
   const sidebarRef = useRef<HTMLDivElement>(null)
   const hasInitializedRef = useRef(false)
+  const [urlFiltersReady, setUrlFiltersReady] = useState(true)
 
   const handleBrowseAssemblies = useCallback(() => {
     openRightSidebar("assemblies-list")
@@ -129,30 +130,64 @@ function AnnotationsContent() {
       searchParams?.get("filter_taxids")?.split(",").filter(Boolean) ?? []
     const accessions =
       searchParams?.get("filter_accessions")?.split(",").filter(Boolean) ?? []
-    if (!taxids.length && !accessions.length) return
+    if (!taxids.length && !accessions.length) {
+      setUrlFiltersReady(true)
+      return
+    }
 
+    setUrlFiltersReady(false)
     let cancelled = false
     ;(async () => {
+      let hydratedTaxons: TaxonRecord[] = []
+      let hydratedAssemblies: AssemblyRecord[] = []
+
       if (taxids.length) {
-        const taxons = (
-          await Promise.all(taxids.map((t) => getTaxon(t).catch(() => null)))
-        ).filter((t): t is TaxonRecord => !!t)
-        if (!cancelled && taxons.length) setSelectedTaxons(taxons)
+        const fetched = await Promise.all(
+          taxids.map((t) => getTaxon(t).catch(() => null))
+        )
+        hydratedTaxons = fetched.filter((t): t is TaxonRecord => !!t)
+        if (hydratedTaxons.length < taxids.length) {
+          const fetchedIds = new Set(hydratedTaxons.map((t) => String(t.taxid)))
+          for (const id of taxids) {
+            if (!fetchedIds.has(id)) {
+              hydratedTaxons.push({ taxid: id, scientific_name: id })
+            }
+          }
+        }
+        if (!cancelled && hydratedTaxons.length) setSelectedTaxons(hydratedTaxons)
       }
+
       if (accessions.length) {
-        const asms = (
-          await Promise.all(
-            accessions.map((a) => getAssembly(a).catch(() => null))
+        const fetched = await Promise.all(
+          accessions.map((a) => getAssembly(a).catch(() => null))
+        )
+        hydratedAssemblies = fetched.filter((a): a is AssemblyRecord => !!a)
+        if (hydratedAssemblies.length < accessions.length) {
+          const fetchedAcc = new Set(
+            hydratedAssemblies.map((a) => a.assembly_accession)
           )
-        ).filter((a): a is AssemblyRecord => !!a)
-        if (!cancelled && asms.length) setSelectedAssemblies(asms)
+          for (const acc of accessions) {
+            if (!fetchedAcc.has(acc)) {
+              hydratedAssemblies.push({
+                assembly_accession: acc,
+                assembly_name: acc,
+              } as AssemblyRecord)
+            }
+          }
+        }
+        if (!cancelled && hydratedAssemblies.length) {
+          setSelectedAssemblies(hydratedAssemblies)
+        }
       }
+
       if (cancelled) return
+
       const next = new URLSearchParams(searchParams?.toString() ?? "")
       next.delete("filter_taxids")
       next.delete("filter_accessions")
       const qs = next.toString()
-      router.replace(qs ? `/annotations?${qs}` : "/annotations")
+      router.replace(qs ? `/annotations?${qs}` : "/annotations", { scroll: false })
+      if (!cancelled) setUrlFiltersReady(true)
     })()
     return () => {
       cancelled = true
@@ -174,6 +209,8 @@ function AnnotationsContent() {
 
   // ── Fetch annotations ─────────────────────────────────────────────────────
   useEffect(() => {
+    if (!urlFiltersReady) return
+
     const fetchData = async () => {
       const params = buildAnnotationsParams(false, [])
       setLoading(true)
@@ -209,6 +246,7 @@ function AnnotationsContent() {
     buscoCompleteFrom,
     buscoCompleteTo,
     buildAnnotationsParams,
+    urlFiltersReady,
   ])
 
   // ── Desktop detection ─────────────────────────────────────────────────────

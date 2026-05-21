@@ -6,10 +6,10 @@ import { X, Compass, Info, ChevronUp, ChevronDown, ChevronRight, ExternalLink, F
 import { Button } from "@/components/ui/button"
 import { WikiSummary } from "@/components/wiki-summary"
 import type { FlatTreeNode } from "@/lib/api/taxons"
-import { useAnnotationsFiltersStore } from "@/lib/stores/annotations-filters"
 import { useFlattenedTreeStore } from "@/lib/stores/flattened-tree"
 import { useTaxonomyGeneTypesStore } from "@/lib/stores/taxonomy-gene-types"
-import { buildAnnotationsListUrl, buildEntityDetailsUrl } from "@/lib/utils"
+import { buildEntityDetailsUrl } from "@/lib/utils"
+import { useNavigateToAnnotationsWithFilter } from "@/lib/hooks/use-navigate-to-annotations-with-filter"
 import { getTreeGeneColors, getTreeTranscriptColors, getTreeBuscoColors } from "./taxonomy-tree-controls"
 import type { FeatureCountCategory } from "./taxonomy-node-tooltip"
 import { TAXONOMY_HIGHLIGHT_COLOR } from "./taxonomy-types"
@@ -59,7 +59,7 @@ export function TaxonomyDetailsPanel({
   onSelectAncestor,
 }: TaxonomyDetailsPanelProps) {
   const router = useRouter()
-  const setSelectedTaxons = useAnnotationsFiltersStore((state) => state.setSelectedTaxons)
+  const navigateToAnnotationsWithFilter = useNavigateToAnnotationsWithFilter()
 
   const flatNodes = useFlattenedTreeStore((s) => s.flatNodes)
   const getTaxonContext = useFlattenedTreeStore((s) => s.getTaxonContext)
@@ -131,9 +131,8 @@ export function TaxonomyDetailsPanel({
   }, [selectedTaxon.taxid, router])
 
   const handleViewRelatedAnnotations = useCallback(() => {
-    setSelectedTaxons([selectedTaxon.taxon])
-    router.push(buildAnnotationsListUrl({ taxids: [String(selectedTaxon.taxid)] }))
-  }, [selectedTaxon.taxon, selectedTaxon.taxid, setSelectedTaxons, router])
+    navigateToAnnotationsWithFilter({ taxon: selectedTaxon.taxon })
+  }, [selectedTaxon.taxon, navigateToAnnotationsWithFilter])
 
   const hasChildren = childrenFromTree.length > 0
   const isLeaf = !hasChildren

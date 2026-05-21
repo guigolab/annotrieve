@@ -9,8 +9,8 @@ import { assemblyHasChromosomesFile } from "@/lib/api/files"
 import type { AssemblyRecord } from "@/lib/api/types"
 import { ChromosomeViewer } from "@/components/chromosome-viewer"
 import Link from "next/link"
-import { buildAnnotationsListUrl, buildEntityDetailsUrl } from "@/lib/utils"
-import { useAnnotationsFiltersStore } from "@/lib/stores/annotations-filters"
+import { buildEntityDetailsUrl } from "@/lib/utils"
+import { useNavigateToAnnotationsWithFilter } from "@/lib/hooks/use-navigate-to-annotations-with-filter"
 
 interface AssemblyDetailsViewProps {
     accession?: string | null
@@ -20,8 +20,7 @@ interface AssemblyDetailsViewProps {
 export function AssemblyDetailsView({ accession: accessionProp, onClose }: AssemblyDetailsViewProps) {
     const router = useRouter()
     const accession = accessionProp ?? null
-    const selectedAssemblies = useAnnotationsFiltersStore((state) => state.selectedAssemblies)
-    const setSelectedAssemblies = useAnnotationsFiltersStore((state) => state.setSelectedAssemblies)
+    const navigateToAnnotationsWithFilter = useNavigateToAnnotationsWithFilter()
     const [assembly, setAssembly] = useState<AssemblyRecord | null>(null)
     const [isLoading, setIsLoading] = useState(true)
     const [hasChromosomes, setHasChromosomes] = useState(false)
@@ -77,11 +76,7 @@ export function AssemblyDetailsView({ accession: accessionProp, onClose }: Assem
 
     const handleViewAnnotations = () => {
         if (!assembly) return
-        if(!selectedAssemblies.some(a => a.assembly_accession === assembly.assembly_accession)) {
-            setSelectedAssemblies([...selectedAssemblies, assembly])
-        }
-        router.push(buildAnnotationsListUrl({ accessions: [assembly.assembly_accession] }))
-        onClose?.()
+        navigateToAnnotationsWithFilter({ assembly })
     }
     const formatStatValue = (key: string, value: any): string => {
         if (key.includes("length")) {

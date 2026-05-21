@@ -27,11 +27,11 @@ map $request_uri $log_access {
     default 1;                       # Log everything else
 }
 
-# Next.js soft navigations include ?_rsc=... and expect the flight payload
-# stored at <route>/index.txt instead of <route>/index.html.
-map $arg__rsc $rsc_fallback {
-    ""      "";
-    default "index.txt";
+# Next.js soft navigations expect the flight payload at <route>/index.txt.
+# Trigger on ?_rsc= query and/or RSC request header (not only query param).
+map "$arg__rsc:$http_rsc" $rsc_fallback {
+    "~.:."  "index.txt";
+    default "";
 }
 
 server {

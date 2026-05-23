@@ -7,6 +7,7 @@ import { DatabaseFrequencies } from "@/components/home/database-frequencies"
 import { ReleaseDateChart } from "@/components/home/release-date-chart"
 import { BuscoCompletenessChart } from "@/components/home/busco-completeness-chart"
 import { FeaturesSection } from "@/components/home/features-section"
+import { CommunityRegistrySection } from "@/components/home/community-registry-section"
 import { HomeFooter } from "@/components/home/home-footer"
 import { VisitorAnalyticsSection } from "@/components/home/visitor-analytics-section"
 import { SectionWrapper } from "@/components/ui/section-wrapper"
@@ -30,6 +31,9 @@ export default function Home() {
             </>
           }
         />
+      </SectionWrapper>
+      <SectionWrapper id="community-registry" backgroundVariant="accent" className="scroll-mt-20">
+        <CommunityRegistrySection />
       </SectionWrapper>
       <SectionWrapper id="database-frequencies" backgroundVariant="default">
         <DatabaseFrequencies

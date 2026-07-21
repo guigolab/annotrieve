@@ -25,7 +25,11 @@ def handle_taxonomy(annotations: list[AnnotationToProcess], tmp_dir: str, batch_
     Fetch the taxonomy from the a list of AnnotationToProcess and store the lineages in a dictionary taxid:lineage, return the lineages dict
     """    
     lineages = get_existing_lineages_dict(annotations)
-    input_taxids = {annotation.taxon_id for annotation in annotations}
+    input_taxids = {
+        annotation.taxon_id
+        for annotation in annotations
+        if annotation.taxon_id and str(annotation.taxon_id).strip()
+    }
     new_taxids = input_taxids - set(lineages.keys())
     if not new_taxids:
         return lineages

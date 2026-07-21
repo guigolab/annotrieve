@@ -11,7 +11,7 @@ const pipelineSteps = [
   {
     title: "Retrieve GFF filepaths",
     description:
-      "Scan FTP sites from GenBank, RefSeq, and Ensembl to catalogue every available eukaryotic annotation.",
+      "Scan GenBank, RefSeq, Ensembl, and the Community Registry to catalogue every available eukaryotic annotation.",
   },
   {
     title: "Download GFF files",
@@ -59,7 +59,7 @@ const faqItems: FAQItem[] = [
       <>
         <p>
           Annotrieve is a unified platform for accessing and analyzing eukaryotic genome annotations from multiple
-          sources including NCBI RefSeq, GenBank, and Ensembl.
+          sources including NCBI RefSeq, GenBank, Ensembl, and the Community Registry.
         </p>
         <p>
           We process, index, and serve GFF3 annotation files in a standardized format, making it easy to discover,
@@ -73,7 +73,7 @@ const faqItems: FAQItem[] = [
     question: "What data sources does Annotrieve use?",
     renderContent: () => (
       <>
-        <p>Annotrieve integrates annotations from three major sources:</p>
+        <p>Annotrieve integrates annotations from major sources:</p>
         <ul className="list-disc pl-6 space-y-2">
           <li>
             <strong>NCBI RefSeq</strong> – curated reference sequences
@@ -83,6 +83,9 @@ const faqItems: FAQItem[] = [
           </li>
           <li>
             <strong>Ensembl</strong> – automated genome annotation database
+          </li>
+          <li>
+            <strong>Community Registry</strong> – third-party eukaryotic GFF annotations contributed via the Annotrieve registry
           </li>
         </ul>
         <p>All annotations are automatically synchronized and updated from these sources.</p>
@@ -95,8 +98,8 @@ const faqItems: FAQItem[] = [
     renderContent: () => (
       <>
         <p>
-          Annotrieve runs a deterministic ingestion pipeline so annotations from RefSeq, GenBank, and Ensembl behave
-          the same way inside the platform.
+          Annotrieve runs a deterministic ingestion pipeline so annotations from RefSeq, GenBank, Ensembl, and the
+          Community Registry behave the same way inside the platform.
         </p>
         <ol className="list-decimal pl-6 space-y-3">
           {pipelineSteps.map((step) => (
@@ -173,7 +176,7 @@ const faqItems: FAQItem[] = [
             <h4 className="font-semibold">Source URL</h4>
           </div>
           <p className="text-sm text-muted-foreground mb-4">
-            Download the original file directly from Ensembl, RefSeq, or GenBank for full fidelity and provenance.
+            Download the original file directly from Ensembl, RefSeq, GenBank, or the Community Registry for full fidelity and provenance.
           </p>
           <Button variant="outline" className="w-full" disabled>
             Example: provider.org/path/to/file.gff3

@@ -16,6 +16,7 @@ from mongoengine import (
     ListField,
     IntField,
     BooleanField,
+    DictField,
     EmbeddedDocumentField,
     URLField,
     DateTimeField,
@@ -95,6 +96,25 @@ class UserAnalytics(DynamicDocument):
         Convert a datetime object to an ISO date string
         """
         return date.isoformat().split('T')[0]
+
+
+class UsageRollup(DynamicDocument):
+    """
+    Singleton public-usage aggregates derived from api.log (key="latest").
+    Stores unique-user counts per capability and top-10 opened entities only.
+    """
+
+    key = StringField(required=True, unique=True, default="latest")
+    as_of = DateTimeField(required=True)
+    by_capability = DictField()  # capability_id -> unique_users (int)
+    by_capability_requests = DictField()  # capability_id -> request_count (int)
+    top_assemblies = ListField(DictField())  # [{id, unique_users, label, ...}]
+    top_annotations = ListField(DictField())
+    top_taxons = ListField(DictField())
+    meta = {
+        "indexes": ["key", "as_of"],
+        "collection": "usage_rollup",
+    }
 
 
 class UploadRateLimit(DynamicDocument):

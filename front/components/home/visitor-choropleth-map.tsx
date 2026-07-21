@@ -41,11 +41,15 @@ async function loadWorldTopology(): Promise<Topology> {
 
 interface VisitorChoroplethMapProps {
   countryFrequencies: CountryFrequencies
+  /** Country names to outline (unique-user leaders). */
+  highlightCountries?: string[]
+  /** @deprecated Prefer highlightCountries; used only for outline names. */
   topVisitors?: TopVisitor[]
 }
 
 function VisitorChoroplethMap({
   countryFrequencies,
+  highlightCountries: highlightCountryNames,
   topVisitors = [],
 }: VisitorChoroplethMapProps) {
   const theme = useUIStore((s) => s.theme)
@@ -62,10 +66,13 @@ function VisitorChoroplethMap({
     () => Math.max(1, ...Object.values(normalizedData)),
     [normalizedData]
   )
-  const highlightCountries = useMemo(
-    () => new Set(topVisitors.map((v) => normalizeCountryName(v.country))),
-    [topVisitors]
-  )
+  const highlightCountries = useMemo(() => {
+    const names =
+      highlightCountryNames && highlightCountryNames.length > 0
+        ? highlightCountryNames
+        : topVisitors.map((v) => v.country)
+    return new Set(names.map((name) => normalizeCountryName(name)))
+  }, [highlightCountryNames, topVisitors])
 
   useEffect(() => {
     const el = containerRef.current

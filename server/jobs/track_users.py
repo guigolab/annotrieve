@@ -3,13 +3,27 @@ import hmac
 import hashlib
 import os
 import time
+from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from typing import Dict, List, Optional, Set, Tuple
 
 from celery import shared_task
 import requests
-from db.models import UserAnalytics
+from db.models import (
+    GenomeAnnotation,
+    GenomeAssembly,
+    Organism,
+    TaxonNode,
+    UsageRollup,
+    UserAnalytics,
+)
+from jobs.services.usage_path import (
+    CAPABILITY_LABELS,
+    TOP_N,
+    PathClassification,
+    classify_path,
+)
 
 # Log file path (mounted from nginx container)
 API_LOG_PATH = os.getenv("LOCAL_LOGS_PATH", "server/logs") + "/api.log"
@@ -44,31 +58,43 @@ class IpVisitSummary:
         return len(self.visit_days)
 
 
+@dataclass
+class UsageAgg:
+    """In-memory unique-user and request aggregates for the public usage rollup."""
+
+    capability_fps: Dict[str, Set[str]] = field(default_factory=lambda: defaultdict(set))
+    capability_requests: Dict[str, int] = field(default_factory=lambda: defaultdict(int))
+    assembly_fps: Dict[str, Set[str]] = field(default_factory=lambda: defaultdict(set))
+    annotation_fps: Dict[str, Set[str]] = field(default_factory=lambda: defaultdict(set))
+    taxon_fps: Dict[str, Set[str]] = field(default_factory=lambda: defaultdict(set))
+
+
 def create_ip_fingerprint(ip: str) -> str:
     """
     Create an HMAC fingerprint of an IP address for privacy.
     Returns a hex-encoded HMAC-SHA256 hash.
     """
     return hmac.new(
-        HMAC_SECRET.encode('utf-8'),
-        ip.encode('utf-8'),
-        hashlib.sha256
+        HMAC_SECRET.encode("utf-8"),
+        ip.encode("utf-8"),
+        hashlib.sha256,
     ).hexdigest()
 
 
-def parse_log_file(log_path: str) -> Dict[str, IpVisitSummary]:
+def parse_log_file(log_path: str) -> Tuple[Dict[str, IpVisitSummary], UsageAgg]:
     """
-    Parse the JSON lines log file and aggregate visits per IP.
-    Returns a dictionary mapping IP -> IpVisitSummary (UTC day set + min/max timestamps).
+    Parse the JSON lines log file once.
+    Returns (IP -> IpVisitSummary, UsageAgg for capabilities/entities).
     """
     ip_visits: Dict[str, IpVisitSummary] = {}
+    usage = UsageAgg()
 
     if not os.path.exists(log_path):
         print(f"Log file not found: {log_path}")
-        return ip_visits
+        return ip_visits, usage
 
     try:
-        with open(log_path, 'r', encoding='utf-8') as f:
+        with open(log_path, "r", encoding="utf-8") as f:
             for line_num, line in enumerate(f, 1):
                 line = line.strip()
                 if not line:
@@ -76,16 +102,21 @@ def parse_log_file(log_path: str) -> Dict[str, IpVisitSummary]:
 
                 try:
                     log_entry = json.loads(line)
-                    ip = log_entry.get('ip')
-                    time_str = log_entry.get('time')
+                    ip = log_entry.get("ip")
+                    time_str = log_entry.get("time")
+                    uri = log_entry.get("uri") or ""
 
                     if not ip or not time_str:
                         continue
 
-                    visit_time = datetime.fromisoformat(time_str.replace('Z', '+00:00'))
+                    visit_time = datetime.fromisoformat(time_str.replace("Z", "+00:00"))
                     if ip not in ip_visits:
                         ip_visits[ip] = IpVisitSummary()
                     ip_visits[ip].add_visit(visit_time)
+
+                    fingerprint = create_ip_fingerprint(ip)
+                    classification = classify_path(uri)
+                    _accumulate_usage(usage, fingerprint, classification)
 
                 except json.JSONDecodeError as e:
                     print(f"Error parsing JSON on line {line_num}: {e}")
@@ -98,7 +129,152 @@ def parse_log_file(log_path: str) -> Dict[str, IpVisitSummary]:
         print(f"Error reading log file: {e}")
         raise
 
-    return ip_visits
+    return ip_visits, usage
+
+
+def _accumulate_usage(usage: UsageAgg, fingerprint: str, classification: PathClassification) -> None:
+    cap = classification.capability if classification.capability in CAPABILITY_LABELS else "other"
+    usage.capability_fps[cap].add(fingerprint)
+    usage.capability_requests[cap] += 1
+
+    if not classification.entity_kind or not classification.entity_id:
+        return
+    if classification.entity_kind == "assembly":
+        usage.assembly_fps[classification.entity_id].add(fingerprint)
+    elif classification.entity_kind == "annotation":
+        usage.annotation_fps[classification.entity_id].add(fingerprint)
+    elif classification.entity_kind == "taxon":
+        usage.taxon_fps[classification.entity_id].add(fingerprint)
+
+
+def _top_n_from_fps(fps_map: Dict[str, Set[str]], n: int = TOP_N) -> List[Tuple[str, int]]:
+    ranked = sorted(
+        ((entity_id, len(fps)) for entity_id, fps in fps_map.items() if fps),
+        key=lambda item: (-item[1], item[0]),
+    )
+    return ranked[:n]
+
+
+def _enrich_assemblies(ranked: List[Tuple[str, int]]) -> List[dict]:
+    if not ranked:
+        return []
+    ids = [entity_id for entity_id, _ in ranked]
+    docs = {
+        a.assembly_accession: a
+        for a in GenomeAssembly.objects(assembly_accession__in=ids).only(
+            "assembly_accession", "assembly_name", "organism_name"
+        )
+    }
+    out = []
+    for entity_id, unique_users in ranked:
+        doc = docs.get(entity_id)
+        label = (doc.assembly_name if doc and doc.assembly_name else entity_id)
+        out.append(
+            {
+                "id": entity_id,
+                "unique_users": unique_users,
+                "label": label,
+                "organism_name": doc.organism_name if doc else None,
+            }
+        )
+    return out
+
+
+def _enrich_annotations(ranked: List[Tuple[str, int]]) -> List[dict]:
+    if not ranked:
+        return []
+    ids = [entity_id for entity_id, _ in ranked]
+    docs = {
+        a.annotation_id: a
+        for a in GenomeAnnotation.objects(annotation_id__in=ids).only(
+            "annotation_id",
+            "organism_name",
+            "assembly_accession",
+            "assembly_name",
+            "source_file_info",
+        )
+    }
+    out = []
+    for entity_id, unique_users in ranked:
+        doc = docs.get(entity_id)
+        provider = None
+        database = None
+        if doc and doc.source_file_info is not None:
+            provider = getattr(doc.source_file_info, "provider", None)
+            database = getattr(doc.source_file_info, "database", None)
+        organism = doc.organism_name if doc else None
+        label = organism or entity_id[:12]
+        if database:
+            label = f"{label} ({database})"
+        out.append(
+            {
+                "id": entity_id,
+                "unique_users": unique_users,
+                "label": label,
+                "organism_name": organism,
+                "assembly_accession": doc.assembly_accession if doc else None,
+                "provider": provider,
+                "database": database,
+            }
+        )
+    return out
+
+
+def _enrich_taxons(ranked: List[Tuple[str, int]]) -> List[dict]:
+    if not ranked:
+        return []
+    ids = [entity_id for entity_id, _ in ranked]
+    taxon_docs = {
+        t.taxid: t
+        for t in TaxonNode.objects(taxid__in=ids).only("taxid", "scientific_name", "rank")
+    }
+    organism_docs = {
+        o.taxid: o
+        for o in Organism.objects(taxid__in=ids).only("taxid", "organism_name", "common_name")
+    }
+    out = []
+    for entity_id, unique_users in ranked:
+        taxon = taxon_docs.get(entity_id)
+        organism = organism_docs.get(entity_id)
+        label = None
+        if taxon and taxon.scientific_name:
+            label = taxon.scientific_name
+        elif organism:
+            label = organism.common_name or organism.organism_name
+        out.append(
+            {
+                "id": entity_id,
+                "unique_users": unique_users,
+                "label": label or f"taxid {entity_id}",
+                "rank": taxon.rank if taxon else None,
+            }
+        )
+    return out
+
+
+def build_and_save_usage_rollup(usage: UsageAgg) -> UsageRollup:
+    by_capability = {
+        cap: len(fps) for cap, fps in usage.capability_fps.items() if fps
+    }
+    # Ensure all known capabilities appear (zeros omitted is fine; UI can fill labels)
+    by_capability_requests = dict(usage.capability_requests)
+
+    top_assemblies = _enrich_assemblies(_top_n_from_fps(usage.assembly_fps))
+    top_annotations = _enrich_annotations(_top_n_from_fps(usage.annotation_fps))
+    top_taxons = _enrich_taxons(_top_n_from_fps(usage.taxon_fps))
+
+    as_of = datetime.now(timezone.utc)
+    rollup = UsageRollup.objects(key="latest").first()
+    if rollup is None:
+        rollup = UsageRollup(key="latest")
+    rollup.as_of = as_of
+    rollup.by_capability = by_capability
+    rollup.by_capability_requests = by_capability_requests
+    rollup.top_assemblies = top_assemblies
+    rollup.top_annotations = top_annotations
+    rollup.top_taxons = top_taxons
+    rollup.save()
+    return rollup
 
 
 def get_countries_for_ips(ip_list: List[str]) -> Dict[str, str]:
@@ -118,8 +294,8 @@ def get_countries_for_ips(ip_list: List[str]) -> Dict[str, str]:
         response = requests.post(
             IP_API_BATCH_URL,
             json=ip_list,
-            params={'fields': 'country'},
-            timeout=10
+            params={"fields": "country"},
+            timeout=10,
         )
 
         if response.status_code == 200:
@@ -128,9 +304,9 @@ def get_countries_for_ips(ip_list: List[str]) -> Dict[str, str]:
                 if i < len(ip_list):
                     ip = ip_list[i]
                     if isinstance(result, dict):
-                        countries[ip] = result.get('country', 'Unknown')
+                        countries[ip] = result.get("country", "Unknown")
                     else:
-                        countries[ip] = 'Unknown'
+                        countries[ip] = "Unknown"
         elif response.status_code == 422:
             print(f"Error: Too many IPs in batch (422). Batch size: {len(ip_list)}")
             for ip in ip_list:
@@ -138,12 +314,12 @@ def get_countries_for_ips(ip_list: List[str]) -> Dict[str, str]:
         else:
             print(f"Error from ip-api.com: {response.status_code} - {response.text}")
             for ip in ip_list:
-                countries[ip] = 'Unknown'
+                countries[ip] = "Unknown"
 
     except requests.exceptions.RequestException as e:
         print(f"Error fetching country data: {e}")
         for ip in ip_list:
-            countries[ip] = 'Unknown'
+            countries[ip] = "Unknown"
 
     return countries
 
@@ -155,15 +331,15 @@ def get_single_ip_country(ip: str) -> str:
     try:
         response = requests.get(
             f"http://ip-api.com/json/{ip}",
-            params={'fields': 'country'},
-            timeout=5
+            params={"fields": "country"},
+            timeout=5,
         )
         if response.status_code == 200:
             data = response.json()
-            return data.get('country', 'Unknown')
+            return data.get("country", "Unknown")
     except Exception as e:
         print(f"Error fetching country for {ip}: {e}")
-    return 'Unknown'
+    return "Unknown"
 
 
 def _visit_utc_date(visit_time: datetime) -> date:
@@ -214,23 +390,21 @@ def update_user_stats(
         ).save()
 
 
-@shared_task(name='track_unique_users_by_country', ignore_result=False)
+@shared_task(name="track_unique_users_by_country", ignore_result=False)
 def track_unique_users_by_country():
     """
-    Read the entire API log file, extract unique IPs, and store/update user analytics.
+    Read the entire API log file, extract unique IPs, and store/update user analytics
+    plus a public UsageRollup (capabilities + top opened entities).
 
-    This job processes the entire log file each time it runs. Per IP (fingerprint):
+    Per IP (fingerprint):
     - visits_count: distinct UTC calendar days with at least one API request
-    - first_visit: timestamp of the earliest request in the log
-    - last_visit: timestamp of the latest request in the log
+    - first_visit / last_visit from the log
     - country: set on first insert via ip-api.com; preserved on subsequent runs
-
-    Since the log file grows continuously, each run reflects all activity up to that point.
     """
     print("Starting track_unique_users_by_country job...")
 
     print(f"Reading log file: {API_LOG_PATH}")
-    ip_summaries = parse_log_file(API_LOG_PATH)
+    ip_summaries, usage_agg = parse_log_file(API_LOG_PATH)
 
     if not ip_summaries:
         print("No IP addresses found in log file")
@@ -254,7 +428,7 @@ def track_unique_users_by_country():
     ip_to_country: Dict[str, str] = {}
     if new_ips:
         batches = [
-            new_ips[i:i + MAX_IPS_PER_BATCH]
+            new_ips[i : i + MAX_IPS_PER_BATCH]
             for i in range(0, len(new_ips), MAX_IPS_PER_BATCH)
         ]
         for batch_idx, batch in enumerate(batches, 1):
@@ -272,9 +446,18 @@ def track_unique_users_by_country():
             update_user_stats(
                 ip,
                 summary,
-                country=ip_to_country.get(ip, 'Unknown'),
+                country=ip_to_country.get(ip, "Unknown"),
             )
         total_processed += 1
+
+    print("Building usage rollup (capabilities + top entities)...")
+    rollup = build_and_save_usage_rollup(usage_agg)
+    print(
+        f"Usage rollup saved. capabilities={len(rollup.by_capability or {})} "
+        f"assemblies={len(rollup.top_assemblies or [])} "
+        f"annotations={len(rollup.top_annotations or [])} "
+        f"taxons={len(rollup.top_taxons or [])}"
+    )
 
     print(f"Job completed. Processed {total_processed} unique IP addresses")
     return {
@@ -282,4 +465,5 @@ def track_unique_users_by_country():
         "unique_ips": len(ip_summaries),
         "new_ips_geolocated": len(new_ips),
         "existing_ips_skipped_geo": existing_ips_skipped_geo,
+        "rollup_as_of": rollup.as_of.isoformat() if rollup.as_of else None,
     }

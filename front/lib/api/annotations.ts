@@ -21,6 +21,7 @@ export interface FetchAnnotationsParams extends Query {
   latest_release_by?: 'organism' | 'assembly'
   limit?: number
   offset?: number
+  selected_fields?: string
 }
 
 export function listAnnotations(params: FetchAnnotationsParams) {
@@ -42,8 +43,7 @@ export function listAnnotationsByMd5Checksums(
 }
 
 export async function downloadAnnotationsReport(params: FetchAnnotationsParams): Promise<Blob> {
-  const API_BASE = 'https://genome.crg.es/annotrieve/api/v0'
-  const url = `${API_BASE}/annotations/report${buildQuery(params)}`
+  const url = `${joinUrl(getApiBase(), '/annotations/report')}${buildQuery(params)}`
   const res = await fetch(url, { method: 'GET', headers: { Accept: 'text/tab-separated-values' } })
   if (!res.ok) {
     throw new Error(`GET /annotations/report failed: ${res.status}`)

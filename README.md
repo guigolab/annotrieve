@@ -1,6 +1,6 @@
 # Annotrieve
 
-**Annotrieve** is a central hub for exploring and analyzing eukaryotic genome annotations. It aggregates GFF annotations weekly from **Ensembl**, **NCBI RefSeq**, and **NCBI GenBank**, giving you a single place to search, browse, compare, and download annotation data.
+**Annotrieve** is a central hub for exploring and analyzing eukaryotic genome annotations. It aggregates GFF annotations weekly from **Ensembl**, **NCBI RefSeq**, **NCBI GenBank**, and the **Community Registry**, giving you a single place to search, browse, compare, and download annotation data.
 
 ## What it does
 

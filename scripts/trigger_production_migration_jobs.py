@@ -5,6 +5,7 @@ Trigger production migration Celery jobs via the Annotrieve API (in order):
   1. backfill_taxon_parent_id
   2. unset_genome_annotation_mapped_regions (dry_run=false by default)
   3. remap_all_assemblies_and_annotations
+  4. track_unique_users_by_country
 
 Each step POSTs to the authenticated jobs API; workers must be running on the target
 environment. remap_all_assemblies_and_annotations is long-running — run off-peak.
@@ -41,6 +42,11 @@ JOBS: tuple[tuple[str, str, dict | None], ...] = (
     (
         "remap_all_assemblies_and_annotations",
         "/jobs/remap/assemblies-and-annotations",
+        None,
+    ),
+    (
+        "track_unique_users_by_country",
+        "/jobs/update/analytics",
         None,
     ),
 )

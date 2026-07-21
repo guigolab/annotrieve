@@ -10,7 +10,6 @@ import { listAssemblies } from "@/lib/api/assemblies"
 import { listTaxons } from "@/lib/api/taxons"
 import type { OrganismRecord, AssemblyRecord, TaxonRecord } from "@/lib/api/types"
 import type { FilterType } from "@/lib/types"
-import { useAnnotationsFiltersStore } from "@/lib/stores/annotations-filters"
 import { SectionHeader } from "@/components/ui/section-header"
 import { buildEntityDetailsUrl } from "@/lib/utils"
 
@@ -22,26 +21,20 @@ interface TopAnnotationsProps {
 
 export function TopAnnotations({ onFilterSelect, title, description }: TopAnnotationsProps) {
   const router = useRouter()
-  const { setSelectedTaxons, setSelectedAssemblies } = useAnnotationsFiltersStore()
   const [topOrganisms, setTopOrganisms] = useState<OrganismRecord[]>([])
   const [topAssemblies, setTopAssemblies] = useState<AssemblyRecord[]>([])
   const [topTaxons, setTopTaxons] = useState<TaxonRecord[]>([])
   const [loading, setLoading] = useState(true)
 
   const handleCardClick = (type: FilterType, item: any) => {
-    // Set filter in store based on type
     if (type === 'assembly') {
       const assembly = item as AssemblyRecord
-      setSelectedAssemblies([assembly])
       router.push(buildEntityDetailsUrl("assembly", assembly.assembly_accession))
     } else if (type === 'taxon') {
-      // For organism or taxon, use taxon record
       const taxon = item as TaxonRecord
-      setSelectedTaxons([taxon])
       router.push(buildEntityDetailsUrl("taxon", String(taxon.taxid)))
     } else if (type === 'organism') {
       const organism = item as OrganismRecord
-      setSelectedTaxons([{ taxid: organism.taxid, scientific_name: organism.organism_name }])
       router.push(buildEntityDetailsUrl("taxon", String(organism.taxid)))
     }
   }
@@ -125,7 +118,7 @@ export function TopAnnotations({ onFilterSelect, title, description }: TopAnnota
             {topOrganisms.map((organism, index) => (
               <Card
                 key={organism.taxid}
-                className="p-4 hover:shadow-md transition-all cursor-pointer group hover:border-primary/50"
+                className="p-4 border-foreground/20 bg-card hover:shadow-md transition-all cursor-pointer group hover:border-primary/50"
                 onClick={() => handleCardClick("organism", organism)}
               >
                 <div className="flex items-start justify-between gap-3">
@@ -160,7 +153,7 @@ export function TopAnnotations({ onFilterSelect, title, description }: TopAnnota
             {topTaxons.map((taxon, index) => (
               <Card
                 key={taxon.taxid}
-                className="p-4 hover:shadow-md transition-all cursor-pointer group hover:border-primary/50"
+                className="p-4 border-foreground/20 bg-card hover:shadow-md transition-all cursor-pointer group hover:border-primary/50"
                 onClick={() => handleCardClick("taxon", taxon)}
               >
                 <div className="flex items-start justify-between gap-3">
@@ -194,7 +187,7 @@ export function TopAnnotations({ onFilterSelect, title, description }: TopAnnota
             {topAssemblies.map((assembly, index) => (
               <Card
                 key={assembly.assembly_accession}
-                className="p-4 hover:shadow-md transition-all cursor-pointer group hover:border-primary/50"
+                className="p-4 border-foreground/20 bg-card hover:shadow-md transition-all cursor-pointer group hover:border-primary/50"
                 onClick={() => handleCardClick("assembly", assembly)}
               >
                 <div className="flex items-start justify-between gap-3">

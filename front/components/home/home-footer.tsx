@@ -10,10 +10,14 @@ import {
   Github,
   Mail,
   Terminal,
+  Users,
+  BarChart3,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 const RESOURCE_LINKS = [
+  { href: "/community/", label: "Community", icon: Users },
+  { href: "/usage/", label: "Usage", icon: BarChart3 },
   { href: "/faqs/", label: "FAQs", icon: HelpCircle },
   { href: "/api-docs/", label: "API Docs", icon: BookOpen },
   {
@@ -71,7 +75,7 @@ export function HomeFooter() {
   return (
     <footer className="border-t bg-background/80">
       <div className="mx-auto px-6 py-8">
-        <div className="grid grid-cols-1 gap-8 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid grid-cols-1 gap-8 sm:grid-cols-2 lg:grid-cols-3">
 
           {/* Brand */}
           <div className="flex items-center">
@@ -84,28 +88,16 @@ export function HomeFooter() {
             />
           </div>
 
-          {/* Resources */}
+          {/* Resources + Connect */}
           <div>
             <SectionHeading>Resources</SectionHeading>
-            <ul className="space-y-2">
-              {RESOURCE_LINKS.map(({ href, label, icon: Icon, external }) => (
+            <ul className="grid grid-cols-2 gap-x-4 gap-y-2">
+              {[
+                ...RESOURCE_LINKS,
+                ...EXTERNAL_LINKS.map((link) => ({ ...link, external: true as const })),
+              ].map(({ href, label, icon: Icon, external }) => (
                 <li key={label}>
                   <FooterLink href={href} external={external}>
-                    <Icon className="mr-1.5 inline-block h-3.5 w-3.5" />
-                    {label}
-                  </FooterLink>
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          {/* Connect */}
-          <div>
-            <SectionHeading>Connect</SectionHeading>
-            <ul className="space-y-2">
-              {EXTERNAL_LINKS.map(({ href, label, icon: Icon }) => (
-                <li key={label}>
-                  <FooterLink href={href} external>
                     <Icon className="mr-1.5 inline-block h-3.5 w-3.5" />
                     {label}
                   </FooterLink>

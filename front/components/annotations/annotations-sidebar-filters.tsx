@@ -13,6 +13,7 @@ import { useAnnotationsFiltersStore } from "@/lib/stores/annotations-filters"
 import { AssemblyRecord, OrganismRecord, TaxonRecord, BioProjectRecord } from "@/lib/api/types"
 import { listBioprojects } from "@/lib/api/bioprojects"
 import { cn } from "@/lib/utils"
+import { joinCsv } from "@/lib/csv-list"
 import { CompactTaxonomicTree } from "@/components/taxonomy/compact-taxonomic-tree"
 import { createAssemblySearchModel, createOrganismSearchModel, createTaxonSearchModel } from "@/lib/search-models"
 import { QuickSearchSection } from "./annotations-sidebar-filters/components/quick-search-section"
@@ -59,6 +60,8 @@ interface CollapsibleSectionProps {
   btnAction?: () => void
   btnText?: string
   icon?: ReactNode
+  /** When false, section is invisible while persisted open state restores (avoids flash). */
+  persistReady?: boolean
   children: ReactNode
 }
 
@@ -89,29 +92,34 @@ function BuscoCompletenessChart({ data, className }: { data: Record<string, numb
 const BIOPROJECTS_PAGE_SIZE = 30
 const BIOPROJECT_SEARCH_DEBOUNCE = 400
 
+/**
+ * Persist state in localStorage without breaking hydration.
+ * Always start from defaultValue (matches static HTML); restore after mount.
+ */
 function usePersistentState<T>(key: string, defaultValue: T) {
-  const [value, setValue] = useState<T>(() => {
-    if (typeof window === "undefined") return defaultValue
-    try {
-      const storedValue = window.localStorage.getItem(key)
-      return storedValue !== null ? JSON.parse(storedValue) : defaultValue
-    } catch (error) {
-      console.warn(`Failed to read persistent state for ${key}:`, error)
-      return defaultValue
-    }
-  })
+  const [value, setValue] = useState<T>(defaultValue)
+  const [ready, setReady] = useState(false)
 
   useEffect(() => {
-    if (typeof window === "undefined") return
+    try {
+      const stored = window.localStorage.getItem(key)
+      if (stored !== null) setValue(JSON.parse(stored) as T)
+    } catch (error) {
+      console.warn(`Failed to read persistent state for ${key}:`, error)
+    }
+    setReady(true)
+  }, [key])
 
+  useEffect(() => {
+    if (!ready) return
     try {
       window.localStorage.setItem(key, JSON.stringify(value))
     } catch (error) {
       console.warn(`Failed to persist state for ${key}:`, error)
     }
-  }, [key, value])
+  }, [key, value, ready])
 
-  return [value, setValue] as const
+  return [value, setValue, ready] as const
 }
 
 function CollapsibleSection({
@@ -123,6 +131,7 @@ function CollapsibleSection({
   btnAction,
   btnText,
   icon,
+  persistReady = true,
   children
 }: CollapsibleSectionProps) {
   const contentId = `section-${title?.toString().toLowerCase().replace(/\s+/g, '-')}`
@@ -187,7 +196,12 @@ function CollapsibleSection({
   }, [onToggle])
 
   return (
-    <div className="overflow-hidden">
+    <div
+      className={cn(
+        "overflow-hidden transition-opacity duration-200 ease-out",
+        persistReady ? "opacity-100" : "opacity-0"
+      )}
+    >
       <div
         role="button"
         tabIndex={0}
@@ -203,7 +217,7 @@ function CollapsibleSection({
         </div>
         <div className="text-muted-foreground transition-transform duration-200 ease-in-out group-hover:text-foreground">
           <ChevronDown
-            className={`h-4 w-4 shrink-0 ${isOpen ? 'rotate-180' : 'rotate-0'}`}
+            className={`h-4 w-4 shrink-0 transition-transform duration-200 ease-in-out ${isOpen ? 'rotate-180' : 'rotate-0'}`}
             role="img"
             aria-label={chevronLabel}
             focusable={false}
@@ -324,7 +338,7 @@ export function AnnotationsSidebarFilters() {
   const bioprojectScrollRef = useRef<HTMLDivElement>(null)
   const bioprojectObserverRef = useRef<HTMLDivElement>(null)
   const lastFetchedQueryRef = useRef<string>("")
-  const [isBioprojectSectionOpen, setIsBioprojectSectionOpen] = usePersistentState<boolean>("annotations-sidebar:bioprojects-open", false)
+  const [isBioprojectSectionOpen, setIsBioprojectSectionOpen, bioprojectPersistReady] = usePersistentState<boolean>("annotations-sidebar:bioprojects-open", false)
 
   // Assembly filters - lazy loaded
   const [assemblyLevelOptions, setAssemblyLevelOptions] = useState<Record<string, number>>({})
@@ -340,13 +354,20 @@ export function AnnotationsSidebarFilters() {
   const [providerOptions, setProviderOptions] = useState<Record<string, number>>({})
   const [databaseSourcesOptions, setDatabaseSourcesOptions] = useState<Record<string, number>>({})
   const [featureSourceOptions, setFeatureSourceOptions] = useState<Record<string, number>>({})
-  const [gffSummaryAccordionValue, setGffSummaryAccordionValue] = usePersistentState<string | null>("annotations-sidebar:gff-summary-open", null)
-  const [gffSourceAccordionValue, setGffSourceAccordionValue] = usePersistentState<string | null>("annotations-sidebar:gff-source-open", null)
+  const [gffSummaryAccordionValue, setGffSummaryAccordionValue, gffSummaryPersistReady] = usePersistentState<string | null>("annotations-sidebar:gff-summary-open", null)
+  const [gffSourceAccordionValue, setGffSourceAccordionValue, gffSourcePersistReady] = usePersistentState<string | null>("annotations-sidebar:gff-source-open", null)
   const [loadingSection, setLoadingSection] = useState<string | null>(null)
   const [filterSectionSearchQueries, setFilterSectionSearchQueries] = useState<Record<string, string>>({})
-  const [isTaxonomySectionOpen, setIsTaxonomySectionOpen] = usePersistentState<boolean>("annotations-sidebar:taxonomy-open", false)
-  const [isAssemblySectionOpen, setIsAssemblySectionOpen] = usePersistentState<boolean>("annotations-sidebar:assemblies-open", false)
-  const [isBuscoSectionOpen, setIsBuscoSectionOpen] = usePersistentState<boolean>("annotations-sidebar:busco-open", false)
+  const [isTaxonomySectionOpen, setIsTaxonomySectionOpen, taxonomyPersistReady] = usePersistentState<boolean>("annotations-sidebar:taxonomy-open", false)
+  const [isAssemblySectionOpen, setIsAssemblySectionOpen, assemblyPersistReady] = usePersistentState<boolean>("annotations-sidebar:assemblies-open", false)
+  const [isBuscoSectionOpen, setIsBuscoSectionOpen, buscoPersistReady] = usePersistentState<boolean>("annotations-sidebar:busco-open", false)
+  const sectionsPersistReady =
+    bioprojectPersistReady &&
+    gffSummaryPersistReady &&
+    gffSourcePersistReady &&
+    taxonomyPersistReady &&
+    assemblyPersistReady &&
+    buscoPersistReady
   const [buscoFrequencies, setBuscoFrequencies] = useState<Record<string, number>>({})
   const [loadingBuscoFrequencies, setLoadingBuscoFrequencies] = useState(false)
   const [buscoSliderValue, setBuscoSliderValue] = useState<[number, number]>([0, 100])
@@ -445,40 +466,40 @@ export function AnnotationsSidebarFilters() {
     const params: Record<string, any> = {}
 
     if (selectedTaxons.length > 0) {
-      params.taxids = selectedTaxons.map(t => t.taxid).join(',')
+      params.taxids = joinCsv(selectedTaxons.map(t => String(t.taxid)))
     }
     if (selectedAssemblies.length > 0) {
-      params.assembly_accessions = selectedAssemblies.map(a => a.assembly_accession).join(',')
+      params.assembly_accessions = joinCsv(selectedAssemblies.map(a => a.assembly_accession))
     }
     if (selectedBioprojects.length > 0) {
-      params.bioproject_accessions = selectedBioprojects.map(bp => bp.accession).join(',')
+      params.bioproject_accessions = joinCsv(selectedBioprojects.map(bp => bp.accession))
     }
     if (selectedAssemblyLevels.length > 0) {
-      params.assembly_levels = selectedAssemblyLevels.join(',')
+      params.assembly_levels = joinCsv(selectedAssemblyLevels)
     }
     if (selectedAssemblyStatuses.length > 0) {
-      params.assembly_statuses = selectedAssemblyStatuses.join(',')
+      params.assembly_statuses = joinCsv(selectedAssemblyStatuses)
     }
     if (onlyRefGenomes) {
       params.refseq_categories = 'reference genome'
     }
     if (biotypes.length > 0) {
-      params.biotypes = biotypes.join(',')
+      params.biotypes = joinCsv(biotypes)
     }
     if (featureTypes.length > 0) {
-      params.feature_types = featureTypes.join(',')
+      params.feature_types = joinCsv(featureTypes)
     }
     if (featureSources.length > 0) {
-      params.feature_sources = featureSources.join(',')
+      params.feature_sources = joinCsv(featureSources)
     }
     if (pipelines.length > 0) {
-      params.pipelines = pipelines.join(',')
+      params.pipelines = joinCsv(pipelines)
     }
     if (providers.length > 0) {
-      params.providers = providers.join(',')
+      params.providers = joinCsv(providers)
     }
     if (databaseSources.length > 0) {
-      params.db_sources = databaseSources.join(',')
+      params.db_sources = joinCsv(databaseSources)
     }
 
     // Exclude the field being fetched to avoid circular dependency
@@ -932,7 +953,7 @@ export function AnnotationsSidebarFilters() {
       {
         key: "database-sources",
         title: "Database Sources",
-        description: "Source databases (e.g., RefSeq, Ensembl, GenBank)",
+        description: "Source databases (e.g., RefSeq, Ensembl, GenBank, CommunityRegistry)",
         options: databaseSourcesOptions,
         selected: databaseSources,
         onChange: setDatabaseSources
@@ -1006,6 +1027,7 @@ export function AnnotationsSidebarFilters() {
             isOpen={isTaxonomySectionOpen}
             onToggle={() => setIsTaxonomySectionOpen((prev) => !prev)}
             isLoading={loadingRanks && treeRankRoots.length === 0}
+            persistReady={sectionsPersistReady}
           >
             <div className="space-y-4">
               {/* Rank Selection */}
@@ -1056,6 +1078,7 @@ export function AnnotationsSidebarFilters() {
             isOpen={isBioprojectSectionOpen}
             onToggle={() => setIsBioprojectSectionOpen((prev) => !prev)}
             isLoading={loadingBioprojects && bioprojects.length === 0}
+            persistReady={sectionsPersistReady}
           >
             <div className="space-y-3">
               <div className="flex items-center justify-between text-xs text-muted-foreground">
@@ -1136,6 +1159,7 @@ export function AnnotationsSidebarFilters() {
             isOpen={isAssemblySectionOpen}
             onToggle={() => setIsAssemblySectionOpen((prev) => !prev)}
             isLoading={loadingAssemblyFilters}
+            persistReady={sectionsPersistReady}
           >
             {loadingAssemblyFilters ? (
               <div className="flex items-center justify-center py-4">
@@ -1235,6 +1259,7 @@ export function AnnotationsSidebarFilters() {
             isOpen={isBuscoSectionOpen}
             onToggle={() => setIsBuscoSectionOpen((prev) => !prev)}
             isLoading={loadingBuscoFrequencies && Object.keys(buscoFrequencies).length === 0}
+            persistReady={sectionsPersistReady}
           >
             <div className="space-y-3">
               {loadingBuscoFrequencies && Object.keys(buscoFrequencies).length === 0 ? (
@@ -1289,6 +1314,7 @@ export function AnnotationsSidebarFilters() {
                 description={section.description}
                 onToggle={() => handleGffSourceAccordionChange(isOpen ? undefined : section.key)}
                 isLoading={isSectionLoading}
+                persistReady={sectionsPersistReady}
               >
                 <FilterAccordionSection
                   title={section.title}
@@ -1319,6 +1345,7 @@ export function AnnotationsSidebarFilters() {
                 description={section.description}
                 onToggle={() => handleGffSummaryAccordionChange(isOpen ? undefined : section.key)}
                 isLoading={isSectionLoading}
+                persistReady={sectionsPersistReady}
               >
                 <FilterAccordionSection
                   title={section.title}

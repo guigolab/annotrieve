@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { Github, Sun, Moon, Shield, HelpCircle, BookOpen, MessageSquare, Terminal } from "lucide-react"
+import { Github, Sun, Moon, Shield, HelpCircle, BookOpen, MessageSquare, Terminal, Users, BarChart3 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -85,6 +85,18 @@ export function AppNavbar() {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-44">
+              <DropdownMenuItem asChild>
+                <Link href="/community/" className="flex items-center gap-2">
+                  <Users className="h-3.5 w-3.5" />
+                  Community
+                </Link>
+              </DropdownMenuItem>
+              <DropdownMenuItem asChild>
+                <Link href="/usage/" className="flex items-center gap-2">
+                  <BarChart3 className="h-3.5 w-3.5" />
+                  Usage
+                </Link>
+              </DropdownMenuItem>
               <DropdownMenuItem asChild>
                 <Link href="/faqs/" className="flex items-center gap-2">
                   <HelpCircle className="h-3.5 w-3.5" />

@@ -3,13 +3,12 @@
 import { Hero } from "@/components/home/hero"
 import { LatestReleases } from "@/components/home/latest-releases"
 import { TopAnnotations } from "@/components/home/top-annotated-records"
-import { DatabaseFrequencies } from "@/components/home/database-frequencies"
-import { ReleaseDateChart } from "@/components/home/release-date-chart"
-import { BuscoCompletenessChart } from "@/components/home/busco-completeness-chart"
+import { AnnotationSourcesOverview } from "@/components/home/annotation-sources-overview"
+import { BuscoCompletenessSection } from "@/components/home/busco-completeness-section"
 import { FeaturesSection } from "@/components/home/features-section"
 import { CommunityRegistrySection } from "@/components/home/community-registry-section"
 import { HomeFooter } from "@/components/home/home-footer"
-import { VisitorAnalyticsSection } from "@/components/home/visitor-analytics-section"
+import { UsageTeaserSection } from "@/components/home/usage-teaser-section"
 import { SectionWrapper } from "@/components/ui/section-wrapper"
 
 
@@ -32,51 +31,24 @@ export default function Home() {
           }
         />
       </SectionWrapper>
-      <SectionWrapper id="community-registry" backgroundVariant="accent" className="scroll-mt-20">
-        <CommunityRegistrySection />
-      </SectionWrapper>
+
       <SectionWrapper id="database-frequencies" backgroundVariant="default">
-        <DatabaseFrequencies
+        <AnnotationSourcesOverview
           title="A central hub for annotations"
           description={
             <>
               Annotrieve aggregates annotations weekly from{" "}
               <span className="font-medium">Ensembl</span>,{" "}
-              <span className="font-medium">NCBI RefSeq</span>, and{" "}
-              <span className="font-medium">NCBI GenBank</span>. Explore the current distribution and download the raw TSVs.
-            </>
-          }
-        />
-      </SectionWrapper>
-      <SectionWrapper id="release-timeline" backgroundVariant="muted">
-        <ReleaseDateChart
-          title="Cumulative annotation release timeline"
-          description={
-            <>
-              Track the cumulative growth of annotation releases over time across{" "}
-              <span className="font-medium">Ensembl</span>,{" "}
-              <span className="font-medium">NCBI RefSeq</span>, and{" "}
-              <span className="font-medium">NCBI GenBank</span>. Each line shows the total number of annotations released up to that year, with each database accumulating independently.
+              <span className="font-medium">NCBI RefSeq</span>,{" "}
+              <span className="font-medium">NCBI GenBank</span>, and the{" "}
+              <span className="font-medium">Community Registry</span>.
             </>
           }
         />
       </SectionWrapper>
 
-      <SectionWrapper id="visitor-analytics" backgroundVariant="muted">
-        <VisitorAnalyticsSection
-          title="Global usage"
-          description={
-            <>
-              Anonymous, country-level usage of Annotrieve. We never store IP addresses—only
-              hashed fingerprints and approximate country. Visit counts reflect distinct days
-              with API activity.
-            </>
-          }
-        />
-      </SectionWrapper>
-
-      <SectionWrapper id="busco-completeness" backgroundVariant="default">
-        <BuscoCompletenessChart
+      <SectionWrapper id="busco-completeness" backgroundVariant="muted">
+        <BuscoCompletenessSection
           title="BUSCO completeness"
           description="We use BUSCO (version 6.0.0) with eukaryota_odb12 lineage (129 genes) to compute the completeness of the annotations."
         />
@@ -89,7 +61,7 @@ export default function Home() {
         />
       </SectionWrapper>
 
-      <SectionWrapper id="top-annotations" backgroundVariant="default">
+      <SectionWrapper id="top-annotations" backgroundVariant="muted">
         <TopAnnotations
           onFilterSelect={handleFilterSelect}
           title="Top annotated records"
@@ -97,7 +69,15 @@ export default function Home() {
         />
       </SectionWrapper>
 
-       <HomeFooter />
+      <SectionWrapper id="usage" backgroundVariant="default">
+        <UsageTeaserSection />
+      </SectionWrapper>
+
+      <SectionWrapper id="community-registry" backgroundVariant="muted" className="scroll-mt-20">
+        <CommunityRegistrySection />
+      </SectionWrapper>
+
+      <HomeFooter />
     </>
   )
 }

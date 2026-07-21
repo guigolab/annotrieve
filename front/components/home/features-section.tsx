@@ -23,7 +23,7 @@ interface Feature {
 const FEATURES: Feature[] = [
   {
     title: "Centralized Repository",
-    description: "Access a unified collection of eukaryotic GFF annotations from NCBI RefSeq, NCBI GenBank, and Ensembl in one convenient location.",
+    description: "Access a unified collection of eukaryotic GFF annotations from NCBI RefSeq, NCBI GenBank, Ensembl, and the Community Registry in one convenient location.",
     icon: Server,
     iconColor: "text-blue-600",
     iconBgColor: "bg-blue-500/10",
@@ -77,7 +77,7 @@ function FeatureCard({ feature, index }: FeatureCardProps) {
 
   return (
     <Card
-      className="group relative flex h-full flex-col border-border/60 bg-card/80 backdrop-blur-sm shadow-sm hover:shadow-lg hover:border-primary/40 transition-all duration-300 animate-in fade-in slide-in-from-bottom-4"
+      className="group relative flex h-full flex-col border-foreground/20 bg-card shadow-sm hover:shadow-lg hover:border-primary/40 transition-all duration-300 animate-in fade-in slide-in-from-bottom-4"
       style={{
         animationDelay: delay,
         animationDuration: "600ms",

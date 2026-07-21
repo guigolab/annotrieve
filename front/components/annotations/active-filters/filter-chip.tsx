@@ -1,7 +1,7 @@
 "use client"
 
 import { Button } from "@/components/ui/button"
-import { X } from "lucide-react"
+import { Loader2, X } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { ReactNode } from "react"
 
@@ -13,6 +13,8 @@ interface FilterChipProps {
   onClick?: () => void
   isActive?: boolean
   readOnly?: boolean
+  /** True while URL stub label is being hydrated (taxon name, etc.). */
+  isLoading?: boolean
   colorScheme: {
     bg: string
     bgHover: string
@@ -21,7 +23,16 @@ interface FilterChipProps {
   }
 }
 
-export function FilterChip({ label, onRemove, icon, onClick, colorScheme, isActive = false, readOnly = false }: FilterChipProps) {
+export function FilterChip({
+  label,
+  onRemove,
+  icon,
+  onClick,
+  colorScheme,
+  isActive = false,
+  readOnly = false,
+  isLoading = false,
+}: FilterChipProps) {
   return (
     <div
       className={cn(
@@ -29,16 +40,30 @@ export function FilterChip({ label, onRemove, icon, onClick, colorScheme, isActi
         colorScheme.bg,
         colorScheme.border,
         colorScheme.bgHover,
-        onClick && "cursor-pointer",
-        isActive && "border-primary bg-primary/10"
+        onClick && !isLoading && "cursor-pointer",
+        isActive && "border-primary bg-primary/10",
+        isLoading && "opacity-80"
       )}
-      onClick={onClick}
-      role={onClick ? "button" : undefined}
-      tabIndex={onClick ? 0 : undefined}
-      aria-pressed={onClick ? isActive : undefined}
+      onClick={isLoading ? undefined : onClick}
+      role={onClick && !isLoading ? "button" : undefined}
+      tabIndex={onClick && !isLoading ? 0 : undefined}
+      aria-pressed={onClick && !isLoading ? isActive : undefined}
+      aria-busy={isLoading || undefined}
     >
-      {icon && <span className="flex-shrink-0">{icon}</span>}
-      <span className={cn("font-medium whitespace-nowrap", colorScheme.text)}>{label}</span>
+      {isLoading ? (
+        <Loader2 className="h-3.5 w-3.5 flex-shrink-0 animate-spin text-muted-foreground" />
+      ) : (
+        icon && <span className="flex-shrink-0">{icon}</span>
+      )}
+      <span
+        className={cn(
+          "font-medium whitespace-nowrap",
+          colorScheme.text,
+          isLoading && "text-muted-foreground animate-pulse"
+        )}
+      >
+        {label}
+      </span>
       {!readOnly && (
         <Button
           variant="ghost"
@@ -56,4 +81,3 @@ export function FilterChip({ label, onRemove, icon, onClick, colorScheme, isActi
     </div>
   )
 }
-

@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
+    "test:url": "npx tsx --test lib/annotations-url.test.ts lib/annotations-url-writer.test.ts lib/csv-list.test.ts",
     "export": "next build && next export",
     "deploy": "npm run build && touch out/.nojekyll && git add out/ && git commit -m 'Deploy to GitHub Pages' && git subtree push --prefix out origin gh-pages"
   },

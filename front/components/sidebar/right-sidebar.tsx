@@ -6,23 +6,47 @@ import { AssembliesListTable } from "./assemblies-list-table"
 import { Button } from "@/components/ui/button"
 import { X } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { useEffect } from "react"
+import { useCallback, useEffect } from "react"
+import { usePathname, useRouter, useSearchParams } from "next/navigation"
+import {
+  clearAnnotationOverviewId,
+  isAnnotationsListPath,
+} from "@/lib/hooks/use-annotation-overview-url-sync"
 
 export function RightSidebar() {
   const rightSidebar = useUIStore((state) => state.rightSidebar)
   const closeRightSidebar = useUIStore((state) => state.closeRightSidebar)
   const { isOpen, view, data } = rightSidebar
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const pathname = usePathname()
+
+  const closeFileOverview = useCallback(() => {
+    // Optimistic close — do not wait for URL mirror (avoids reopen races).
+    closeRightSidebar()
+    if (isAnnotationsListPath(pathname)) {
+      clearAnnotationOverviewId(router, searchParams)
+    }
+  }, [pathname, searchParams, router, closeRightSidebar])
+
+  const handleClose = useCallback(() => {
+    if (view === "file-overview") {
+      closeFileOverview()
+      return
+    }
+    closeRightSidebar()
+  }, [view, closeFileOverview, closeRightSidebar])
 
   // Close on escape key
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && isOpen) {
-        closeRightSidebar()
+      if (e.key === "Escape" && isOpen) {
+        handleClose()
       }
     }
-    window.addEventListener('keydown', handleEscape)
-    return () => window.removeEventListener('keydown', handleEscape)
-  }, [isOpen, closeRightSidebar])
+    window.addEventListener("keydown", handleEscape)
+    return () => window.removeEventListener("keydown", handleEscape)
+  }, [isOpen, handleClose])
 
   if (!isOpen || !view) return null
 
@@ -43,7 +67,7 @@ export function RightSidebar() {
       <FileOverviewSidebar
         annotation={data.annotation}
         open={isOpen}
-        onOpenChange={(open) => !open && closeRightSidebar()}
+        onOpenChange={(open) => !open && closeFileOverview()}
       />
     )
   }
@@ -56,7 +80,7 @@ export function RightSidebar() {
           "fixed inset-0 bg-black/50 z-40 transition-opacity duration-300 ease-in-out",
           isOpen ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
         )}
-        onClick={closeRightSidebar}
+        onClick={handleClose}
       />
 
       {/* Sidebar */}
@@ -67,7 +91,7 @@ export function RightSidebar() {
           "flex flex-col",
           isOpen ? "translate-x-0" : "translate-x-full"
         )}
-        style={{ width: 'min(800px, 90vw)' }}
+        style={{ width: "min(800px, 90vw)" }}
       >
         {/* Header - skip for taxon-details (TaxonDetailsSidebar renders its own) */}
         <div className="flex items-center justify-between p-3 border-b flex-shrink-0 bg-muted/30">
@@ -75,7 +99,7 @@ export function RightSidebar() {
           <Button
             variant="ghost"
             size="sm"
-            onClick={closeRightSidebar}
+            onClick={handleClose}
             className="h-8 w-8 p-0"
           >
             <X className="h-4 w-4" />
@@ -84,16 +108,13 @@ export function RightSidebar() {
 
         {/* Content */}
         <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
-
           {view === "assemblies-list" && (
             <div className="p-3 h-full overflow-y-auto">
               <AssembliesListTable taxid={data.taxid} />
             </div>
           )}
-
         </div>
       </div>
     </>
   )
 }
-

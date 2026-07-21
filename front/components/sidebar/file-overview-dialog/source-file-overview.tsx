@@ -1,15 +1,29 @@
 "use client"
 
+import Link from "next/link"
 import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Database } from "lucide-react"
 import type { PortalAnnotation } from "@/lib/types"
+import { COMMUNITY_PROVIDERS } from "@/lib/community-providers"
 
 interface SourceFileOverviewProps {
   annotation: PortalAnnotation
 }
 
 export function SourceFileOverview({ annotation }: SourceFileOverviewProps) {
+  const isCommunity =
+    annotation.source_file_info?.source_database === "CommunityRegistry" ||
+    annotation.source_file_info?.database === "CommunityRegistry"
+
+  const communityProvider = isCommunity
+    ? COMMUNITY_PROVIDERS.find(
+        (p) => p.filterProvider === annotation.source_file_info?.provider
+      )
+    : undefined
+
+  const pipelineName = annotation.source_file_info?.pipeline?.name || "Unknown"
+
   return (
     <Card className="p-4">
       <div className="flex items-center gap-2 mb-4">
@@ -32,9 +46,21 @@ export function SourceFileOverview({ annotation }: SourceFileOverviewProps) {
               <span className="text-muted-foreground">Provider</span>
               <span className="font-mono text-xs">{annotation.source_file_info?.provider || "Unknown"}</span>
             </div>
-            <div className="flex justify-between py-2 border-b">
-              <span className="text-muted-foreground">Pipeline</span>
-              <span className="font-mono text-xs">{annotation.source_file_info?.pipeline?.name || "Unknown"}</span>
+            <div className="flex justify-between py-2 border-b gap-2">
+              <span className="text-muted-foreground shrink-0">Pipeline</span>
+              {communityProvider ? (
+                <Link
+                  href={`/community?provider=${communityProvider.id}`}
+                  className="font-mono text-xs text-primary underline-offset-4 hover:underline text-right truncate"
+                  title={pipelineName}
+                >
+                  {pipelineName}
+                </Link>
+              ) : (
+                <span className="font-mono text-xs text-right truncate" title={pipelineName}>
+                  {pipelineName}
+                </span>
+              )}
             </div>
             <div className="flex justify-between py-2 border-b">
               <span className="text-muted-foreground">Release Date</span>
@@ -89,4 +115,3 @@ export function SourceFileOverview({ annotation }: SourceFileOverviewProps) {
     </Card>
   )
 }
-

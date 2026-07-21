@@ -4,6 +4,7 @@ from helpers import response as response_helper
 from helpers import parameters as params_helper
 from helpers import pysam_helper
 from helpers import constants as constants_helper
+from helpers import tsv_fields as tsv_fields_helper
 from helpers import annotation as annotation_helper
 from helpers import feature_stats as feature_stats_helper
 from helpers import busco_stats as busco_stats_helper
@@ -23,12 +24,13 @@ def get_annotations(args: dict, field: str = None, response_type: str = 'metadat
         limit = args.pop('limit', 20)
         offset = args.pop('offset', 0)
         fields = args.pop('fields', None)
+        selected_fields = args.pop('selected_fields', None)
         annotations = annotation_helper.get_annotation_records(**args)
         total = annotations.count()
         if response_type == 'frequencies':
             return query_visitors_helper.get_frequencies(annotations, field, type='annotation')
         elif response_type == 'tsv':
-            return stream_annotation_tsv(annotations)
+            return stream_annotation_tsv(annotations, selected_fields=selected_fields)
         else:
             if fields:
                 annotations = annotations.only(*fields.split(',') if isinstance(fields, str) else fields)
@@ -42,17 +44,32 @@ def get_annotations(args: dict, field: str = None, response_type: str = 'metadat
 TSV_BUFFER_SIZE = 5000
 
 
-def stream_annotation_tsv(annotations):
-    fields = list(constants_helper.FIELD_TSV_MAP.values())
-    header = ("\t".join(constants_helper.FIELD_TSV_MAP.keys()) + "\n").encode()
+def stream_annotation_tsv(annotations, selected_fields=None):
+    field_map = tsv_fields_helper.resolve_tsv_field_map(selected_fields)
+    mongo_paths = list(field_map.values())
+    column_keys = list(field_map.keys())
+    extended_keys = set(constants_helper.FIELD_TSV_EXTENDED_MAP.keys())
+    use_extended_formatting = selected_fields is not None and bool(
+        params_helper.normalize_to_list(selected_fields)
+    )
+    header = ("\t".join(column_keys) + "\n").encode()
+
+    def format_row(row):
+        cells = []
+        for key, value in zip(column_keys, row):
+            is_extended_column = use_extended_formatting and key in extended_keys
+            cells.append(
+                tsv_fields_helper.format_tsv_cell(value, extended=is_extended_column)
+            )
+        return "\t".join(cells) + "\n"
+
     def row_iterator():
         yield header
-        cursor = iter(annotations.batch_size(TSV_BUFFER_SIZE).scalar(*fields))
+        cursor = tsv_fields_helper.iter_tsv_rows(
+            annotations, mongo_paths, batch_size=TSV_BUFFER_SIZE
+        )
         while batch := list(itertools.islice(cursor, TSV_BUFFER_SIZE)):
-            yield "".join(
-                "\t".join("" if v is None else str(v) for v in row) + "\n"
-                for row in batch
-            ).encode()
+            yield "".join(format_row(row) for row in batch).encode()
     return StreamingResponse(
         row_iterator(),
         media_type='text/tab-separated-values',

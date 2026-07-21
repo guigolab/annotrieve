@@ -1,9 +1,19 @@
+import csv
 from typing import Optional, Iterable, List
 from fastapi import HTTPException, Request
 
-def split_string_param(param:str|list):
+def split_string_param(param: str | list):
+    """Split a list query param.
+
+    Strings are parsed as CSV so values containing commas can be quoted:
+    ``NCBI,Ensembl`` → two values; ``"Hiller Lab, Senckenberg"`` → one value.
+    Unquoted strings behave like a plain comma-split (backward compatible).
+    Non-string iterables are returned as-is (no re-split).
+    """
     if isinstance(param, str):
-        return param.split(',')
+        if not param:
+            return []
+        return next(csv.reader([param], skipinitialspace=True))
     return param
 
 def format_boolean_param(param:str|bool):

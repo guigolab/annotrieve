@@ -274,7 +274,7 @@ export interface PortalAnnotation extends AnnotationBase {
       method: string
     }
     release_date: string
-    source_database: "GenBank" | "RefSeq" | "Ensembl"
+    source_database: "GenBank" | "RefSeq" | "Ensembl" | "CommunityRegistry"
   }
   indexed_file_info: {
     file_size: number

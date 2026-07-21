@@ -96,11 +96,12 @@ paths:
         - "annotations"
       operationId: "getAnnotationsReport"
       summary: "Download annotation metadata as TSV"
-      description: "Streams a TSV file with annotation metadata columns (annotation_id, assembly_accession, assembly_name, organism_name, taxid, database, provider, source_url, bgzip_path, csi_path)."
+      description: "Streams a TSV file with annotation metadata columns. By default exports annotation_id, assembly_accession, assembly_name, organism_name, taxid, database, provider, source_url, bgzip_path, and csi_path. Use selected_fields to append additional extended columns."
       parameters:
         - $ref: "#/components/parameters/filter"
         - $ref: "#/components/parameters/limit"
         - $ref: "#/components/parameters/offset"
+        - $ref: "#/components/parameters/selected_fields"
         - $ref: "#/components/parameters/taxids"
         - $ref: "#/components/parameters/assembly_accessions"
         - $ref: "#/components/parameters/bioproject_accessions"
@@ -137,7 +138,7 @@ paths:
         - "annotations"
       operationId: "postAnnotationsReport"
       summary: "Download annotation metadata via POST"
-      description: "Same as GET /annotations/report, but accepts filters in the request body."
+      description: "Same as GET /annotations/report, but accepts filters in the request body. Omit selected_fields to preserve the default production column set; provide it to append extended columns after the defaults."
       requestBody:
         required: true
         content:
@@ -1502,7 +1503,7 @@ components:
     db_sources:
       name: "db_sources"
       in: "query"
-      description: "Comma-separated list of source databases (RefSeq, Ensembl, GenBank)"
+      description: "Comma-separated list of source databases (RefSeq, Ensembl, GenBank, CommunityRegistry)"
       schema:
         type: "string"
     feature_sources:
@@ -1617,6 +1618,13 @@ components:
       description: "Comma-separated list of dot-notation fields to include in the response"
       schema:
         type: "string"
+    selected_fields:
+      name: "selected_fields"
+      in: "query"
+      description: "Comma-separated list of extended TSV column keys to append after the default export columns. Only applies to /annotations/report. Omit to keep the production default column set."
+      schema:
+        type: "string"
+        example: "release_date,taxon_lineage,busco_complete"
     rank:
       name: "rank"
       in: "query"
@@ -1716,6 +1724,9 @@ components:
           default: 20
         fields:
           type: string
+        selected_fields:
+          type: string
+          description: "Comma-separated extended TSV column keys to append after default columns (report export only)."
 
     AssemblyQueryParams:
       type: object

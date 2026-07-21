@@ -219,7 +219,7 @@ export function Hero() {
                             <span className="bg-gradient-to-r from-primary via-secondary to-accent bg-clip-text text-transparent">Annotrieve</span>
                         </h1>
                         <p className="text-base sm:text-lg lg:text-xl text-muted-foreground leading-relaxed text-balance mx-auto max-w-3xl">
-                            Search, explore, and download GFF annotations from Ensembl and NCBI across all eukaryotic species.
+                        A hub for eukaryotic GFF annotations from Ensembl, NCBI, and other sources. Search, explore, compare, and download genome annotations across species.
                         </p>
                     </div>
 
@@ -286,7 +286,7 @@ export function Hero() {
                     <p className="mx-auto max-w-lg text-center text-sm leading-relaxed text-muted-foreground">
                         Have eukaryotic GFF3 annotations to list?{" "}
                         <Link
-                            href="#community-registry"
+                            href="/community"
                             className="inline-flex items-center gap-1 font-medium text-foreground underline-offset-4 transition-colors hover:text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 focus-visible:ring-offset-2 rounded-sm"
                         >
                             Join the community registry

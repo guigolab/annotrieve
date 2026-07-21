@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useMemo, useCallback, type ReactNode } from "react"
+import { useState, useMemo, useCallback, type ReactNode, Suspense } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
@@ -179,7 +179,9 @@ function FavoritesComparePageContent({
 
   return (
     <>
-      <RightSidebar />
+      <Suspense fallback={null}>
+        <RightSidebar />
+      </Suspense>
       <div className="flex flex-col h-[calc(100vh-4rem)] overflow-hidden">
         <header aria-label="Favorite annotations" className="px-4 sm:px-6 py-3 border-b border-border bg-background/95 supports-[backdrop-filter]:bg-background/75 backdrop-blur">
           <div

@@ -19,9 +19,10 @@ TMP_DIR = "/tmp"
 ANNOTATIONS_PATH = os.getenv('LOCAL_ANNOTATIONS_DIR')
 GH_PATH = 'https://raw.githubusercontent.com/guigolab/genome-annotation-tracker/refs/heads/main/data/'
 URLS_TO_FETCH = [
+    GH_PATH + 'community_annotations.tsv',
     GH_PATH + 'ensembl_annotations.tsv',
     GH_PATH + 'genbank_annotations.tsv',
-    GH_PATH + 'refseq_annotations.tsv'
+    GH_PATH + 'refseq_annotations.tsv',
 ]
 DEV= os.getenv('DEV')
 BATCH_SIZE = 10
@@ -36,34 +37,30 @@ def import_annotations():
     print("Starting import annotations job...")
     # fetch annotations and deduplicate by md5 checksum and url path (exact match)
     new_annotations = []
-    for url in URLS_TO_FETCH:
+    if DEV:
+        url = URLS_TO_FETCH[0] #community_annotations.tsv
         fetched_annotations = annotation_service.fetch_from_url(url)
-        #here we filter those incoming annotations 
+        # here we filter those incoming annotations 
         # that are already in the database by md5 checksum and url path 
         # exact match (perfect match) of the source file
         # we will handle later those which url exists but the md5 checksum is different
         filtered_annotations = annotation_service.filter_annotations_by_md5_checksum_and_url_path(fetched_annotations)
         new_annotations.extend(filtered_annotations)
-    
+    else:
+        for url in URLS_TO_FETCH:
+            fetched_annotations = annotation_service.fetch_from_url(url)
+            # here we filter those incoming annotations 
+            # that are already in the database by md5 checksum and url path 
+            # exact match (perfect match) of the source file
+            # we will handle later those which url exists but the md5 checksum is different
+            filtered_annotations = annotation_service.filter_annotations_by_md5_checksum_and_url_path(fetched_annotations)
+            new_annotations.extend(filtered_annotations)
+
     if DEV:
-        # Group by stripped accession so GCA_/GCF_ pairs share one key
-        #new_annotations = random.sample(new_annotations, 50)
-
-        ass_to_ann: dict[str, list] = {}
-        for ann in new_annotations:
-            ass_key = ann.assembly_accession.removeprefix('GCA_').removeprefix('GCF_')
-            ass_to_ann.setdefault(ass_key, []).append(ann)
-
-        # Top 10 assemblies with more than one annotation (includes both pair accessions)
-        multi_ann = {k: v for k, v in ass_to_ann.items() if len(v) > 1}
-        top_ass = sorted(multi_ann.items(), key=lambda x: len(x[1]), reverse=True)[10:30]
-        new_annotations = [ann for _, anns in top_ass for ann in anns]
-        print(
-            f"DEV: importing {len(new_annotations)} annotations from "
-            f"{len(top_ass)} assemblies: {[k for k, _ in top_ass]}"
-        )
+        new_annotations = random.sample(new_annotations, 200)
 
     print(f"Found {len(new_annotations)} new annotations to process")
+    
     # LINEAGE HANDLING STEP
     valid_lineages = taxonomy_service.handle_taxonomy(new_annotations, TMP_DIR) #lineages saved in the database, return a dict of taxid:lineage
     new_annotations_to_process = annotation_service.filter_annotations_dict_by_field(

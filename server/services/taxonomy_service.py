@@ -6,6 +6,7 @@ from fastapi import HTTPException
 from fastapi.responses import RedirectResponse, StreamingResponse
 from helpers import query_visitors as query_visitors_helper
 from helpers import response as response_helper
+from helpers.frequencies import item_frequencies
 from helpers.flattened_taxonomy_export import (
     CELLULAR_ORGANISMS_TAXID,
     FLATTENED_TREE_FIELDS,
@@ -31,8 +32,7 @@ def get_taxon_nodes(filter: str = None, rank: str = None, offset: int = 0, limit
     return response_helper.json_response_with_pagination(taxon_nodes, taxon_nodes.count(), offset, limit)
 
 def get_rank_frequencies():
-    ranks = TaxonNode.objects().item_frequencies('rank')
-    return ranks
+    return item_frequencies(TaxonNode.objects(), "rank")
 
 def get_taxon_node(taxid: str):
     taxon_node = TaxonNode.objects(taxid=taxid).exclude('id').first()

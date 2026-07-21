@@ -33,6 +33,7 @@ TSV_NAMES = (
     "ensembl_annotations.tsv",
     "genbank_annotations.tsv",
     "refseq_annotations.tsv",
+    "community_annotations.tsv",
 )
 DEFAULT_OUTPUT = Path(__file__).resolve().parent.parent / "annotrieve_missing_from_tracker.tsv"
 DEFAULT_LOCAL_TRACKER = (

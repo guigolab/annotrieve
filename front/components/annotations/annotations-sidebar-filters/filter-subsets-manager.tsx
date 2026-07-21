@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useRef, useEffect } from "react"
+import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
@@ -17,41 +17,11 @@ function SubsetCard({ subset }: { subset: AnnotationSubset }) {
   const deleteSubset = useAnnotationSubsetsStore((state) => state.deleteSubset)
   const setLastLoadedSubsetId = useAnnotationSubsetsStore((state) => state.setLastLoadedSubsetId)
   const subsets = useAnnotationSubsetsStore((state) => state.subsets)
-  
-  // Get all setters from the filters store
-  const setSelectedTaxons = useAnnotationsFiltersStore((state) => state.setSelectedTaxons)
-  const setSelectedOrganisms = useAnnotationsFiltersStore((state) => state.setSelectedOrganisms)
-  const setSelectedAssemblies = useAnnotationsFiltersStore((state) => state.setSelectedAssemblies)
-  const setSelectedBioprojects = useAnnotationsFiltersStore((state) => state.setSelectedBioprojects)
-  const setSelectedAssemblyLevels = useAnnotationsFiltersStore((state) => state.setSelectedAssemblyLevels)
-  const setSelectedAssemblyStatuses = useAnnotationsFiltersStore((state) => state.setSelectedAssemblyStatuses)
-  const setOnlyRefGenomes = useAnnotationsFiltersStore((state) => state.setOnlyRefGenomes)
-  const setBiotypes = useAnnotationsFiltersStore((state) => state.setBiotypes)
-  const setFeatureTypes = useAnnotationsFiltersStore((state) => state.setFeatureTypes)
-  const setFeatureSources = useAnnotationsFiltersStore((state) => state.setFeatureSources)
-  const setPipelines = useAnnotationsFiltersStore((state) => state.setPipelines)
-  const setProviders = useAnnotationsFiltersStore((state) => state.setProviders)
-  const setDatabaseSources = useAnnotationsFiltersStore((state) => state.setDatabaseSources)
-  const setBuscoCompleteRange = useAnnotationsFiltersStore((state) => state.setBuscoCompleteRange)
+
+  const loadFilterSubset = useAnnotationsFiltersStore((state) => state.loadFilterSubset)
 
   const handleLoad = () => {
-    const filters = subset.filters
-    setSelectedTaxons(filters.selectedTaxons)
-    setSelectedOrganisms(filters.selectedOrganisms)
-    setSelectedAssemblies(filters.selectedAssemblies)
-    setSelectedBioprojects(filters.selectedBioprojects)
-    setSelectedAssemblyLevels(filters.selectedAssemblyLevels)
-    setSelectedAssemblyStatuses(filters.selectedAssemblyStatuses)
-    setOnlyRefGenomes(filters.onlyRefGenomes)
-    setBiotypes(filters.biotypes)
-    setFeatureTypes(filters.featureTypes)
-    setFeatureSources(filters.featureSources)
-    setPipelines(filters.pipelines)
-    setProviders(filters.providers)
-    setDatabaseSources(filters.databaseSources)
-    setBuscoCompleteRange(filters.buscoCompleteFrom ?? null, filters.buscoCompleteTo ?? null)
-
-    // Track that we just loaded this subset
+    loadFilterSubset(subset.filters)
     setLastLoadedSubsetId(subset.id)
   }
 
@@ -59,23 +29,22 @@ function SubsetCard({ subset }: { subset: AnnotationSubset }) {
     const trimmedName = editName.trim()
     if (!trimmedName) return
 
-    // Check for duplicate names (case-insensitive, excluding current subset)
     const nameExists = subsets.some(
-      s => s.id !== subset.id && s.name.toLowerCase() === trimmedName.toLowerCase()
+      (s) => s.id !== subset.id && s.name.toLowerCase() === trimmedName.toLowerCase()
     )
     if (nameExists) {
-      return // Don't save if name already exists
+      return
     }
 
     updateSubset(subset.id, { name: trimmedName })
     setIsEditing(false)
   }
 
-  // Check if name already exists (case-insensitive, excluding current subset)
   const isNameDuplicate = Boolean(
-    editName.trim() && subsets.some(
-      s => s.id !== subset.id && s.name.toLowerCase() === editName.trim().toLowerCase()
-    )
+    editName.trim() &&
+      subsets.some(
+        (s) => s.id !== subset.id && s.name.toLowerCase() === editName.trim().toLowerCase()
+      )
   )
 
   const handleCancelEdit = () => {
@@ -84,10 +53,8 @@ function SubsetCard({ subset }: { subset: AnnotationSubset }) {
   }
 
   const handleDelete = () => {
-      deleteSubset(subset.id)
+    deleteSubset(subset.id)
   }
-
-  // Generate filter summary
 
   return (
     <div
@@ -97,13 +64,11 @@ function SubsetCard({ subset }: { subset: AnnotationSubset }) {
       )}
     >
       <div className="flex items-center gap-2">
-        {/* Color indicator */}
         <div
           className="h-2.5 w-2.5 rounded-full flex-shrink-0"
           style={{ backgroundColor: subset.color }}
         />
-        
-        {/* Content */}
+
         <div className="flex-1 min-w-0">
           {isEditing ? (
             <div className="space-y-1">
@@ -112,8 +77,8 @@ function SubsetCard({ subset }: { subset: AnnotationSubset }) {
                   value={editName}
                   onChange={(e) => setEditName(e.target.value)}
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !isNameDuplicate) handleSaveEdit()
-                    if (e.key === 'Escape') handleCancelEdit()
+                    if (e.key === "Enter" && !isNameDuplicate) handleSaveEdit()
+                    if (e.key === "Escape") handleCancelEdit()
                   }}
                   className={cn(
                     "h-7 text-xs",
@@ -131,12 +96,7 @@ function SubsetCard({ subset }: { subset: AnnotationSubset }) {
                 >
                   <Save className="h-3 w-3" />
                 </Button>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  className="h-7 w-7"
-                  onClick={handleCancelEdit}
-                >
+                <Button size="icon" variant="ghost" className="h-7 w-7" onClick={handleCancelEdit}>
                   <X className="h-3 w-3" />
                 </Button>
               </div>
@@ -188,10 +148,19 @@ export function FilterSubsetsManager() {
   const subsets = useAnnotationSubsetsStore((state) => state.subsets)
   const hasSubsets = useAnnotationSubsetsStore((state) => state.hasSubsets())
   const [isOpen, setIsOpen] = useState(false)
+  // Zustand persist can rehydrate before first paint; gate UI so SSR/static HTML matches.
+  const [hydrated, setHydrated] = useState(false)
+
+  useEffect(() => {
+    setHydrated(true)
+  }, [])
+
+  const visibleSubsets = hydrated ? subsets : []
+  const visibleHasSubsets = hydrated && hasSubsets
 
   const handleCompare = () => {
-    if (subsets.length >= 2) {
-      router.push('/annotations/compare')
+    if (visibleSubsets.length >= 2) {
+      router.push("/annotations/compare")
     }
   }
 
@@ -199,24 +168,27 @@ export function FilterSubsetsManager() {
     <div className="border-t backdrop-blur supports-[backdrop-filter]:bg-background/75 flex-shrink-0">
       <Collapsible open={isOpen} onOpenChange={setIsOpen}>
         <div className="p-3">
-          <div className="flex items-center justify-between gap-2">
+          <div
+            className={cn(
+              "flex items-center justify-between gap-2 transition-opacity duration-200 ease-out",
+              hydrated ? "opacity-100" : "opacity-0"
+            )}
+          >
             <CollapsibleTrigger asChild>
               <button className="flex items-center gap-1.5 hover:opacity-80 transition-opacity">
-              <ChevronRight
+                <ChevronRight
                   className={cn(
                     "h-3.5 w-3.5 text-muted-foreground transition-transform duration-200",
                     isOpen ? "transform rotate-90" : "transform rotate-0"
                   )}
                 />
                 <span className="text-sm font-semibold">Saved Filters</span>
-                {hasSubsets && (
-                  <span className="text-xs text-muted-foreground">
-                    ({subsets.length})
-                  </span>
+                {visibleHasSubsets && (
+                  <span className="text-xs text-muted-foreground">({visibleSubsets.length})</span>
                 )}
               </button>
             </CollapsibleTrigger>
-            {subsets.length >= 2 && (
+            {visibleSubsets.length >= 2 && (
               <Button
                 size="sm"
                 className="h-6 px-2 text-xs font-semibold"
@@ -229,22 +201,20 @@ export function FilterSubsetsManager() {
           </div>
 
           <CollapsibleContent className="space-y-2">
-            {hasSubsets ? (
+            {visibleHasSubsets ? (
               <>
                 <p className="text-xs text-muted-foreground px-0.5">
                   Click on a filter set name to load its filters
                 </p>
                 <div className="space-y-1 max-h-[200px] overflow-y-auto">
-                  {subsets.map((subset) => (
+                  {visibleSubsets.map((subset) => (
                     <SubsetCard key={subset.id} subset={subset} />
                   ))}
                 </div>
               </>
             ) : (
               <div className="text-center py-2">
-                <p className="text-xs text-muted-foreground mb-2">
-                  No saved filter sets
-                </p>
+                <p className="text-xs text-muted-foreground mb-2">No saved filter sets</p>
               </div>
             )}
           </CollapsibleContent>
@@ -253,4 +223,3 @@ export function FilterSubsetsManager() {
     </div>
   )
 }
-

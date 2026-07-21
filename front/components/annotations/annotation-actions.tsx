@@ -4,11 +4,15 @@ import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { FileText, Star } from "lucide-react"
 import type { PortalAnnotation } from "@/lib/types"
-import { useRouter } from "next/navigation"
+import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { useSelectedAnnotationsStore } from "@/lib/stores/selected-annotations"
 import { useUIStore } from "@/lib/stores/ui"
 import { getFilesBase, joinUrl } from "@/lib/config/env"
 import { cn } from "@/lib/utils"
+import {
+  isAnnotationsListPath,
+  setAnnotationOverviewId,
+} from "@/lib/hooks/use-annotation-overview-url-sync"
 
 interface AnnotationActionsProps {
   annotation: PortalAnnotation
@@ -17,8 +21,10 @@ interface AnnotationActionsProps {
 export function AnnotationActions({ annotation }: AnnotationActionsProps) {
   const [mounted, setMounted] = useState(false)
   const router = useRouter()
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
   const openRightSidebar = useUIStore((state) => state.openRightSidebar)
-  
+
   const { isSelected, toggleSelection } = useSelectedAnnotationsStore()
   const isFavorite = mounted ? isSelected(annotation.annotation_id) : false
 
@@ -28,24 +34,29 @@ export function AnnotationActions({ annotation }: AnnotationActionsProps) {
   }, [])
 
   const handleDownload = () => {
-    // Create a temporary anchor element to trigger download
-    const link = document.createElement('a')
+    const link = document.createElement("a")
     link.href = joinUrl(getFilesBase(), annotation.indexed_file_info.bgzipped_path)
-    link.download = '' // optional: set a filename if needed
-    link.target = '_blank' // open in a new tab if preferred
-    link.rel = 'noopener noreferrer'
-
-    // Append to body and simulate click
+    link.download = ""
+    link.target = "_blank"
+    link.rel = "noopener noreferrer"
     document.body.appendChild(link)
     link.click()
-
-    // Clean up
     document.body.removeChild(link)
   }
 
   const handleViewInBrowser = () => {
-    // Use URL navigation instead of bubbling up params
-    router.push(`/jbrowse/?accession=${annotation.assembly_accession}&annotationId=${annotation.annotation_id}`)
+    router.push(
+      `/jbrowse/?accession=${annotation.assembly_accession}&annotationId=${annotation.annotation_id}`
+    )
+  }
+
+  const handleViewDetails = () => {
+    // Optimistic open with card data for snappy UX
+    openRightSidebar("file-overview", { annotation })
+    if (isAnnotationsListPath(pathname)) {
+      // URL is source of truth on /annotations
+      setAnnotationOverviewId(router, searchParams, annotation.annotation_id)
+    }
   }
 
   return (
@@ -67,14 +78,13 @@ export function AnnotationActions({ annotation }: AnnotationActionsProps) {
           variant="outline"
           size="sm"
           className="h-8 w-8 p-0 sm:h-9 sm:w-auto sm:px-3"
-          onClick={() => openRightSidebar("file-overview", { annotation })}
+          onClick={handleViewDetails}
           title="View details"
         >
           <FileText className="h-4 w-4 sm:mr-2" />
           <span className="hidden sm:inline">Details</span>
         </Button>
       </div>
-
     </>
   )
 }

@@ -50,6 +50,7 @@ export function ActiveFilters({ readOnly = false, hideToggle = false }: ActiveFi
     databaseSources,
     buscoCompleteFrom,
     buscoCompleteTo,
+    filterEntitiesEnriching,
     setSelectedTaxons,
     setSelectedAssemblies,
     setSelectedBioprojects,
@@ -234,6 +235,7 @@ export function ActiveFilters({ readOnly = false, hideToggle = false }: ActiveFi
       value: string
       onRemove: () => void
       icon?: ReactNode
+      isLoading?: boolean
       colorScheme: {
         bg: string
         bgHover: string
@@ -246,39 +248,48 @@ export function ActiveFilters({ readOnly = false, hideToggle = false }: ActiveFi
 
     selectedTaxons.forEach((taxon) => {
       const taxid = String(taxon.taxid ?? "")
+      const name = taxon.scientific_name || taxid
+      const isStub = !taxon.scientific_name || taxon.scientific_name === taxid
       chips.push({
         key: `taxon-${taxid}`,
-        label: taxon.scientific_name || taxid,
+        label: name,
         value: taxid,
         onRemove: () => handleRemoveTaxid(taxid),
         icon: <Network className="h-3.5 w-3.5 text-blue-500" />,
         colorScheme: chipColorScheme,
         onClick: () => router.push(buildEntityDetailsUrl("taxon", taxid)),
+        isLoading: filterEntitiesEnriching && isStub,
       })
     })
 
     selectedAssemblies.forEach((assembly) => {
       const accession = assembly.assembly_accession || ""
+      const name = assembly.assembly_name || accession
+      const isStub = !assembly.assembly_name || assembly.assembly_name === accession
       chips.push({
         key: `assembly-${accession}`,
-        label: assembly.assembly_name || accession,
+        label: name,
         value: accession,
         onRemove: () => handleRemoveAssembly(accession),
         icon: <Database className="h-3.5 w-3.5 text-purple-500" />,
         colorScheme: chipColorScheme,
         onClick: () => router.push(buildEntityDetailsUrl("assembly", accession)),
+        isLoading: filterEntitiesEnriching && isStub,
       })
     })
 
     selectedBioprojects.forEach((bioproject) => {
       const accession = bioproject.accession
+      const title = bioproject.title || accession
+      const isStub = !bioproject.title || bioproject.title === accession
       chips.push({
         key: `bioproject-${accession}`,
-        label: accession,
+        label: title,
         value: accession,
         onRemove: () => handleRemoveBioproject(accession),
         icon: <Filter className="h-3.5 w-3.5 text-muted-foreground" />,
         colorScheme: chipColorScheme,
+        isLoading: filterEntitiesEnriching && isStub,
       })
     })
 
@@ -423,6 +434,7 @@ export function ActiveFilters({ readOnly = false, hideToggle = false }: ActiveFi
     handleRemoveDatabaseSource,
     handleRemoveFeatureSource,
     handleRemoveBioproject,
+    filterEntitiesEnriching,
     router,
   ])
 
@@ -599,15 +611,6 @@ export function ActiveFilters({ readOnly = false, hideToggle = false }: ActiveFi
 
         <div className="flex items-center gap-2 overflow-x-auto flex-1 min-w-0">
           {filterChips.map((chip) => {
-            const showTooltip = tooltipKeys.has(chip.key) && chip.onClick
-            const isTaxon = chip.key.startsWith("taxon-")
-            const isAssembly = chip.key.startsWith("assembly-")
-            const tooltipText = isTaxon 
-              ? "Click on the chip to see the taxon details"
-              : isAssembly
-              ? "Click on the chip to see the assembly details"
-              : undefined
-
             return (
               <div 
                 key={chip.key} 
@@ -625,6 +628,7 @@ export function ActiveFilters({ readOnly = false, hideToggle = false }: ActiveFi
                   onRemove={chip.onRemove}
                   icon={chip.icon}
                   isActive={chip.isActive}
+                  isLoading={chip.isLoading}
                   onClick={chip.onClick}
                   readOnly={readOnly}
                   colorScheme={chip.colorScheme}
@@ -654,7 +658,7 @@ export function ActiveFilters({ readOnly = false, hideToggle = false }: ActiveFi
             <Button
               variant="secondary"
               size="sm"
-              onClick={clearAllFilters}
+              onClick={() => clearAllFilters()}
               title="Clear all filters"
             >
               <Trash2 className="h-4 w-4" />

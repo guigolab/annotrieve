@@ -2,64 +2,61 @@
 
 import { useCallback } from "react"
 import { useRouter } from "next/navigation"
+import {
+  buildAnnotationsListUrl,
+  buildIncomingNavParams,
+  hasActiveSearchParams,
+} from "@/lib/annotations-url"
 import { useAnnotationsFiltersStore } from "@/lib/stores/annotations-filters"
-import { buildAnnotationsListUrl } from "@/lib/utils"
 import type { AssemblyRecord, TaxonRecord } from "@/lib/api/types"
 
-export type NavigateToAnnotationsFilterInput = {
+export type NavigateToAnnotationsInput = {
   taxon?: TaxonRecord | null
   assembly?: AssemblyRecord | null
 }
 
 /**
- * Navigate to the annotations list with taxon/assembly filters applied.
- * Merges into existing filters when the record is not already selected.
+ * Navigate to the annotations list with taxon/assembly filters applied via URL.
+ * If session-stored filters exist, opens a confirm dialog (merge vs replace).
  */
-export function useNavigateToAnnotationsWithFilter() {
+export function useNavigateToAnnotations() {
   const router = useRouter()
-  const selectedTaxons = useAnnotationsFiltersStore((s) => s.selectedTaxons)
-  const selectedAssemblies = useAnnotationsFiltersStore((s) => s.selectedAssemblies)
-  const setSelectedTaxons = useAnnotationsFiltersStore((s) => s.setSelectedTaxons)
-  const setSelectedAssemblies = useAnnotationsFiltersStore((s) => s.setSelectedAssemblies)
+  const lastKnownSearchParams = useAnnotationsFiltersStore((s) => s.lastKnownSearchParams)
+  const setPendingAnnotationsNav = useAnnotationsFiltersStore((s) => s.setPendingAnnotationsNav)
 
   return useCallback(
-    (input?: NavigateToAnnotationsFilterInput) => {
-      let taxons = selectedTaxons
-      let assemblies = selectedAssemblies
+    (input?: NavigateToAnnotationsInput) => {
+      const taxid =
+        input?.taxon?.taxid != null && String(input.taxon.taxid) !== ""
+          ? String(input.taxon.taxid)
+          : undefined
+      const accession = input?.assembly?.assembly_accession || undefined
 
-      const taxon = input?.taxon
-      if (taxon?.taxid != null && String(taxon.taxid) !== "") {
-        const taxid = String(taxon.taxid)
-        if (!taxons.some((t) => String(t.taxid) === taxid)) {
-          taxons = [...taxons, { ...taxon, taxid }]
-          setSelectedTaxons(taxons)
-        }
+      if (!taxid && !accession) {
+        router.push(buildAnnotationsListUrl())
+        return
       }
 
-      const assembly = input?.assembly
-      const accession = assembly?.assembly_accession
-      if (accession) {
-        if (!assemblies.some((a) => a.assembly_accession === accession)) {
-          assemblies = [...assemblies, assembly]
-          setSelectedAssemblies(assemblies)
-        }
+      const incoming = buildIncomingNavParams({ taxid, accession })
+      const label =
+        input?.taxon?.scientific_name ||
+        input?.assembly?.assembly_name ||
+        taxid ||
+        accession ||
+        "this filter"
+
+      if (!hasActiveSearchParams(lastKnownSearchParams)) {
+        router.push(buildAnnotationsListUrl(incoming))
+        return
       }
 
-      router.push(
-        buildAnnotationsListUrl({
-          taxids: taxons.map((t) => String(t.taxid)),
-          accessions: assemblies
-            .map((a) => a.assembly_accession)
-            .filter((a): a is string => Boolean(a)),
-        })
-      )
+      setPendingAnnotationsNav({ incoming, label })
     },
-    [
-      router,
-      selectedTaxons,
-      selectedAssemblies,
-      setSelectedTaxons,
-      setSelectedAssemblies,
-    ]
+    [router, lastKnownSearchParams, setPendingAnnotationsNav]
   )
 }
+
+/** @deprecated Use useNavigateToAnnotations */
+export const useNavigateToAnnotationsWithFilter = useNavigateToAnnotations
+
+export type NavigateToAnnotationsFilterInput = NavigateToAnnotationsInput

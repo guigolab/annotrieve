@@ -17,6 +17,7 @@ import { useUIStore } from '@/lib/stores/ui'
 import { Loader2, Database, FileText, Star, Layers, CheckCircle, XCircle, Calendar, Building2, Eye, Filter, X, Search, SlidersHorizontal, ChevronDown, ChevronUp } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { cn, buildEntityDetailsUrl } from "@/lib/utils"
+import { buildAnnotationsListUrl, serializeFiltersToSearchParams } from "@/lib/annotations-url"
 import { useRouter } from "next/navigation"
 import { SelectedEntity, assemblyToEntity } from "@/components/selected-entity"
 
@@ -256,7 +257,28 @@ export function AssembliesListTable({ taxid }: AssembliesListTableProps) {
   }
 
   const handleViewAnnotations = () => {
-    router.push('/annotations')
+    const state = useAnnotationsFiltersStore.getState()
+    const params = serializeFiltersToSearchParams(
+      {
+        selectedTaxons: state.selectedTaxons,
+        selectedOrganisms: state.selectedOrganisms,
+        selectedAssemblies: state.selectedAssemblies,
+        selectedBioprojects: state.selectedBioprojects,
+        selectedAssemblyLevels: state.selectedAssemblyLevels,
+        selectedAssemblyStatuses: state.selectedAssemblyStatuses,
+        onlyRefGenomes: state.onlyRefGenomes,
+        biotypes: state.biotypes,
+        featureTypes: state.featureTypes,
+        featureSources: state.featureSources,
+        pipelines: state.pipelines,
+        providers: state.providers,
+        databaseSources: state.databaseSources,
+        buscoCompleteFrom: state.buscoCompleteFrom,
+        buscoCompleteTo: state.buscoCompleteTo,
+      },
+      { sortOption: state.sortOption }
+    )
+    router.push(buildAnnotationsListUrl(params))
     closeRightSidebar()
   }
 

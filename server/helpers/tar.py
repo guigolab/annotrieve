@@ -12,6 +12,7 @@ import subprocess
 import tempfile
 import shutil
 from helpers import constants as constants_helper
+from helpers import tsv_fields as tsv_fields_helper
 import asyncio
 from mongoengine import QuerySet
 from db.models import GenomeAnnotation
@@ -59,16 +60,22 @@ def download_tar_package(annotations: QuerySet[GenomeAnnotation], background_tas
     tsv_file = open(tsv_path, 'w')
     
     try:
+        field_map = tsv_fields_helper.resolve_tsv_field_map(None)
+        mongo_paths = list(field_map.values())
+        column_keys = list(field_map.keys())
+
         # Write TSV header
-        header = "\t".join(constants_helper.FIELD_TSV_MAP.keys()) + "\n"
+        header = "\t".join(column_keys) + "\n"
         tsv_file.write(header)
         tsv_file.flush()  # Ensure header is written to disk
         
         # Write TSV rows incrementally (streaming, not loading into RAM)
         # Re-iterate over annotations for TSV data
         row_count = 0
-        for annotation in annotations.scalar(*constants_helper.FIELD_TSV_MAP.values()):
-            row = "\t".join("" if value is None else str(value) for value in annotation) + "\n"
+        for values in tsv_fields_helper.iter_tsv_rows(annotations, mongo_paths):
+            row = "\t".join(
+                tsv_fields_helper.format_tsv_cell(value) for value in values
+            ) + "\n"
             tsv_file.write(row)
             row_count += 1
             # Flush periodically to avoid buffering too much in memory

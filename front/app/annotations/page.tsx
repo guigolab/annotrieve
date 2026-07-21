@@ -8,7 +8,6 @@ import {
   BarChart3,
   Database,
   FileText,
-  Loader2,
   MoreHorizontal,
   X,
 } from "lucide-react"
@@ -18,19 +17,12 @@ import { AnnotationsSortControl } from "@/components/annotations/annotations-sor
 import { ActiveFilters } from "@/components/annotations/active-filters"
 import { useUIStore } from "@/lib/stores/ui"
 import { useAnnotationsFiltersStore } from "@/lib/stores/annotations-filters"
-import { listAnnotations, downloadAnnotationsReport } from "@/lib/api/annotations"
+import { listAnnotations, type FetchAnnotationsParams } from "@/lib/api/annotations"
 import type { AnnotationRecord } from "@/lib/api/types"
 import { RightSidebar } from "@/components/sidebar/right-sidebar"
 import { FavoritesFloatingButton } from "@/components/layout/favorites-floating-button"
+import { DownloadTsvDialog } from "@/components/annotations/download-tsv-dialog"
 import { Button } from "@/components/ui/button"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -38,14 +30,18 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { buildEntityDetailsUrl } from "@/lib/utils"
-import { getTaxon } from "@/lib/api/taxons"
-import { getAssembly } from "@/lib/api/assemblies"
-import type { TaxonRecord, AssemblyRecord } from "@/lib/api/types"
 import { LoadingSpinner } from "@/components/ui/loading"
+import { useAnnotationsUrlSync } from "@/lib/hooks/use-annotations-url-sync"
+import {
+  clearAnnotationOverviewId,
+  useAnnotationOverviewUrlSync,
+} from "@/lib/hooks/use-annotation-overview-url-sync"
 
 function AnnotationsContent() {
   const searchParams = useSearchParams()
   const router = useRouter()
+  useAnnotationsUrlSync()
+  useAnnotationOverviewUrlSync()
 
   // ── UI store ──────────────────────────────────────────────────────────────
   const {
@@ -64,33 +60,41 @@ function AnnotationsContent() {
   const setAnnotationsSortOption = useAnnotationsFiltersStore((s) => s.setAnnotationsSortOption)
   const selectedTaxons = useAnnotationsFiltersStore((s) => s.selectedTaxons)
   const selectedAssemblies = useAnnotationsFiltersStore((s) => s.selectedAssemblies)
-  const setSelectedTaxons = useAnnotationsFiltersStore((s) => s.setSelectedTaxons)
-  const setSelectedAssemblies = useAnnotationsFiltersStore((s) => s.setSelectedAssemblies)
   const selectedBioprojects = useAnnotationsFiltersStore((s) => s.selectedBioprojects)
   const selectedAssemblyLevels = useAnnotationsFiltersStore((s) => s.selectedAssemblyLevels)
   const selectedAssemblyStatuses = useAnnotationsFiltersStore((s) => s.selectedAssemblyStatuses)
   const onlyRefGenomes = useAnnotationsFiltersStore((s) => s.onlyRefGenomes)
   const biotypes = useAnnotationsFiltersStore((s) => s.biotypes)
   const featureTypes = useAnnotationsFiltersStore((s) => s.featureTypes)
+  const featureSources = useAnnotationsFiltersStore((s) => s.featureSources)
   const pipelines = useAnnotationsFiltersStore((s) => s.pipelines)
   const providers = useAnnotationsFiltersStore((s) => s.providers)
   const databaseSources = useAnnotationsFiltersStore((s) => s.databaseSources)
   const buscoCompleteFrom = useAnnotationsFiltersStore((s) => s.buscoCompleteFrom)
   const buscoCompleteTo = useAnnotationsFiltersStore((s) => s.buscoCompleteTo)
+  const filtersReady = useAnnotationsFiltersStore((s) => s.filtersReady)
+
+  // Stable ID keys so entity label enrichment does not refetch the list
+  const taxidsKey = selectedTaxons.map((t) => String(t.taxid)).join(",")
+  const accessionsKey = selectedAssemblies.map((a) => a.assembly_accession).join(",")
+  const bioprojectsKey = selectedBioprojects.map((bp) => bp.accession).join(",")
 
   // ── Local state ───────────────────────────────────────────────────────────
   const [annotations, setAnnotations] = useState<AnnotationRecord[]>([])
   const [totalAnnotations, setTotalAnnotations] = useState(0)
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true)
   const [reportOpen, setReportOpen] = useState(false)
-  const [reportLoading, setReportLoading] = useState(false)
   const sidebarRef = useRef<HTMLDivElement>(null)
   const hasInitializedRef = useRef(false)
-  const [urlFiltersReady, setUrlFiltersReady] = useState(true)
+  const fetchRequestIdRef = useRef(0)
+
+  const listLoading = loading || !filtersReady
 
   const handleBrowseAssemblies = useCallback(() => {
+    // Dismiss overview + clear deep-link, then open assemblies (sync must not steal).
+    clearAnnotationOverviewId(router, searchParams)
     openRightSidebar("assemblies-list")
-  }, [openRightSidebar])
+  }, [openRightSidebar, router, searchParams])
 
   const handleFiltersToggle = useCallback(() => {
     if (isDesktop) {
@@ -100,99 +104,9 @@ function AnnotationsContent() {
     }
   }, [isDesktop, isSidebarOpen, setIsSidebarOpen])
 
-  // ── Download report ───────────────────────────────────────────────────────
-  const handleDownloadReport = useCallback(async () => {
-    try {
-      setReportLoading(true)
-      const params = buildAnnotationsParams(false, [])
-      delete (params as any).limit
-      delete (params as any).offset
-      const blob = await downloadAnnotationsReport(params as any)
-      const url = window.URL.createObjectURL(blob)
-      const anchor = document.createElement("a")
-      anchor.href = url
-      anchor.download = "annotations_report.tsv"
-      document.body.appendChild(anchor)
-      anchor.click()
-      anchor.remove()
-      window.URL.revokeObjectURL(url)
-      setReportOpen(false)
-    } catch (e) {
-      console.error(e)
-    } finally {
-      setReportLoading(false)
-    }
+  const buildDownloadParams = useCallback((): FetchAnnotationsParams => {
+    return buildAnnotationsParams(false, []) as FetchAnnotationsParams
   }, [buildAnnotationsParams])
-
-  // ── Hydrate filters from URL (survives hard reload / RSC fallback) ────────
-  useEffect(() => {
-    const taxids =
-      searchParams?.get("filter_taxids")?.split(",").filter(Boolean) ?? []
-    const accessions =
-      searchParams?.get("filter_accessions")?.split(",").filter(Boolean) ?? []
-    if (!taxids.length && !accessions.length) {
-      setUrlFiltersReady(true)
-      return
-    }
-
-    setUrlFiltersReady(false)
-    let cancelled = false
-    ;(async () => {
-      let hydratedTaxons: TaxonRecord[] = []
-      let hydratedAssemblies: AssemblyRecord[] = []
-
-      if (taxids.length) {
-        const fetched = await Promise.all(
-          taxids.map((t) => getTaxon(t).catch(() => null))
-        )
-        hydratedTaxons = fetched.filter((t): t is TaxonRecord => !!t)
-        if (hydratedTaxons.length < taxids.length) {
-          const fetchedIds = new Set(hydratedTaxons.map((t) => String(t.taxid)))
-          for (const id of taxids) {
-            if (!fetchedIds.has(id)) {
-              hydratedTaxons.push({ taxid: id, scientific_name: id })
-            }
-          }
-        }
-        if (!cancelled && hydratedTaxons.length) setSelectedTaxons(hydratedTaxons)
-      }
-
-      if (accessions.length) {
-        const fetched = await Promise.all(
-          accessions.map((a) => getAssembly(a).catch(() => null))
-        )
-        hydratedAssemblies = fetched.filter((a): a is AssemblyRecord => !!a)
-        if (hydratedAssemblies.length < accessions.length) {
-          const fetchedAcc = new Set(
-            hydratedAssemblies.map((a) => a.assembly_accession)
-          )
-          for (const acc of accessions) {
-            if (!fetchedAcc.has(acc)) {
-              hydratedAssemblies.push({
-                assembly_accession: acc,
-                assembly_name: acc,
-              } as AssemblyRecord)
-            }
-          }
-        }
-        if (!cancelled && hydratedAssemblies.length) {
-          setSelectedAssemblies(hydratedAssemblies)
-        }
-      }
-
-      if (cancelled) return
-
-      const next = new URLSearchParams(searchParams?.toString() ?? "")
-      next.delete("filter_taxids")
-      next.delete("filter_accessions")
-      const qs = next.toString()
-      router.replace(qs ? `/annotations?${qs}` : "/annotations", { scroll: false })
-      if (!cancelled) setUrlFiltersReady(true)
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [searchParams, router, setSelectedTaxons, setSelectedAssemblies])
 
   // ── Redirect legacy entity query params ───────────────────────────────────
   useEffect(() => {
@@ -209,44 +123,60 @@ function AnnotationsContent() {
 
   // ── Fetch annotations ─────────────────────────────────────────────────────
   useEffect(() => {
-    if (!urlFiltersReady) return
+    if (!filtersReady) return
+
+    const requestId = ++fetchRequestIdRef.current
+    let cancelled = false
 
     const fetchData = async () => {
       const params = buildAnnotationsParams(false, [])
       setLoading(true)
       try {
         const res = await listAnnotations(params as any)
+        if (cancelled || requestId !== fetchRequestIdRef.current) {
+          return
+        }
         setAnnotations((res as any)?.results || [])
         setTotalAnnotations((res as any)?.total ?? 0)
       } catch (error) {
+        if (cancelled || requestId !== fetchRequestIdRef.current) {
+          return
+        }
         console.error("Error fetching annotations:", error)
         setAnnotations([])
         setTotalAnnotations(0)
       } finally {
-        setLoading(false)
+        if (!cancelled && requestId === fetchRequestIdRef.current) {
+          setLoading(false)
+        }
       }
     }
     fetchData()
+
+    return () => {
+      cancelled = true
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     currentPage,
     itemsPerPage,
     sortOption,
-    selectedTaxons,
-    selectedAssemblies,
-    selectedBioprojects,
+    taxidsKey,
+    accessionsKey,
+    bioprojectsKey,
     selectedAssemblyLevels,
     selectedAssemblyStatuses,
     onlyRefGenomes,
     biotypes,
     featureTypes,
+    featureSources,
     pipelines,
     providers,
     databaseSources,
     buscoCompleteFrom,
     buscoCompleteTo,
     buildAnnotationsParams,
-    urlFiltersReady,
+    filtersReady,
   ])
 
   // ── Desktop detection ─────────────────────────────────────────────────────
@@ -269,7 +199,7 @@ function AnnotationsContent() {
   }, [setIsDesktop, setIsSidebarOpen, isSidebarOpen])
 
   // ── Result count label ────────────────────────────────────────────────────
-  const resultLabel = loading
+  const resultLabel = listLoading
     ? "Fetching results…"
     : totalAnnotations > 0
       ? `${totalAnnotations.toLocaleString()} ${totalAnnotations === 1 ? "result" : "results"}`
@@ -425,77 +355,19 @@ function AnnotationsContent() {
             </div>
           </header>
 
-          {/* Download TSV dialog */}
-          <Dialog open={reportOpen} onOpenChange={setReportOpen}>
-            <DialogContent className="max-w-xl">
-              <DialogHeader>
-                <DialogTitle>Download TSV report</DialogTitle>
-                <DialogDescription>
-                  This will generate a TSV report of the current annotation results based on your
-                  active filters.
-                </DialogDescription>
-              </DialogHeader>
-              <div className="space-y-3 text-sm">
-                <div className="p-3 rounded-md border bg-muted/40">
-                  <div className="font-medium text-foreground">Summary</div>
-                  <ul className="mt-2 text-muted-foreground list-disc list-inside space-y-1">
-                    <li>
-                      Total annotations in current result set:{" "}
-                      <span className="text-foreground font-semibold">
-                        {totalAnnotations.toLocaleString()}
-                      </span>
-                    </li>
-                  </ul>
-                </div>
-                <div className="p-3 rounded-md border bg-amber-50 dark:bg-amber-900/20">
-                  <div className="font-medium text-foreground">About file URLs in the report</div>
-                  <ul className="mt-2 text-amber-800 dark:text-amber-200 text-xs space-y-1">
-                    <li>
-                      <span className="font-semibold text-foreground">
-                        source_file_info.url_path
-                      </span>
-                      : direct link to the original source file provided by the data source.
-                    </li>
-                    <li>
-                      <span className="font-semibold text-foreground">
-                        indexed_file_info.bgzipped_path
-                      </span>
-                      : relative path of the file processed by Annotrieve (sorted, bgzipped, and
-                      indexed). To download, prepend{" "}
-                      <span className="font-mono text-foreground">
-                        https://genome.crg.es/annotrieve/files
-                      </span>{" "}
-                      to this path.
-                    </li>
-                  </ul>
-                </div>
-              </div>
-              <DialogFooter>
-                <Button
-                  variant="outline"
-                  onClick={() => setReportOpen(false)}
-                  disabled={reportLoading}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  onClick={handleDownloadReport}
-                  disabled={reportLoading}
-                  className="gap-2"
-                >
-                  {reportLoading && <Loader2 className="h-4 w-4 animate-spin" />}
-                  {reportLoading ? "Preparing…" : "Download TSV"}
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
+          <DownloadTsvDialog
+            open={reportOpen}
+            onOpenChange={setReportOpen}
+            totalAnnotations={totalAnnotations}
+            buildDownloadParams={buildDownloadParams}
+          />
 
           {/* Scrollable content */}
           <div className="flex-1 overflow-y-auto">
             <AnnotationsList
               annotations={annotations}
               totalAnnotations={totalAnnotations}
-              loading={loading}
+              loading={listLoading}
             />
           </div>
         </div>

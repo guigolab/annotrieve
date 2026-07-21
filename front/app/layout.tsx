@@ -6,6 +6,7 @@ import { AppNavbar } from "@/components/layout/app-navbar";
 import { ReactQueryProvider } from "@/components/layout/providers/react-query-provider";
 import { ThemeProvider } from "@/components/layout/theme-provider";
 import { InsdcModalProvider } from "@/components/layout/providers/insdc-modal-provider"
+import { AnnotationsNavDialogProvider } from "@/components/layout/providers/annotations-nav-dialog-provider"
 import { Toaster } from "sonner";
 
 const geistSans = localFont({
@@ -34,7 +35,7 @@ const dmMono = DM_Mono({
 
 export const metadata: Metadata = {
   title: "Annotrieve - Eukaryotic Genome Annotations",
-  description: "Explore annotated genomes from NCBI and Ensembl",
+  description: "Hub for eukaryotic GFF annotations from Ensembl, NCBI, and other sources",
 };
 
 export default function RootLayout({
@@ -74,6 +75,7 @@ export default function RootLayout({
         <ThemeProvider>
           <ReactQueryProvider>
               <InsdcModalProvider />
+              <AnnotationsNavDialogProvider />
               <div className="min-h-screen flex flex-col h-full">
                 <AppNavbar />
                 <main id="main-content" className="flex-1 overflow-y-auto">

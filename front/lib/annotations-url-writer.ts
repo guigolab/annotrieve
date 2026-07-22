@@ -160,6 +160,12 @@ export function shouldSuppressOverviewOpen(): boolean {
   return suppressOverviewOpen
 }
 
+/** Cancel a queued patch without writing the URL (e.g. leaving /annotations). */
+export function cancelPendingAnnotationsUrlPatches() {
+  pendingPatch = null
+  flushScheduled = false
+}
+
 /** Test helpers */
 export function __resetAnnotationsUrlWriterForTests() {
   latestSearch = ""

@@ -11,6 +11,7 @@ import {
   __flushAnnotationsUrlPatchForTests,
   __getPendingPatchForTests,
   __resetAnnotationsUrlWriterForTests,
+  cancelPendingAnnotationsUrlPatches,
   getLiveAnnotationsSearchParams,
   noteOverviewDismissIntent,
   noteOverviewOpenIntent,
@@ -172,6 +173,20 @@ describe("annotations-url-writer", () => {
     assert.equal(shouldSuppressOverviewOpen(), false)
     noteOverviewDismissIntent()
     assert.equal(shouldSuppressOverviewOpen(), true)
+  })
+
+  it("cancelPendingAnnotationsUrlPatches drops queued replace", async () => {
+    const replaces: string[] = []
+    const router = { replace: (href: string) => replaces.push(href) }
+
+    syncLatestAnnotationsSearch("taxids=9606")
+    patchFilterQuery(router, new URLSearchParams("taxids=10090"))
+    assert.ok(__getPendingPatchForTests())
+    cancelPendingAnnotationsUrlPatches()
+    assert.equal(__getPendingPatchForTests(), null)
+    await Promise.resolve()
+    __flushAnnotationsUrlPatchForTests()
+    assert.equal(replaces.length, 0)
   })
 
   it("stripUiParams keeps filters when removing annotation_id", () => {

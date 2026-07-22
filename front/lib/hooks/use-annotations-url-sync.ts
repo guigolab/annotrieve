@@ -21,6 +21,7 @@ import {
   patchFilterQuery,
   scheduleAnnotationsUrlPatch,
   syncLatestAnnotationsSearch,
+  cancelPendingAnnotationsUrlPatches,
 } from "@/lib/annotations-url-writer"
 import { useAnnotationsFiltersStore } from "@/lib/stores/annotations-filters"
 
@@ -166,6 +167,7 @@ export function useAnnotationsUrlSync() {
     return () => {
       setUrlCommitHandler(null)
       if (debounceRef.current) clearTimeout(debounceRef.current)
+      cancelPendingAnnotationsUrlPatches()
     }
     // Stable commitFiltersToUrl — only unmount clears debounce (not searchParams churn).
   }, [commitFiltersToUrl, setUrlCommitHandler])

@@ -36,6 +36,7 @@ import {
   clearAnnotationOverviewId,
   useAnnotationOverviewUrlSync,
 } from "@/lib/hooks/use-annotation-overview-url-sync"
+import { navigateToAnnotationsAnalytics } from "@/lib/navigate-to-annotations-analytics"
 
 function AnnotationsContent() {
   const searchParams = useSearchParams()
@@ -298,7 +299,7 @@ function AnnotationsContent() {
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
-                    <DropdownMenuItem onClick={() => router.push("/annotations/analytics")}>
+                    <DropdownMenuItem onClick={() => navigateToAnnotationsAnalytics(router)}>
                       <BarChart3 className="h-4 w-4 mr-2" />
                       Analytics
                     </DropdownMenuItem>
@@ -315,7 +316,7 @@ function AnnotationsContent() {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => router.push("/annotations/analytics")}
+                  onClick={() => navigateToAnnotationsAnalytics(router)}
                   className="hidden lg:flex h-9 px-3 gap-1.5 shrink-0"
                   title="Explore gene and transcript statistics"
                 >

@@ -8,11 +8,16 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { useAnnotationsFiltersStore } from "@/lib/stores/annotations-filters"
 import { useAnnotationSubsetsStore } from "@/lib/stores/annotation-subsets"
 import {
+  EMPTY_FILTERS_STATE,
+  filtersStateHasActive,
+  useAnalyticsCurrentFiltersStore,
+} from "@/lib/stores/analytics-current-filters"
+import {
   useFavoritesCart,
   useActiveCustomAnnotations,
   usePruneOrphanedCustomAnnotations,
 } from "@/lib/hooks/use-favorites-state"
-import { buildParamsFromFilters } from "@/lib/utils"
+import { buildParamsFromFilters, cn } from "@/lib/utils"
 import {
   AnalyticsSidebar,
   CURRENT_ENTRY_ID,
@@ -21,7 +26,6 @@ import {
   type EntityType,
 } from "@/components/annotations-analytics/analytics-sidebar"
 import { AnalyticsChartArea } from "@/components/annotations-analytics/analytics-chart-area"
-import { cn } from "@/lib/utils"
 import { formatLabel } from "@/lib/annotations-formatting"
 import type { FiltersState } from "@/lib/stores/annotations-filters"
 import { useMergedFavoriteAnnotations } from "@/lib/hooks/use-merged-favorite-annotations"
@@ -36,7 +40,7 @@ const ANALYTICS_DESCRIPTION =
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function buildFilterSummary(filters: ReturnType<typeof useAnnotationsFiltersStore.getState>): string {
+function buildFilterSummary(filters: FiltersState): string {
   const parts: string[] = []
   if (filters.selectedTaxons.length > 0)
     parts.push(`${filters.selectedTaxons.length} taxon${filters.selectedTaxons.length > 1 ? "s" : ""}`)
@@ -61,18 +65,9 @@ function buildFilterSummary(filters: ReturnType<typeof useAnnotationsFiltersStor
 export default function AnnotationsAnalyticsPage() {
   const router = useRouter()
 
-  // ── Stores (select primitives/stable refs to avoid new object every render) ───
-  const hasActiveFilters = useAnnotationsFiltersStore(s => s.hasActiveFilters)
+  // ── Snapshot of list filters at Analytics entry (not live list store) ───────
+  const snapshot = useAnalyticsCurrentFiltersStore(s => s.snapshot)
   const buildAnnotationsParams = useAnnotationsFiltersStore(s => s.buildAnnotationsParams)
-  const selectedTaxons = useAnnotationsFiltersStore(s => s.selectedTaxons)
-  const selectedBioprojects = useAnnotationsFiltersStore(s => s.selectedBioprojects)
-  const selectedAssemblies = useAnnotationsFiltersStore(s => s.selectedAssemblies)
-  const selectedAssemblyLevels = useAnnotationsFiltersStore(s => s.selectedAssemblyLevels)
-  const onlyRefGenomes = useAnnotationsFiltersStore(s => s.onlyRefGenomes)
-  const biotypes = useAnnotationsFiltersStore(s => s.biotypes)
-  const featureTypes = useAnnotationsFiltersStore(s => s.featureTypes)
-  const buscoCompleteFrom = useAnnotationsFiltersStore(s => s.buscoCompleteFrom)
-  const buscoCompleteTo = useAnnotationsFiltersStore(s => s.buscoCompleteTo)
 
   const subsets = useAnnotationSubsetsStore(s => s.subsets)
   usePruneOrphanedCustomAnnotations(true)
@@ -98,27 +93,19 @@ export default function AnnotationsAnalyticsPage() {
     [isDesktop, closeSidebar]
   )
 
+  const currentFilters = snapshot ?? EMPTY_FILTERS_STATE
+  const isCurrentActive = filtersStateHasActive(snapshot)
+
   // ── Derived: all sidebar entries (stable deps = no unnecessary new array refs) ─
   const allEntries: AnalyticsEntry[] = useMemo(() => {
-    const isActive = hasActiveFilters()
-    const filterSummary = buildFilterSummary({
-      selectedTaxons,
-      selectedBioprojects,
-      selectedAssemblies,
-      selectedAssemblyLevels,
-      onlyRefGenomes,
-      biotypes,
-      featureTypes,
-      buscoCompleteFrom,
-      buscoCompleteTo,
-    } as any)
+    const filterSummary = buildFilterSummary(currentFilters)
 
     const virtualEntry: AnalyticsEntry = {
       id: CURRENT_ENTRY_ID,
-      name: isActive ? "Current filters" : "All annotations",
+      name: isCurrentActive ? "Current filters" : "All annotations",
       color: CURRENT_ENTRY_COLOR,
       isVirtual: true,
-      filterSummary: isActive ? filterSummary : "No filters applied",
+      filterSummary: isCurrentActive ? filterSummary : "No filters applied",
     }
 
     const savedEntries: AnalyticsEntry[] = subsets.map(s => ({
@@ -126,23 +113,11 @@ export default function AnnotationsAnalyticsPage() {
       name: s.name,
       color: s.color ?? "#3b82f6",
       isVirtual: false,
-      filterSummary: buildFilterSummary(s.filters as any),
+      filterSummary: buildFilterSummary(s.filters),
     }))
 
     return [virtualEntry, ...savedEntries]
-  }, [
-    hasActiveFilters,
-    selectedTaxons,
-    selectedBioprojects,
-    selectedAssemblies,
-    selectedAssemblyLevels,
-    onlyRefGenomes,
-    biotypes,
-    featureTypes,
-    buscoCompleteFrom,
-    buscoCompleteTo,
-    subsets,
-  ])
+  }, [currentFilters, isCurrentActive, subsets])
 
   // ── Derived: selected entries (Set for O(1) lookup per 5.12/7.12) ───────────
   const selectedIdsSet = useMemo(() => new Set(selectedIds), [selectedIds])
@@ -154,20 +129,17 @@ export default function AnnotationsAnalyticsPage() {
   const getFiltersForEntry = useCallback(
     (entryId: string): FiltersState | undefined => {
       if (entryId === CURRENT_ENTRY_ID) {
-        return useAnnotationsFiltersStore.getState() as unknown as FiltersState
+        return currentFilters
       }
-      return subsets.find(s => s.id === entryId)?.filters as FiltersState | undefined
+      return subsets.find(s => s.id === entryId)?.filters
     },
-    [subsets]
+    [currentFilters, subsets]
   )
 
   // ── Params builders ──────────────────────────────────────────────────────────
   const buildCurrentParams = useCallback((): Record<string, any> => {
-    const params = buildAnnotationsParams(false, [])
-    delete params.limit
-    delete params.offset
-    return params
-  }, [buildAnnotationsParams])
+    return buildParamsFromFilters(currentFilters)
+  }, [currentFilters])
 
   const buildFavoritesParams = useCallback(
     (ids: string[]): Record<string, any> => {

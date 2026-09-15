@@ -135,3 +135,68 @@ class TestImportAnnotationsTask:
         save.assert_called_once_with(processed, "/ann")
         sync_delay.assert_called_once_with(accessions=["GCA_1"])
         export_delay.assert_called_once()
+
+
+class TestProcessAnnotationsPipeline:
+    """
+    Regression coverage for the bug where content that already exists in the
+    database (source URL changed but md5 unchanged) caused the pipeline to delete
+    the still-valid on-disk files backing the existing GenomeAnnotation, without
+    touching that document's row.
+    """
+
+    def _patch_common(self, full_bgzipped_path, relative_bgzipped_path):
+        return (
+            patch.object(imp.file_helper, "create_dir_path", return_value="/tmp/fake-work"),
+            patch.object(imp.shutil, "rmtree"),
+            patch.object(
+                imp.annotation_service,
+                "init_annotation_file_paths",
+                return_value=(full_bgzipped_path, relative_bgzipped_path),
+            ),
+        )
+
+    def test_duplicate_content_error_reconciles_metadata_without_deleting_files(self, monkeypatch):
+        monkeypatch.setattr(imp, "ANNOTATIONS_PATH", "/ann")
+        ann = _ann(md5_checksum="m1", taxon_id="9606", assembly_accession="GCA_1")
+        full_path = "/ann/9606/GCA_1/Ensembl_m1.gff.gz"
+        relative_path = "/9606/GCA_1/Ensembl_m1.gff.gz"
+        dup_err = imp.annotation_service.DuplicateAnnotationContentError("content-md5")
+
+        p1, p2, p3 = self._patch_common(full_path, relative_path)
+        with (
+            p1, p2, p3,
+            patch.object(imp.annotation_service, "process_annotation_file", side_effect=dup_err),
+            patch.object(imp.annotation_service, "handle_duplicate_annotation_content") as handle_dup,
+            patch.object(imp.annotation_service, "handle_annotation_error") as handle_err,
+            patch.object(imp.annotation_service, "safe_remove_annotation_file") as safe_remove,
+        ):
+            result = imp.process_annotations_pipeline([ann], {}, ["content-md5"])
+
+        assert result == []
+        handle_dup.assert_called_once_with(ann, "content-md5")
+        handle_err.assert_not_called()
+        safe_remove.assert_not_called()
+
+    def test_generic_error_uses_safe_remove_for_bgzip_and_csi(self, monkeypatch):
+        monkeypatch.setattr(imp, "ANNOTATIONS_PATH", "/ann")
+        ann = _ann(md5_checksum="m2", taxon_id="9606", assembly_accession="GCA_1")
+        full_path = "/ann/9606/GCA_1/Ensembl_m2.gff.gz"
+        relative_path = "/9606/GCA_1/Ensembl_m2.gff.gz"
+
+        p1, p2, p3 = self._patch_common(full_path, relative_path)
+        with (
+            p1, p2, p3,
+            patch.object(imp.annotation_service, "process_annotation_file", side_effect=Exception("boom")),
+            patch.object(imp.annotation_service, "handle_duplicate_annotation_content") as handle_dup,
+            patch.object(imp.annotation_service, "handle_annotation_error") as handle_err,
+            patch.object(imp.annotation_service, "safe_remove_annotation_file") as safe_remove,
+        ):
+            result = imp.process_annotations_pipeline([ann], {}, [])
+
+        assert result == []
+        handle_dup.assert_not_called()
+        handle_err.assert_called_once()
+        assert safe_remove.call_count == 2
+        safe_remove.assert_any_call(full_path, "/ann", relative_path)
+        safe_remove.assert_any_call(f"{full_path}.csi", "/ann", f"{relative_path}.csi")

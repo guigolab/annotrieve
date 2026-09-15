@@ -1,8 +1,8 @@
 # Use a modern Python base image
-FROM python:3.10-slim-bullseye
+FROM python:3.10-slim-bookworm
 
 # Set environment variables to prevent interactive prompts
-ENV PYTHONUNBUFFERED 1
+ENV PYTHONUNBUFFERED=1
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Install system dependencies

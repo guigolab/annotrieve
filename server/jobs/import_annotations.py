@@ -147,12 +147,25 @@ def process_annotations_pipeline(annotations: list[AnnotationToProcess], valid_l
             #TODO: do we need to set bioprojects to the annotations or just the assemblies?
             #handle_bioprojects(parsed_annotation)
             processed_annotations.append(parsed_annotation)
+        except annotation_service.DuplicateAnnotationContentError as e:
+            # The freshly downloaded+sorted content already belongs to an existing
+            # annotation (same content, different/new source URL). Reconcile the
+            # existing record's source metadata instead of treating this as an error.
+            # Do NOT delete full_bgzipped_path/full_csi_path here: those paths are
+            # derived deterministically from (taxon_id, assembly_accession,
+            # source_database, md5_checksum), so they are the *same* files already
+            # backing the existing, still-valid document.
+            print(
+                f"- {annotation_to_process.access_url}: content already exists "
+                f"(md5 {e.md5_checksum}); reconciling source URL instead of deleting files"
+            )
+            annotation_service.handle_duplicate_annotation_content(annotation_to_process, e.md5_checksum)
         except Exception as e:
             str_error = str(e)
             print(f"- Error processing annotation {annotation_to_process.access_url}: {str_error}")
             annotation_service.handle_annotation_error(annotation_to_process, str_error)
-            file_helper.remove_file_and_empty_parents(full_bgzipped_path, ANNOTATIONS_PATH)
-            file_helper.remove_file_and_empty_parents(full_csi_path, ANNOTATIONS_PATH)
+            annotation_service.safe_remove_annotation_file(full_bgzipped_path, ANNOTATIONS_PATH, relative_bgzipped_path)
+            annotation_service.safe_remove_annotation_file(full_csi_path, ANNOTATIONS_PATH, relative_csi_path)
         finally:
             shutil.rmtree(tmp_subdir_path)
 

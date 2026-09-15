@@ -18,6 +18,7 @@ from jobs.updates import (
     update_taxons_busco_scores_job,
 )
 from jobs.track_users import track_unique_users_by_country
+from jobs.repair_annotation_files import repair_missing_annotation_files
 
 
 def _validate_auth_key(auth_key: str) -> None:
@@ -146,3 +147,14 @@ def trigger_unset_genome_annotation_mapped_regions(
     _validate_auth_key(auth_key)
     unset_genome_annotation_mapped_regions_task.delay(dry_run=dry_run)
     return {"message": "Unset genome annotation mapped_regions task triggered"}
+
+
+def trigger_repair_missing_annotation_files(auth_key: str, dry_run: bool = True):
+    """
+    Recreate on-disk bgzip/csi files for annotations whose files are missing
+    (backup job for the source-URL-drift bug in import_annotations). Defaults to
+    dry_run=True so the first call only reports what would be repaired.
+    """
+    _validate_auth_key(auth_key)
+    repair_missing_annotation_files.delay(dry_run=dry_run)
+    return {"message": "Repair missing annotation files task triggered"}

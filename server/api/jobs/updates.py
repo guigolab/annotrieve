@@ -81,3 +81,22 @@ async def trigger_update_taxons_busco_scores(x_auth_key: str = Header(..., alias
     Requires X-Auth-Key header for authentication.
     """
     return jobs_service.trigger_update_taxons_busco_scores(x_auth_key)
+
+
+@router.post("/jobs/update/annotations/repair-missing-files")
+async def trigger_repair_missing_annotation_files(
+    x_auth_key: str = Header(..., alias="X-Auth-Key"),
+    dry_run: bool = True,
+):
+    """
+    Recreate on-disk bgzip/csi files for annotations whose files are missing
+    (backup job for the source-URL-drift bug where a moved source URL caused the
+    live files to be deleted while the DB row survived).
+
+    Defaults to dry_run=true; pass dry_run=false to apply.
+
+    Requires X-Auth-Key header for authentication.
+    """
+    return jobs_service.trigger_repair_missing_annotation_files(
+        x_auth_key, dry_run=dry_run
+    )

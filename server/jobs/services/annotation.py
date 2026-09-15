@@ -29,6 +29,27 @@ SOURCE_URL_CHECK_TIMEOUT = 30
 SOURCE_URL_NOT_FOUND_STATUSES = frozenset({404, 410})
 SOURCE_URL_CHECK_USER_AGENT = "annotrieve-source-check/1.0"
 
+
+class DuplicateAnnotationContentError(Exception):
+    """
+    Raised by process_annotation_file when the freshly downloaded+sorted content's
+    md5 checksum already belongs to an existing GenomeAnnotation document.
+
+    This is NOT necessarily a real error: it typically means the source moved to a
+    new URL while the content itself is unchanged (e.g. an Ensembl release directory
+    was renamed). Callers should NOT treat this like a generic processing failure —
+    in particular they must not delete full_bgzipped_path/full_csi_path, since those
+    paths are derived deterministically from (taxon_id, assembly_accession,
+    source_database, md5_checksum) and are therefore the *same* files already backing
+    the existing, still-valid document. See handle_duplicate_annotation_content.
+    """
+
+    def __init__(self, md5_checksum: str):
+        self.md5_checksum = md5_checksum
+        super().__init__(
+            f"Annotation with md5 checksum {md5_checksum} already exists in the database"
+        )
+
 def handle_annotation_error(annotation_to_process: AnnotationToProcess, error: str):
     """Handle annotation processing errors."""
 
@@ -53,6 +74,135 @@ def handle_annotation_error(annotation_to_process: AnnotationToProcess, error: s
     else:
         annotation_error = annotation_to_process.to_annotation_error(error)
         annotation_error.save()
+
+
+def update_annotation_source_metadata(existing: GenomeAnnotation, annotation_to_process: AnnotationToProcess) -> bool:
+    """
+    Update an existing GenomeAnnotation's source_file_info to reflect a source that has
+    moved (same content, new url/date metadata). Used when a re-processed annotation's
+    content md5 matches `existing` exactly, but the incoming url differs.
+
+    Returns True if the url_path was updated, False otherwise (no-op or conflict).
+    Never raises: any problem is logged and treated as a no-op so callers can safely
+    continue processing other annotations.
+    """
+    if not existing or not existing.source_file_info:
+        return False
+
+    old_url = existing.source_file_info.url_path
+    new_url = annotation_to_process.access_url
+
+    if not new_url or new_url == old_url:
+        return False
+
+    # source_file_info.url_path is unique=True: guard against colliding with a
+    # *different* annotation before attempting the update, so we never raise a
+    # NotUniqueError here.
+    conflicting = GenomeAnnotation.objects(
+        source_file_info__url_path=new_url, annotation_id__ne=existing.annotation_id
+    ).first()
+    if conflicting:
+        print(
+            f"Cannot update url_path for annotation {existing.annotation_id}: "
+            f"{new_url} is already used by a different annotation ({conflicting.annotation_id})"
+        )
+        return False
+
+    update_fields = {"source_file_info__url_path": new_url}
+
+    if annotation_to_process.last_modified:
+        try:
+            update_fields["source_file_info__last_modified"] = GenomeAnnotation.parse_iso_date(
+                annotation_to_process.last_modified
+            )
+        except Exception as e:
+            print(f"Could not parse last_modified '{annotation_to_process.last_modified}' for {existing.annotation_id}: {e}")
+
+    if annotation_to_process.release_date:
+        try:
+            update_fields["source_file_info__release_date"] = GenomeAnnotation.parse_iso_date(
+                annotation_to_process.release_date
+            )
+        except Exception as e:
+            print(f"Could not parse release_date '{annotation_to_process.release_date}' for {existing.annotation_id}: {e}")
+
+    try:
+        existing.modify(**update_fields)
+    except Exception as e:
+        print(f"Failed to update source metadata for annotation {existing.annotation_id}: {e}")
+        return False
+
+    print(f"Updated source url for annotation {existing.annotation_id}: {old_url} -> {new_url}")
+
+    # Clean up any lingering AnnotationError entries tied to either url or this md5,
+    # they no longer represent a real problem.
+    try:
+        AnnotationError.objects(
+            Q(url_path=old_url) | Q(url_path=new_url) | Q(source_md5=existing.annotation_id)
+        ).delete()
+    except Exception as e:
+        print(f"Failed to clean up AnnotationError entries for {existing.annotation_id}: {e}")
+
+    return True
+
+
+def handle_duplicate_annotation_content(annotation_to_process: AnnotationToProcess, content_md5: str) -> None:
+    """
+    Called when process_annotation_file raised DuplicateAnnotationContentError: the
+    freshly downloaded+sorted content for `annotation_to_process` hashes to a value
+    that already belongs to an existing GenomeAnnotation. This typically means the
+    source moved to a new URL while the content is unchanged (e.g. an Ensembl release
+    directory was renamed).
+
+    IMPORTANT: this function must never delete files. The caller (process_annotations_pipeline)
+    intentionally does not delete full_bgzipped_path/full_csi_path for this case, since
+    those paths are the same, already-valid files backing the existing document.
+    """
+    existing = GenomeAnnotation.objects(annotation_id=content_md5).first()
+    if not existing:
+        # Extremely unlikely: existing_annotation_md5s (captured at job start) said this
+        # md5 exists, but the document is gone now (e.g. deleted concurrently by another
+        # process). We can't safely assume ownership of the on-disk path here, so just
+        # record it as an error without touching any files.
+        handle_annotation_error(
+            annotation_to_process,
+            f"Duplicate content md5 {content_md5} detected but no matching annotation "
+            f"found in the database",
+        )
+        return
+
+    updated = update_annotation_source_metadata(existing, annotation_to_process)
+    if not updated:
+        print(
+            f"Duplicate content md5 {content_md5} for {annotation_to_process.access_url}: "
+            f"no source metadata change needed/possible"
+        )
+
+
+def safe_remove_annotation_file(full_path: str, annotations_path: str, relative_path: str) -> None:
+    """
+    Remove a file created/touched during a FAILED processing attempt, unless it is
+    still referenced by an existing GenomeAnnotation document's indexed_file_info.
+    This guards against a processing failure destroying a file that a live database
+    record still depends on, regardless of which code path led to the failure.
+    """
+    if not full_path or not os.path.exists(full_path):
+        return
+
+    if relative_path:
+        still_referenced = GenomeAnnotation.objects(
+            Q(indexed_file_info__bgzipped_path=relative_path)
+            | Q(indexed_file_info__csi_path=relative_path)
+        ).first()
+        if still_referenced:
+            print(
+                f"Not removing {full_path}: still referenced by annotation "
+                f"{still_referenced.annotation_id}"
+            )
+            return
+
+    file_helper.remove_file_and_empty_parents(full_path, annotations_path)
+
 
 def get_annotation(md5_checksum: str) -> GenomeAnnotation:
     """
@@ -245,7 +395,7 @@ def process_annotation_file(annotation_to_process: AnnotationToProcess, tmp_subd
         raise Exception("Empty MD5 computed from streaming pipeline")
 
     if uncompressed_md5_checksum in existing_md5_checksum:
-        raise Exception(f"Annotation with md5 checksum {uncompressed_md5_checksum} already exists in the database, skipping...")
+        raise DuplicateAnnotationContentError(uncompressed_md5_checksum)
 
     file_size = os.path.getsize(bgzipped_path)
     if file_size == 0:

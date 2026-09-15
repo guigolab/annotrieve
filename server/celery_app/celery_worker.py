@@ -17,6 +17,7 @@ from jobs.updates import (
 )
 from jobs.track_users import track_unique_users_by_country
 from jobs.upload_gff import compute_custom_gff_stats
+from jobs.repair_annotation_files import repair_missing_annotation_files
 
 
 app = create_celery()

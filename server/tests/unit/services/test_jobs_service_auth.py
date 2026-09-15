@@ -98,6 +98,18 @@ class TestJobsServiceAuth:
             )
         delay.assert_called_once_with(dry_run=True)
 
+    def test_repair_missing_annotation_files_passes_dry_run(self):
+        with (
+            patch.dict(os.environ, {"AUTH_KEY": "secret"}),
+            patch(
+                "services.jobs_service.repair_missing_annotation_files.delay"
+            ) as delay,
+        ):
+            jobs_service.trigger_repair_missing_annotation_files(
+                "secret", dry_run=False
+            )
+        delay.assert_called_once_with(dry_run=False)
+
     def test_sync_passes_accessions(self):
         with (
             patch.dict(os.environ, {"AUTH_KEY": "secret"}),

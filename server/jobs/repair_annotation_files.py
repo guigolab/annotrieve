@@ -19,6 +19,7 @@ This job is intentionally conservative:
   - Run with dry_run=True first (the default) to review what would be repaired
     before actually downloading/writing anything.
 """
+import gzip
 import os
 import shlex
 import shutil
@@ -140,7 +141,9 @@ def recreate_annotation_file(annotation: GenomeAnnotation, tmp_dir: str, downloa
 
     tmp_subdir_path = file_helper.create_dir_path(tmp_dir, f"repair_{annotation.annotation_id}")
     try:
-        gzipped_downloaded_path = os.path.join(tmp_subdir_path, "source_download")
+        # Must end in .gz so _gff_decompress_cmd selects zcat (not cat). All tracker
+        # source URLs are gzip-compressed, matching the main import job's assumption.
+        gzipped_downloaded_path = os.path.join(tmp_subdir_path, "source_download.gz")
         with requests.get(download_url, stream=True, timeout=DOWNLOAD_TIMEOUT) as r:
             r.raise_for_status()
             with open(gzipped_downloaded_path, "wb") as f:
@@ -150,13 +153,24 @@ def recreate_annotation_file(annotation: GenomeAnnotation, tmp_dir: str, downloa
         if file_helper.file_is_empty_or_does_not_exist(gzipped_downloaded_path):
             raise Exception(f"Downloaded content from {download_url} is empty")
 
+        # Reject truncated/non-gzip payloads before the shell pipeline; otherwise a
+        # silent empty stream can look like a ContentMismatchError.
+        try:
+            with gzip.open(gzipped_downloaded_path, "rb") as gz_f:
+                if not gz_f.read(1):
+                    raise Exception(f"Downloaded gzip from {download_url} decompresses to empty content")
+        except OSError as e:
+            raise Exception(f"Downloaded content from {download_url} is not valid gzip: {e}") from e
+
         tmp_bgzipped_path = os.path.join(tmp_subdir_path, "output.gff.gz")
         md5_path = os.path.join(tmp_subdir_path, "md5.txt")
 
         # Reuse the exact same sort/tee/bgzip shell pipeline as the main import job
         # (jobs/services/annotation.py::process_annotation_file) so the recreated
-        # content is produced identically.
+        # content is produced identically. pipefail so a failed zcat/grep/sort stage
+        # cannot be masked by bgzip succeeding on empty stdin.
         stream_cmd = (
+            "set -o pipefail; "
             f"{annotation_service._sorted_gff_stream_cmd(gzipped_downloaded_path)} "
             f"| tee >(md5sum | awk '{{print $1}}' > {shlex.quote(md5_path)}) "
             f"| bgzip > {shlex.quote(tmp_bgzipped_path)}"

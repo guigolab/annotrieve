@@ -36,6 +36,9 @@ jobs:
           cache: pip
           cache-dependency-path: server/requirements-dev.txt
 
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends tabix
+
       - name: Install dependencies
         run: pip install -r requirements-dev.txt
 

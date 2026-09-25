@@ -311,3 +311,146 @@ class TestProcessAnnotationFileDuplicateDetection:
 
         assert md5_result == content_md5
         assert file_size > 0
+
+
+class TestResolveSourceDates:
+    def test_empty_release_date_falls_back_to_last_modified(self):
+        from datetime import datetime
+        from db.models import GenomeAnnotation
+
+        release_dt, last_mod_dt = GenomeAnnotation.resolve_source_dates("", "2026-08-27")
+        assert release_dt == datetime.fromisoformat("2026-08-27")
+        assert last_mod_dt == datetime.fromisoformat("2026-08-27")
+
+    def test_whitespace_release_date_falls_back(self):
+        from datetime import datetime
+        from db.models import GenomeAnnotation
+
+        release_dt, last_mod_dt = GenomeAnnotation.resolve_source_dates("  ", "2026-08-27")
+        assert release_dt == last_mod_dt == datetime.fromisoformat("2026-08-27")
+
+    def test_both_present(self):
+        from datetime import datetime
+        from db.models import GenomeAnnotation
+
+        release_dt, last_mod_dt = GenomeAnnotation.resolve_source_dates(
+            "2024-01-02", "2024-01-01"
+        )
+        assert release_dt == datetime.fromisoformat("2024-01-02")
+        assert last_mod_dt == datetime.fromisoformat("2024-01-01")
+
+    def test_both_missing_raises(self):
+        from db.models import GenomeAnnotation
+
+        with pytest.raises(ValueError, match="Missing release_date and last_modified"):
+            GenomeAnnotation.resolve_source_dates("", "")
+
+    def test_parse_iso_date_rejects_empty(self):
+        from db.models import GenomeAnnotation
+
+        with pytest.raises(ValueError):
+            GenomeAnnotation.parse_iso_date("")
+        assert GenomeAnnotation.try_parse_iso_date("") is None
+        assert GenomeAnnotation.try_parse_iso_date(None) is None
+
+
+class TestAnnotationToProcessDates:
+    def _base_kwargs(self, **overrides):
+        data = dict(
+            source_database="GenBank",
+            annotation_provider="",
+            release_date="2024-01-02",
+            last_modified_date="2024-01-01",
+            md5_checksum="abc123def456abc123def456abc123de",
+            access_url="https://example.com/a.gff.gz",
+            taxon_id="9606",
+            organism_name="Homo sapiens",
+            assembly_accession="GCA_000001405.29",
+            assembly_name="GRCh38",
+        )
+        data.update(overrides)
+        return data
+
+    def test_to_genome_annotation_backfills_empty_release_date(self):
+        from datetime import datetime
+        from db.embedded_documents import IndexedFileInfo, FeatureOverview, GFFStats, PipelineInfo
+
+        ann = AnnotationToProcess(**self._base_kwargs(release_date=""))
+        ga = ann.to_genome_annotation(
+            annotation_id="contentmd5contentmd5contentmd5co",
+            taxon_lineage=["9606"],
+            indexed_file_info=IndexedFileInfo(
+                uncompressed_md5="contentmd5contentmd5contentmd5co",
+                bgzipped_path="/x.gff.gz",
+                csi_path="/x.gff.gz.csi",
+                file_size=1,
+                pipeline=PipelineInfo(name="t", version="1", method="m"),
+            ),
+            features_summary=FeatureOverview(sources=["s"], types=["gene"]),
+            features_statistics=GFFStats(),
+        )
+        expected = datetime.fromisoformat("2024-01-01")
+        assert ga.source_file_info.release_date == expected
+        assert ga.source_file_info.last_modified == expected
+
+    def test_to_genome_annotation_raises_when_both_dates_missing(self):
+        ann = AnnotationToProcess(
+            **self._base_kwargs(release_date="", last_modified_date="")
+        )
+        with pytest.raises(ValueError, match="Missing release_date and last_modified"):
+            ann.to_genome_annotation(annotation_id="x", taxon_lineage=["9606"])
+
+    def test_to_annotation_error_uses_utcnow_when_both_dates_missing(self):
+        from datetime import datetime
+
+        ann = AnnotationToProcess(
+            **self._base_kwargs(release_date="", last_modified_date="")
+        )
+        err = ann.to_annotation_error("tabix failed")
+        assert isinstance(err.release_date, datetime)
+        assert isinstance(err.last_modified, datetime)
+        assert err.error_message == "tabix failed"
+
+
+class TestHandleAnnotationError:
+    def test_does_not_raise_when_save_fails(self):
+        real = AnnotationToProcess(
+            source_database="GenBank",
+            release_date="",
+            last_modified_date="",
+            md5_checksum="md5x",
+            access_url="https://example.com/a.gff.gz",
+            taxon_id="1",
+            organism_name="x",
+            assembly_accession="GCA_1",
+        )
+        err_doc = MagicMock()
+        err_doc.save.side_effect = Exception("cannot parse date")
+
+        with (
+            patch.object(ann_svc, "AnnotationError") as AE,
+            patch.object(real, "to_annotation_error", return_value=err_doc),
+        ):
+            AE.objects.return_value.first.side_effect = [None, None]
+            ann_svc.handle_annotation_error(real, "boom")
+
+        err_doc.save.assert_called_once()
+
+    def test_updates_existing_error_without_raising(self):
+        existing = MagicMock()
+        real = AnnotationToProcess(
+            source_database="GenBank",
+            release_date="2024-01-01",
+            last_modified_date="2024-01-01",
+            md5_checksum="md5x",
+            access_url="https://example.com/a.gff.gz",
+            taxon_id="1",
+            organism_name="x",
+            assembly_accession="GCA_1",
+        )
+        with patch.object(ann_svc, "AnnotationError") as AE:
+            AE.objects.return_value.first.return_value = existing
+            ann_svc.handle_annotation_error(real, "new error")
+
+        assert existing.error_message == "new error"
+        existing.save.assert_called_once()

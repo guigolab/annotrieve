@@ -51,15 +51,23 @@ class DuplicateAnnotationContentError(Exception):
         )
 
 def handle_annotation_error(annotation_to_process: AnnotationToProcess, error: str):
-    """Handle annotation processing errors."""
+    """Handle annotation processing errors.
+
+    Never raises: a failure to persist the error document must not abort the
+    import batch (e.g. incomplete dates on AnnotationError).
+    """
 
     url_path = annotation_to_process.access_url
     source_md5 = annotation_to_process.md5_checksum
     
     # Check by url_path first (unique constraint), then by source_md5 as fallback
-    annotation_error = AnnotationError.objects(url_path=url_path).first()
-    if not annotation_error:
-        annotation_error = AnnotationError.objects(source_md5=source_md5).first()
+    try:
+        annotation_error = AnnotationError.objects(url_path=url_path).first()
+        if not annotation_error:
+            annotation_error = AnnotationError.objects(source_md5=source_md5).first()
+    except Exception as e:
+        print(f"Failed to look up AnnotationError for {url_path}: {e}")
+        return
     
     if isinstance(error, Exception):
         error = str(error)
@@ -67,13 +75,15 @@ def handle_annotation_error(annotation_to_process: AnnotationToProcess, error: s
     if isinstance(error, str):
         error = error.replace('\n', ';')
 
-    if annotation_error:
-        annotation_error.error_message = error
-        annotation_error.save()
-
-    else:
-        annotation_error = annotation_to_process.to_annotation_error(error)
-        annotation_error.save()
+    try:
+        if annotation_error:
+            annotation_error.error_message = error
+            annotation_error.save()
+        else:
+            annotation_error = annotation_to_process.to_annotation_error(error)
+            annotation_error.save()
+    except Exception as e:
+        print(f"Failed to save AnnotationError for {url_path}: {e}")
 
 
 def update_annotation_source_metadata(existing: GenomeAnnotation, annotation_to_process: AnnotationToProcess) -> bool:

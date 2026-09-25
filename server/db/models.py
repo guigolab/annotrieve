@@ -281,11 +281,50 @@ class GenomeAnnotation(DynamicDocument):
             "busco.missing",  
         ]
     }
+    @staticmethod
     def parse_iso_date(iso_date: str) -> datetime:
         """
-        Parse an ISO date string to a datetime object
+        Parse an ISO date string to a datetime object.
+        Raises ValueError if iso_date is missing or not a valid ISO date.
         """
-        return datetime.fromisoformat(iso_date)
+        if iso_date is None or (isinstance(iso_date, str) and not iso_date.strip()):
+            raise ValueError("Missing or empty ISO date string")
+        return datetime.fromisoformat(iso_date.strip())
+
+    @staticmethod
+    def try_parse_iso_date(iso_date: str | None) -> datetime | None:
+        """Parse an ISO date string, returning None if missing or invalid."""
+        try:
+            return GenomeAnnotation.parse_iso_date(iso_date)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def resolve_source_dates(
+        release_date: str | None,
+        last_modified: str | None,
+    ) -> tuple[datetime, datetime]:
+        """
+        Resolve release_date and last_modified for SourceFileInfo.
+
+        Empty/missing release_date falls back to last_modified (same rule as the
+        community annotation tracker). Raises ValueError if last_modified is also
+        missing/invalid, or if release_date is present but unparseable and there
+        is no valid last_modified fallback for a missing release only.
+        """
+        last_mod_dt = GenomeAnnotation.try_parse_iso_date(last_modified)
+        release_raw = release_date.strip() if isinstance(release_date, str) else release_date
+        if release_raw is None or release_raw == "":
+            if last_mod_dt is None:
+                raise ValueError("Missing release_date and last_modified")
+            return last_mod_dt, last_mod_dt
+
+        release_dt = GenomeAnnotation.try_parse_iso_date(release_date)
+        if release_dt is None:
+            raise ValueError(f"Invalid release_date: {release_date!r}")
+        if last_mod_dt is None:
+            raise ValueError(f"Missing or invalid last_modified: {last_modified!r}")
+        return release_dt, last_mod_dt
 
 class TaxonNode(Document):
     children = ListField(StringField())

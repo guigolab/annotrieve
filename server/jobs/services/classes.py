@@ -1,4 +1,5 @@
 from array import array
+from datetime import datetime, timezone
 from db.models import GenomeAnnotation, AnnotationError, Organism, TaxonNode, GenomicSequence, GenomeAssembly   
 from db.embedded_documents import SourceFileInfo, PipelineInfo, AssemblyStats, BuscoScore
 import re
@@ -29,12 +30,15 @@ class AnnotationToProcess:
         """
         Convert the AnnotationToProcess object to a GenomeAnnotation document
         """
+        release_dt, last_mod_dt = GenomeAnnotation.resolve_source_dates(
+            self.release_date, self.last_modified
+        )
         source_info = SourceFileInfo(
             database=self.source_database,
             provider=self.annotation_provider,
-            release_date=GenomeAnnotation.parse_iso_date(self.release_date),
+            release_date=release_dt,
             url_path=self.access_url,
-            last_modified=GenomeAnnotation.parse_iso_date(self.last_modified),
+            last_modified=last_mod_dt,
             uncompressed_md5=self.md5_checksum,
         )
         if self.pipeline_name:
@@ -54,8 +58,19 @@ class AnnotationToProcess:
 
     def to_annotation_error(self, error_message: str) -> AnnotationError:
         """
-        Convert the AnnotationToProcess object to an AnnotationError document
+        Convert the AnnotationToProcess object to an AnnotationError document.
+
+        Dates always resolve to valid datetimes so error recording cannot fail
+        on incomplete tracker metadata (fall back to last_modified, then utcnow).
         """
+        try:
+            release_dt, last_mod_dt = GenomeAnnotation.resolve_source_dates(
+                self.release_date, self.last_modified
+            )
+        except ValueError:
+            now = datetime.now(timezone.utc)
+            last_mod_dt = GenomeAnnotation.try_parse_iso_date(self.last_modified) or now
+            release_dt = GenomeAnnotation.try_parse_iso_date(self.release_date) or last_mod_dt
         return AnnotationError(
             assembly_accession=self.assembly_accession,
             taxid=self.taxon_id,
@@ -63,8 +78,8 @@ class AnnotationToProcess:
             error_message=error_message,
             url_path=self.access_url,
             source_md5=self.md5_checksum,
-            release_date=self.release_date,
-            last_modified=self.last_modified,
+            release_date=release_dt,
+            last_modified=last_mod_dt,
             source_database=self.source_database,
         )
 

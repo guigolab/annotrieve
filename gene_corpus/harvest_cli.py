@@ -212,13 +212,27 @@ def main(argv: list[str] | None = None) -> int:
     _write_jobs_jsonl(jobs_path, prepared)
 
     by_db = Counter(j.database for j in prepared)
-    print(f"jobs written: {len(prepared)} → {jobs_path}", file=sys.stderr)
+    total = len(prepared)
+    print(f"jobs written: {total} → {jobs_path}", file=sys.stderr)
     print(f"per-db: {dict(by_db)}", file=sys.stderr)
 
     harvested = 0
     skipped_existing = 0
     errors = 0
+    done = 0
     force = bool(args.force)
+    progress_every = 50
+
+    def _on_complete() -> None:
+        nonlocal done
+        done += 1
+        if done % progress_every == 0 or done == total:
+            print(
+                f"harvest progress: {done}/{total} "
+                f"(ok={harvested} skipped={skipped_existing} errors={errors})",
+                file=sys.stderr,
+                flush=True,
+            )
 
     if args.workers == 1:
         for job in prepared:
@@ -241,6 +255,7 @@ def main(argv: list[str] | None = None) -> int:
                     f"harvest fail {job.annotation_id}: {exc}",
                     file=sys.stderr,
                 )
+            _on_complete()
     else:
         with ProcessPoolExecutor(max_workers=args.workers) as pool:
             futures = {
@@ -268,6 +283,7 @@ def main(argv: list[str] | None = None) -> int:
                         f"harvest fail {job.annotation_id}: {exc}",
                         file=sys.stderr,
                     )
+                _on_complete()
 
     print(
         f"harvested: ok={harvested} skipped_existing={skipped_existing} "

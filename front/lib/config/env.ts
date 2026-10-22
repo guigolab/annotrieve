@@ -38,6 +38,17 @@ export const getFilesBase = (): string => {
   return stripTrailingSlash(`${getFrontendBase()}/files`)
 }
 
+/** Production annotrieve-xrefs API (optional override via NEXT_PUBLIC_XREFS_API_BASE). */
+export const PRODUCTION_XREFS_API_BASE = 'https://genome.crg.es/annotrieve-xrefs/api/v1'
+
+export const getXrefsApiBase = (): string => {
+  const envValue = process.env.NEXT_PUBLIC_XREFS_API_BASE
+  if (envValue && envValue.trim().length > 0) {
+    return stripTrailingSlash(envValue.trim())
+  }
+  return PRODUCTION_XREFS_API_BASE
+}
+
 export const joinUrl = (base: string, path: string): string => {
   const cleanedBase = stripTrailingSlash(base)
   const cleanedPath = path.replace(/^\/+/, '')

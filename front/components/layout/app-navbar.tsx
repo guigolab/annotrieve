@@ -36,6 +36,7 @@ export function AppNavbar() {
 
   const isAnnotations = pathname === "/annotations" || pathname.startsWith("/annotations/")
   const isTaxonomy = pathname === "/taxonomy" || pathname.startsWith("/taxonomy")
+  const isGenes = pathname === "/genes" || pathname.startsWith("/genes/")
 
   return (
     <nav
@@ -53,6 +54,7 @@ export function AppNavbar() {
           <div className="hidden sm:flex items-center gap-6" role="navigation" aria-label="Main pages">
             <NavLink href="/annotations" active={isAnnotations}>Annotations</NavLink>
             <NavLink href="/taxonomy" active={isTaxonomy}>Taxonomy</NavLink>
+            <NavLink href="/genes" active={isGenes}>Genes</NavLink>
           </div>
         </div>
 

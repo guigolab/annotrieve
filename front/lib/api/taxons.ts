@@ -60,19 +60,35 @@ export interface FlattenedTreeResponse {
 /**
  * Fetches flattened tree. format='json' (default) returns structured JSON; format='tsv' returns TSV parsed to FlatTreeNode[].
  */
+const PRODUCTION_FLATTENED_TREE =
+  'https://genome.crg.es/annotrieve/api/v0/taxons/flattened-tree'
+
 export async function getFlattenedTree(format: 'json' | 'tsv' = 'tsv'): Promise<FlatTreeNode[] | FlattenedTreeResponse> {
   const { getApiBase, joinUrl } = await import('@/lib/config/env')
   const API_BASE = getApiBase()
-  const url = `${joinUrl(API_BASE, '/taxons/flattened-tree')}?format=${format}`
-  
-  if (format === 'json') {
-    const res = await fetch(url, { method: 'GET', headers: { 'Accept': 'application/json' } })
+  const relativeUrl = `${joinUrl(API_BASE, '/taxons/flattened-tree')}?format=${format}`
+  const productionUrl = `${PRODUCTION_FLATTENED_TREE}?format=${format}`
+
+  const accept =
+    format === 'json' ? 'application/json' : 'text/tab-separated-values'
+
+  const tryFetch = async (url: string) => {
+    const res = await fetch(url, { method: 'GET', headers: { Accept: accept } })
     if (!res.ok) throw new Error(`GET /taxons/flattened-tree failed: ${res.status}`)
+    return res
+  }
+
+  let res: Response
+  try {
+    res = await tryFetch(relativeUrl)
+  } catch {
+    // Dev proxy / local files down — fall back to production API.
+    res = await tryFetch(productionUrl)
+  }
+
+  if (format === 'json') {
     return res.json() as Promise<FlattenedTreeResponse>
   }
-  
-  const res = await fetch(url, { method: 'GET', headers: { 'Accept': 'text/tab-separated-values' } })
-  if (!res.ok) throw new Error(`GET /taxons/flattened-tree failed: ${res.status}`)
   const text = await res.text()
   return parseTsvToFlatTreeNodes(text)
 }

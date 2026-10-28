@@ -1,13 +1,23 @@
-import type { HitKey } from "@/lib/api/xrefs-types"
+import type { HitTerm } from "@/lib/api/xrefs-types"
 import type { DecodedHitRow } from "@/lib/genes/hits"
 
 export const ANNOTATION_PAGE_SIZE = 50
-export const GENE_NAMES_CAP = 50
+
+/** Inclusive interval of matched-term counts (one histogram bin or span). */
+export interface CoverageSegment {
+  min: number
+  max: number
+}
 
 /** Inclusive range of matched-term counts. */
 export interface CoverageRange {
   min: number
   max: number
+  /**
+   * Exact multi-selected bin intervals. When set, filtering matches k in any
+   * segment; min/max are the span (URL / legacy).
+   */
+  segments?: CoverageSegment[]
 }
 
 export interface CoverageBin {
@@ -19,44 +29,19 @@ export interface CoverageBin {
   count: number
 }
 
-/** Distinct query terms matched by one annotation, over the term count. */
-export function termCoverage(
-  row: DecodedHitRow,
-  keys: HitKey[],
-  termCount: number,
-): { matched: number; total: number; fraction: number } {
-  const terms = new Set<number>()
-  for (const ki of row.matchedKeyIndexes) {
-    const key = keys[ki]
-    if (key) terms.add(key.term)
-  }
-  const total = Math.max(0, termCount)
-  const matched = terms.size
-  return {
-    matched,
-    total,
-    fraction: total > 0 ? matched / total : 0,
-  }
-}
-
 /**
- * Count distinct input terms among `selectedNames` that this row matched.
- * When every selected name is in the query, this equals `row.nMatched` for a
- * full-query selection; otherwise it only counts still-selected terms.
+ * Count distinct input terms among active term indexes that this row matched.
  */
-export function matchedSelectedTerms(
+export function matchedActiveTerms(
   row: DecodedHitRow,
-  keys: HitKey[],
-  selectedNameIds: Set<string>,
+  activeTermIndexes: Set<number>,
 ): number {
-  if (!selectedNameIds.size) return 0
-  const terms = new Set<number>()
-  for (const ki of row.matchedKeyIndexes) {
-    const key = keys[ki]
-    if (!key) continue
-    if (selectedNameIds.has(key.name.toLowerCase())) terms.add(key.term)
+  if (!activeTermIndexes.size) return 0
+  let k = 0
+  for (const ti of row.matchedTerms) {
+    if (activeTermIndexes.has(ti)) k += 1
   }
-  return terms.size
+  return k
 }
 
 /** Default open range: at least one match up through N. */
@@ -71,6 +56,12 @@ export function isDefaultCoverageRange(
 ): boolean {
   if (!range) return true
   const def = defaultCoverageRange(termCount)
+  if (range.segments?.length) {
+    // Multi-select that covers the full default window is "any".
+    const min = Math.min(...range.segments.map((s) => s.min))
+    const max = Math.max(...range.segments.map((s) => s.max))
+    return min <= def.min && max >= def.max
+  }
   return range.min === def.min && range.max === def.max
 }
 
@@ -80,7 +71,11 @@ export function coverageRangesEqual(
 ): boolean {
   if (a == null && b == null) return true
   if (a == null || b == null) return false
-  return a.min === b.min && a.max === b.max
+  if (a.min !== b.min || a.max !== b.max) return false
+  const as = a.segments ?? []
+  const bs = b.segments ?? []
+  if (as.length !== bs.length) return false
+  return as.every((s, i) => s.min === bs[i]?.min && s.max === bs[i]?.max)
 }
 
 export function clampCoverageRange(
@@ -91,17 +86,53 @@ export function clampCoverageRange(
   let min = Math.max(0, Math.min(range.min, n))
   let max = Math.max(0, Math.min(range.max, n))
   if (min > max) [min, max] = [max, min]
-  return { min, max }
+  const segments = range.segments
+    ?.map((s) => {
+      let a = Math.max(0, Math.min(s.min, n))
+      let b = Math.max(0, Math.min(s.max, n))
+      if (a > b) [a, b] = [b, a]
+      return { min: a, max: b }
+    })
+    .filter((s) => s.min <= s.max)
+  return segments?.length ? { min, max, segments } : { min, max }
 }
 
-export function parseCovParam(raw: string | null): CoverageRange | null {
-  if (!raw) return null
-  const m = /^(\d+)-(\d+)$/.exec(raw.trim())
-  if (!m) return null
-  const min = Number(m[1])
-  const max = Number(m[2])
-  if (!Number.isFinite(min) || !Number.isFinite(max)) return null
-  return clampCoverageRange({ min, max }, Math.max(min, max))
+/** True when k falls in any selected segment (or the min–max span). */
+export function coverageMatchesK(
+  range: CoverageRange | null,
+  k: number,
+  termCount: number,
+): boolean {
+  if (!range || isDefaultCoverageRange(range, termCount)) return true
+  if (range.segments?.length) {
+    return range.segments.some((s) => k >= s.min && k <= s.max)
+  }
+  return k >= range.min && k <= range.max
+}
+
+function formatSegment(s: CoverageSegment): string {
+  return s.min === s.max ? String(s.min) : `${s.min}–${s.max}`
+}
+
+/**
+ * Chip label for the match-coverage control.
+ * Idle: short prompt that this filters annotations by how many names they hit.
+ * Active: compact selected match-count bins (no “of N” — N is often unreachable).
+ */
+export function namesMatchedChipLabel(
+  range: CoverageRange | null,
+  termCount: number,
+): string {
+  if (!range || isDefaultCoverageRange(range, termCount)) {
+    return "Best matches"
+  }
+  const segments = range.segments?.length
+    ? range.segments
+    : [{ min: range.min, max: range.max }]
+  const parts = segments.map(formatSegment)
+  const shown = parts.slice(0, 3).join(", ")
+  const more = parts.length > 3 ? ` +${parts.length - 3}` : ""
+  return `Best matches: ${shown}${more}`
 }
 
 /**
@@ -138,22 +169,15 @@ export function buildCoverageBins(
   return bins
 }
 
-export function filterRowsByCoverage(
-  rows: DecodedHitRow[],
-  keys: HitKey[],
-  selectedNameIds: Set<string>,
-  range: CoverageRange | null,
-): DecodedHitRow[] {
-  if (!range) return rows
-  return rows.filter((row) => {
-    const k = matchedSelectedTerms(row, keys, selectedNameIds)
-    return k >= range.min && k <= range.max
-  })
-}
-
 export function coverageChipLabel(range: CoverageRange): string {
-  if (range.min === range.max) return `matched ${range.min}`
-  return `matched ${range.min}-${range.max}`
+  if (range.segments?.length) {
+    const parts = range.segments.map(formatSegment)
+    const shown = parts.slice(0, 3).join(", ")
+    const more = parts.length > 3 ? ` +${parts.length - 3}` : ""
+    return `Best matches: ${shown}${more}`
+  }
+  if (range.min === range.max) return `Best matches: ${range.min}`
+  return `Best matches: ${range.min}–${range.max}`
 }
 
 export function coverageBarLabel(
@@ -168,45 +192,32 @@ export function coverageBarLabel(
   return `${n.toLocaleString()} annotations matched ${bin.minK}–${bin.maxK} of ${N} names`
 }
 
-/**
- * Names sent to `/annotations/{id}/genes`.
- * The route rejects more than 50 names, so a longer query sends only
- * the names this annotation actually matched.
- */
-export function namesForGeneBrowse(
-  queryNames: string[],
-  row: DecodedHitRow,
-  keys: HitKey[],
-): string[] {
-  if (queryNames.length <= GENE_NAMES_CAP) return queryNames
-  const matched = new Set<string>()
-  for (const ki of row.matchedKeyIndexes) {
-    const key = keys[ki]
-    if (key) matched.add(key.name)
-  }
-  return [...matched].slice(0, GENE_NAMES_CAP)
-}
-
 /** Build a TSV blob of filtered hit rows for client-side download. */
 export function hitsToTsv(
   rows: DecodedHitRow[],
-  keys: HitKey[],
+  terms: HitTerm[],
+  /** Active-term matched counts aligned with ``rows`` (from adapter page). */
+  matchedK?: number[],
 ): string {
-  const header = "annotation_id\ttaxid\tsource\tn_matched\tmatched_names"
-  const lines = rows.map((row) => {
+  const header =
+    "annotation_id\ttaxid\tsource\tn_matched\tmatched_names\trelease_date\tassembly_name"
+  const lines = rows.map((row, i) => {
     const matchedNames = [
       ...new Set(
-        row.matchedKeyIndexes
-          .map((ki) => keys[ki]?.name)
+        row.matchedTerms
+          .map((ti) => terms[ti]?.name)
           .filter((name): name is string => Boolean(name)),
       ),
     ]
+    const k = matchedK?.[i] ?? row.matchedTerms.length
     return [
       row.annotationId,
       String(row.taxid),
       String(row.source),
-      String(row.nMatched),
+      String(k),
       matchedNames.join(","),
+      row.releaseDate ?? "",
+      row.assemblyName ?? "",
     ].join("\t")
   })
   return [header, ...lines].join("\n")

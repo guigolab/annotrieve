@@ -7,8 +7,10 @@ import {
   isDefaultCoverageRange,
 } from "@/lib/genes/coverage"
 import { ALL_SOURCE_CODES, defaultSources } from "@/lib/genes/filters"
+import { MAX_NAMES_GET } from "@/lib/genes/prefix"
 import type { SelectedTaxon } from "@/lib/genes/taxa"
 import { taxidsOf } from "@/lib/genes/taxa"
+import { uniqueNames } from "@/lib/genes/tokenize"
 
 export type PanelLevel = "list" | "annotation" | "gene"
 export type PopoverId = "review" | "coverage" | null
@@ -27,10 +29,6 @@ export interface GenesState {
   queryText: string
   /** Names sent to /hits (resolved set after Search / prefix apply). */
   queryNames: string[]
-  /** Display-resolved accessions (from hits.keys), ordered as typed/expanded. */
-  resolvedNames: string[]
-  /** Prefix tokens that produced expansions, e.g. "seleno*" → count. */
-  prefixExpansions: { prefix: string; count: number }[]
   /** Lowercased names excluded via Review names. */
   excluded: Set<string>
   /** Selected taxonomy node id. */
@@ -56,8 +54,6 @@ export interface GenesState {
 
   setQueryText: (text: string) => void
   setQueryNames: (names: string[]) => void
-  setResolvedNames: (names: string[]) => void
-  setPrefixExpansions: (items: { prefix: string; count: number }[]) => void
   setExcluded: (excluded: Set<string>) => void
   toggleSource: (code: number) => void
   setSources: (sources: Set<number>) => void
@@ -82,6 +78,7 @@ export interface GenesState {
   relabelTaxa: (labelFor: (taxid: number) => string | undefined) => void
   setViewRank: (rank: string | null) => void
   resetViewFilters: () => void
+  clearGeneSet: () => void
   hydrateFromUrl: (partial: Partial<{
     queryNames: string[]
     excluded: Set<string>
@@ -122,8 +119,6 @@ function resetToList(panel: PanelStack): PanelStack {
 export const useGenesStore = create<GenesState>((set, get) => ({
   queryText: "",
   queryNames: [],
-  resolvedNames: [],
-  prefixExpansions: [],
   excluded: new Set(),
   t: null,
   g: null,
@@ -145,8 +140,6 @@ export const useGenesStore = create<GenesState>((set, get) => ({
       t: null,
       g: null,
     }),
-  setResolvedNames: (names) => set({ resolvedNames: names }),
-  setPrefixExpansions: (items) => set({ prefixExpansions: items }),
   setExcluded: (excluded) =>
     set({ excluded, panel: resetToList(get().panel) }),
 
@@ -181,8 +174,18 @@ export const useGenesStore = create<GenesState>((set, get) => ({
       cur && name && cur.toLowerCase() === name.toLowerCase() ? null : name
     set({ g: next, panel: resetToList(get().panel) })
   },
-  selectCell: (taxonId, name) =>
-    set({ t: taxonId, g: name, panel: resetToList(get().panel) }),
+  selectCell: (taxonId, name) => {
+    const { t, g } = get()
+    const same =
+      t === taxonId &&
+      g != null &&
+      g.toLowerCase() === name.toLowerCase()
+    set({
+      t: same ? null : taxonId,
+      g: same ? null : name,
+      panel: resetToList(get().panel),
+    })
+  },
 
   toggleExpanded: (id) => {
     const next = new Set(get().expanded)
@@ -257,29 +260,52 @@ export const useGenesStore = create<GenesState>((set, get) => ({
       viewRank: null,
       panel: emptyPanel(),
     }),
+  clearGeneSet: () =>
+    set({
+      queryNames: [],
+      queryText: "",
+      excluded: new Set(),
+      t: null,
+      g: null,
+      coverage: null,
+      panel: emptyPanel(),
+      expanded: new Set(),
+    }),
 
   hydrateFromUrl: (partial) => {
-    set({
-      ...(partial.queryNames ? { queryNames: partial.queryNames, queryText: partial.queryNames.join(", ") } : {}),
-      ...(partial.excluded ? { excluded: partial.excluded } : {}),
-      ...(partial.t !== undefined ? { t: partial.t } : {}),
-      ...(partial.g !== undefined ? { g: partial.g } : {}),
-      ...(partial.sources ? { sources: partial.sources } : {}),
-      ...(partial.coverage !== undefined ? { coverage: partial.coverage } : {}),
-      ...(partial.includeTaxa ? { includeTaxa: partial.includeTaxa } : {}),
-      ...(partial.excludeTaxa ? { excludeTaxa: partial.excludeTaxa } : {}),
-      ...(partial.viewRank !== undefined ? { viewRank: partial.viewRank } : {}),
-      ...(partial.annotationId
-        ? {
-            panel: {
-              level: partial.localId != null ? "gene" : "annotation",
+    const cappedNames =
+      partial.queryNames !== undefined
+        ? uniqueNames(partial.queryNames, MAX_NAMES_GET)
+        : undefined
+    const nextPanel =
+      partial.annotationId !== undefined
+        ? partial.annotationId
+          ? {
+              level: (partial.localId != null ? "gene" : "annotation") as PanelLevel,
               annotationId: partial.annotationId,
               localId: partial.localId ?? null,
               species: null,
               source: null,
-            },
-          }
+            }
+          : emptyPanel()
+        : undefined
+    set({
+      ...(cappedNames !== undefined
+        ? { queryNames: cappedNames, queryText: "" }
         : {}),
+      ...(partial.excluded !== undefined ? { excluded: partial.excluded } : {}),
+      ...(partial.t !== undefined ? { t: partial.t } : {}),
+      ...(partial.g !== undefined ? { g: partial.g } : {}),
+      ...(partial.sources != null ? { sources: partial.sources } : {}),
+      ...(partial.coverage !== undefined ? { coverage: partial.coverage } : {}),
+      ...(partial.includeTaxa !== undefined
+        ? { includeTaxa: partial.includeTaxa }
+        : {}),
+      ...(partial.excludeTaxa !== undefined
+        ? { excludeTaxa: partial.excludeTaxa }
+        : {}),
+      ...(partial.viewRank !== undefined ? { viewRank: partial.viewRank } : {}),
+      ...(nextPanel !== undefined ? { panel: nextPanel } : {}),
     })
   },
   setUrlReady: (ready) => set({ urlReady: ready }),

@@ -4,32 +4,36 @@ import { useEffect, useMemo, useRef, useState } from "react"
 
 import { GenesAnnotationDetail } from "@/components/genes/genes-annotation-detail"
 import { GenesAnnotationList } from "@/components/genes/genes-annotation-list"
-import { GenesDownloadMenu } from "@/components/genes/genes-download-menu"
 import { GenesFilterBar } from "@/components/genes/genes-filter-bar"
 import {
   GenesPanelHeader,
   type PanelCrumb,
 } from "@/components/genes/genes-panel-header"
+import { GenesResultsToolbar } from "@/components/genes/genes-results-toolbar"
 import type { FlatTreeNode } from "@/lib/api/taxons"
 import type { GenesHitsAdapter } from "@/lib/genes/adapter"
 import type { CoverageRange } from "@/lib/genes/coverage"
 import type { GenesFilter } from "@/lib/genes/filters"
 import type { PanelStack } from "@/lib/genes/store"
-import type { SelectedTaxon } from "@/lib/genes/taxa"
 import { cn } from "@/lib/utils"
 
-interface GenesAnnotationsPanelProps {
+interface GenesResultsSectionProps {
   adapter: GenesHitsAdapter | null
   filter: GenesFilter
   taxonIndex: Map<string, FlatTreeNode>
   taxonLabel: string | null
   panel: PanelStack
   loading?: boolean
+  isFetching?: boolean
+  hasSlice: boolean
   activeNames: string[]
-  organismTotal: number
-  includeTaxa: SelectedTaxon[]
-  excludeTaxa: SelectedTaxon[]
-  onApplyTaxa: (include: SelectedTaxon[], exclude: SelectedTaxon[]) => void
+  activeCount: number
+  resolvedCount: number
+  matchedNothingCount: number
+  annotationTotal: number
+  overviewAnnotationTotal: number
+  overviewOrganismTotal: number
+  downloadAllTotal: number
   sources: Set<number>
   sourceCounts: Map<number, number>
   onToggleSource: (code: number) => void
@@ -43,7 +47,8 @@ interface GenesAnnotationsPanelProps {
   onClearName: () => void
   onClearCoverage: () => void
   onResetViewFilters: () => void
-  onDownloadTsv: () => void
+  onDownloadAll: () => void
+  onDownloadSelection: () => void
   onOpenAnnotation: (opts: {
     annotationId: string
     species: string
@@ -55,18 +60,23 @@ interface GenesAnnotationsPanelProps {
   className?: string
 }
 
-export function GenesAnnotationsPanel({
+export function GenesResultsSection({
   adapter,
   filter,
   taxonIndex,
   taxonLabel,
   panel,
   loading,
+  isFetching,
+  hasSlice,
   activeNames,
-  organismTotal,
-  includeTaxa,
-  excludeTaxa,
-  onApplyTaxa,
+  activeCount,
+  resolvedCount,
+  matchedNothingCount,
+  annotationTotal,
+  overviewAnnotationTotal,
+  overviewOrganismTotal,
+  downloadAllTotal,
   sources,
   sourceCounts,
   onToggleSource,
@@ -80,22 +90,29 @@ export function GenesAnnotationsPanel({
   onClearName,
   onClearCoverage,
   onResetViewFilters,
-  onDownloadTsv,
+  onDownloadAll,
+  onDownloadSelection,
   onOpenAnnotation,
   onOpenGene,
   onPop,
   onPopToList,
   className,
-}: GenesAnnotationsPanelProps) {
+}: GenesResultsSectionProps) {
   const sectionRef = useRef<HTMLElement>(null)
   const [geneTitle, setGeneTitle] = useState<string | null>(null)
+  const inDetail = panel.level !== "list"
 
   useEffect(() => {
+    if (!inDetail) {
+      setGeneTitle(null)
+      return
+    }
     const heading = sectionRef.current?.querySelector(
       "[data-panel-heading]",
     ) as HTMLElement | null
     heading?.focus()
-  }, [panel.level, panel.annotationId, panel.localId, geneTitle])
+    // Intentionally omit geneTitle — title loads async and must not steal focus.
+  }, [inDetail, panel.level, panel.annotationId, panel.localId])
 
   useEffect(() => {
     const el = sectionRef.current
@@ -110,15 +127,6 @@ export function GenesAnnotationsPanel({
     el.addEventListener("keydown", onKey)
     return () => el.removeEventListener("keydown", onKey)
   }, [panel.level, onPop])
-
-  const listTotal = useMemo(() => {
-    if (!adapter) return 0
-    return adapter.annotations(filter, { limit: 1, offset: 0 }).total
-  }, [adapter, filter])
-
-  const countLabel = loading
-    ? "…"
-    : `${listTotal.toLocaleString()} · ${organismTotal.toLocaleString()} organisms`
 
   const crumbs: PanelCrumb[] = useMemo(() => {
     if (panel.level === "list") return [{ label: "Annotations" }]
@@ -148,29 +156,34 @@ export function GenesAnnotationsPanel({
       ref={sectionRef}
       tabIndex={-1}
       className={cn(
-        "flex flex-col overflow-hidden min-h-0 rounded-xl border border-border bg-card/50 shadow-sm outline-none",
+        "flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-card/50 shadow-sm outline-none",
         className,
       )}
     >
-      <GenesPanelHeader
-        level={panel.level}
-        crumbs={crumbs}
-        countLabel={panel.level === "list" ? countLabel : undefined}
-        onBack={onPop}
-      >
-        {panel.level === "list" && (
-          <div className="space-y-2">
-            <div className="flex flex-wrap items-center gap-2">
-              <GenesDownloadMenu
-                count={listTotal}
-                disabled={!adapter || listTotal === 0}
-                onDownloadTsv={onDownloadTsv}
-              />
-            </div>
+      {inDetail ? (
+        <>
+          <GenesPanelHeader
+            level={panel.level}
+            crumbs={crumbs}
+            onBack={onPop}
+          />
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            <GenesAnnotationDetail
+              adapter={adapter}
+              panel={panel}
+              activeNames={activeNames}
+              termCount={
+                adapter?.termCount(filter.excludeTerms) ?? activeNames.length
+              }
+              onOpenGene={onOpenGene}
+              onGeneTitle={setGeneTitle}
+            />
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="shrink-0 border-b border-border/60 px-3 py-2">
             <GenesFilterBar
-              includeTaxa={includeTaxa}
-              excludeTaxa={excludeTaxa}
-              onApplyTaxa={onApplyTaxa}
               sources={sources}
               sourceCounts={sourceCounts}
               onToggleSource={onToggleSource}
@@ -185,38 +198,40 @@ export function GenesAnnotationsPanel({
               selectedName={filter.name}
               onClearTaxon={onClearTaxon}
               onClearName={onClearName}
-              onClearCoverage={onClearCoverage}
               onResetViewFilters={onResetViewFilters}
             />
           </div>
-        )}
-      </GenesPanelHeader>
 
-      <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-        {panel.level === "list" && (
-          <GenesAnnotationList
-            adapter={adapter}
-            filter={filter}
-            taxonIndex={taxonIndex}
-            loading={loading}
-            onClearCoverage={onClearCoverage}
-            onOpenAnnotation={onOpenAnnotation}
-          />
-        )}
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            <GenesAnnotationList
+              adapter={adapter}
+              filter={filter}
+              taxonIndex={taxonIndex}
+              loading={loading}
+              onClearCoverage={onClearCoverage}
+              onOpenAnnotation={onOpenAnnotation}
+            />
+          </div>
 
-        {panel.level !== "list" && (
-          <GenesAnnotationDetail
-            adapter={adapter}
-            panel={panel}
-            activeNames={activeNames}
-            termCount={
-              adapter?.termCount(filter.excludeTerms) ?? activeNames.length
-            }
-            onOpenGene={onOpenGene}
-            onGeneTitle={setGeneTitle}
-          />
-        )}
-      </div>
+          <div className="shrink-0 border-t border-border/60 px-3 py-2">
+            <GenesResultsToolbar
+              overviewAnnotationTotal={overviewAnnotationTotal}
+              overviewOrganismTotal={overviewOrganismTotal}
+              annotationTotal={annotationTotal}
+              hasSlice={hasSlice}
+              activeCount={activeCount}
+              resolvedCount={resolvedCount}
+              matchedNothingCount={matchedNothingCount}
+              isFetching={isFetching}
+              loading={loading}
+              downloadDisabled={!adapter}
+              downloadAllTotal={downloadAllTotal}
+              onDownloadAll={onDownloadAll}
+              onDownloadSelection={onDownloadSelection}
+            />
+          </div>
+        </>
+      )}
     </section>
   )
 }

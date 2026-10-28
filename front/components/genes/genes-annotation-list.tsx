@@ -1,19 +1,21 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef } from "react"
 import { Loader2 } from "lucide-react"
 
-import { GenesPagination } from "@/components/genes/genes-pagination"
 import { Button } from "@/components/ui/button"
 import type { FlatTreeNode } from "@/lib/api/taxons"
 import type { GenesHitsAdapter } from "@/lib/genes/adapter"
 import type { GenesFilter } from "@/lib/genes/filters"
-import { sourceColor, sourceLabel } from "@/lib/genes/hits"
+import {
+  formatReleaseDate,
+  sourceColor,
+  sourceLabel,
+} from "@/lib/genes/hits"
 import { speciesForTaxid } from "@/lib/genes/species"
 import { useVirtualWindow } from "@/lib/genes/virtual"
 
 const LIST_ROW_H = 52
-const PAGE_SIZE = 50
 
 interface GenesAnnotationListProps {
   adapter: GenesHitsAdapter | null
@@ -37,30 +39,36 @@ export function GenesAnnotationList({
   onOpenAnnotation,
 }: GenesAnnotationListProps) {
   const listScrollRef = useRef<HTMLDivElement>(null)
-  const [listOffset, setListOffset] = useState(0)
 
   const page = useMemo(() => {
     if (!adapter) {
       return {
         total: 0,
-        limit: PAGE_SIZE,
+        limit: 0,
         offset: 0,
         results: [],
         matched: [] as number[],
         termCount: 0,
       }
     }
+    // Client-side filter cache — load the full slice; virtual window renders it.
     return adapter.annotations(filter, {
-      limit: PAGE_SIZE,
-      offset: listOffset,
+      limit: Number.MAX_SAFE_INTEGER,
+      offset: 0,
     })
-  }, [adapter, filter, listOffset])
+  }, [adapter, filter])
 
   useEffect(() => {
-    setListOffset(0)
+    const el = listScrollRef.current
+    if (el) el.scrollTop = 0
   }, [filter])
 
-  const win = useVirtualWindow(listScrollRef, page.results.length, LIST_ROW_H, 8)
+  const win = useVirtualWindow(
+    listScrollRef,
+    page.results.length,
+    LIST_ROW_H,
+    8,
+  )
   const termCount = page.termCount
   const sources = adapter?.hits.sources
 
@@ -71,14 +79,14 @@ export function GenesAnnotationList({
   return (
     <>
       {loading && (
-        <div className="flex-1 flex items-center justify-center gap-2 text-sm text-muted-foreground">
+        <div className="flex flex-1 items-center justify-center gap-2 text-sm text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" />
           Loading…
         </div>
       )}
       {!loading && page.total === 0 && (
-        <div className="flex-1 flex flex-col items-center justify-center p-4">
-          <div className="border border-dashed border-border/60 bg-muted/20 px-4 py-8 text-center w-full space-y-3">
+        <div className="flex flex-1 flex-col items-center justify-center p-4">
+          <div className="w-full space-y-3 border border-dashed border-border/60 bg-muted/20 px-4 py-8 text-center">
             <p className="text-xs text-muted-foreground">
               No annotations match these filters
             </p>
@@ -96,76 +104,76 @@ export function GenesAnnotationList({
         </div>
       )}
       {!loading && page.total > 0 && (
-        <>
-          <div ref={listScrollRef} className="flex-1 min-h-0 overflow-auto">
-            <div className="relative" style={{ height: win.totalHeight }}>
-              {win.visibleIndexes.map((index) => {
-                const row = page.results[index]
-                if (!row) return null
-                const species = speciesForTaxid(row.taxid, taxonIndex)
-                const k = page.matched[index] ?? 0
-                const pct =
-                  termCount > 0 ? Math.round((k / termCount) * 100) : 0
-                const color = sourceColor(row.source)
-                return (
-                  <button
-                    key={row.annotationId}
-                    type="button"
-                    className="absolute left-0 right-0 flex items-center gap-2 px-3 border-b border-border/40 text-left hover:bg-muted/50 focus-visible:bg-muted/60 focus-visible:outline-none"
-                    style={{ top: index * LIST_ROW_H, height: LIST_ROW_H }}
-                    onClick={() =>
-                      onOpenAnnotation({
-                        annotationId: row.annotationId,
-                        species: species.label,
-                        source: row.source,
-                      })
-                    }
-                  >
-                    <span
-                      className="h-2 w-2 rounded-full shrink-0"
-                      style={{ backgroundColor: color }}
-                      title={sourceLabel(row.source, sources)}
-                    />
-                    <div className="min-w-0 flex-1 space-y-0.5">
-                      <div className="truncate text-sm italic font-medium">
+        <div ref={listScrollRef} className="min-h-0 flex-1 overflow-auto">
+          <div className="relative" style={{ height: win.totalHeight }}>
+            {win.visibleIndexes.map((index) => {
+              const row = page.results[index]
+              if (!row) return null
+              const species = speciesForTaxid(row.taxid, taxonIndex)
+              const k = page.matched[index] ?? 0
+              const pct =
+                termCount > 0 ? Math.round((k / termCount) * 100) : 0
+              const color = sourceColor(row.source)
+              const releaseLabel = formatReleaseDate(row.releaseDate)
+              return (
+                <button
+                  key={row.annotationId}
+                  type="button"
+                  className="absolute left-0 right-0 flex items-center gap-2 border-b border-border/40 px-3 text-left hover:bg-muted/50 focus-visible:bg-muted/60 focus-visible:outline-none"
+                  style={{ top: index * LIST_ROW_H, height: LIST_ROW_H }}
+                  onClick={() =>
+                    onOpenAnnotation({
+                      annotationId: row.annotationId,
+                      species: species.label,
+                      source: row.source,
+                    })
+                  }
+                >
+                  <span
+                    className="h-2 w-2 shrink-0 rounded-full"
+                    style={{ backgroundColor: color }}
+                    title={sourceLabel(row.source, sources)}
+                  />
+                  <div className="min-w-0 flex-1 space-y-0.5">
+                    <div className="flex min-w-0 items-baseline gap-2">
+                      <div className="truncate text-sm font-medium italic">
                         {species.label}
                       </div>
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span className="truncate font-mono text-[11px] text-muted-foreground">
-                          {row.annotationId}
+                      {releaseLabel && (
+                        <span
+                          className="shrink-0 text-[10px] tabular-nums text-muted-foreground"
+                          title={row.releaseDate ?? undefined}
+                        >
+                          {releaseLabel}
                         </span>
-                        <span className="ml-auto flex items-center gap-1.5 shrink-0">
-                          <span className="w-12 h-1 rounded-full bg-muted overflow-hidden">
-                            <span
-                              className="block h-full rounded-full bg-primary/70"
-                              style={{ width: `${pct}%` }}
-                            />
-                          </span>
-                          <span className="text-[10px] tabular-nums text-muted-foreground">
-                            {k}/{termCount}
-                          </span>
-                        </span>
-                      </div>
+                      )}
                     </div>
-                  </button>
-                )
-              })}
-            </div>
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span
+                        className="truncate text-[11px] text-muted-foreground"
+                        title={row.annotationId}
+                      >
+                        {row.assemblyName ?? row.annotationId}
+                      </span>
+                      <span className="ml-auto flex shrink-0 items-center gap-1.5">
+                        <span className="h-1 w-12 overflow-hidden rounded-full bg-muted">
+                          <span
+                            className="block h-full rounded-full bg-primary/70"
+                            style={{ width: `${pct}%` }}
+                          />
+                        </span>
+                        <span className="text-[10px] tabular-nums text-muted-foreground">
+                          {k}/{termCount}
+                        </span>
+                      </span>
+                    </div>
+                  </div>
+                </button>
+              )
+            })}
           </div>
-          {page.total > PAGE_SIZE && (
-            <div className="shrink-0 border-t border-border/60 bg-muted/20 px-2 py-1.5">
-              <GenesPagination
-                total={page.total}
-                limit={PAGE_SIZE}
-                offset={listOffset}
-                onOffsetChange={setListOffset}
-              />
-            </div>
-          )}
-        </>
+        </div>
       )}
     </>
   )
 }
-
-export { PAGE_SIZE as ANNOTATION_LIST_PAGE_SIZE }

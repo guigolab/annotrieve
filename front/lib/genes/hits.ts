@@ -1,4 +1,4 @@
-import type { HitKey, HitsResponse, HitsRow } from "@/lib/api/xrefs-types"
+import type { HitsRow } from "@/lib/api/xrefs-types"
 import type { DatabaseName } from "@/lib/constants/annotation-sources"
 import { DATABASE_COLORS } from "@/lib/constants/annotation-sources"
 
@@ -6,46 +6,46 @@ export interface DecodedHitRow {
   annotationId: string
   taxid: number
   source: number
-  nMatched: number
-  matchedKeyIndexes: number[]
+  /** Indexes into hits.terms. */
+  matchedTerms: number[]
+  /** Annotation source release date (ISO), when known. */
+  releaseDate: string | null
+  /** Assembly name from the annotation catalogue, when known. */
+  assemblyName: string | null
 }
 
 export function decodeHitsRows(rows: HitsRow[]): DecodedHitRow[] {
-  return rows.map(([annotationId, taxid, source, nMatched, matched]) => ({
-    annotationId,
-    taxid,
-    source,
-    nMatched,
-    matchedKeyIndexes: matched ?? [],
-  }))
-}
-
-export function sortHitRows(rows: DecodedHitRow[]): DecodedHitRow[] {
-  return [...rows].sort((a, b) => {
-    if (b.nMatched !== a.nMatched) return b.nMatched - a.nMatched
-    return a.annotationId.localeCompare(b.annotationId)
-  })
-}
-
-/** Keep rows whose matched keys include at least one key for ``termIndex``. */
-export function filterRowsByTerm(
-  rows: DecodedHitRow[],
-  keys: HitKey[],
-  termIndex: number | null,
-): DecodedHitRow[] {
-  if (termIndex === null) return rows
-  return rows.filter((row) =>
-    row.matchedKeyIndexes.some((ki) => keys[ki]?.term === termIndex),
+  return rows.map(
+    ([
+      annotationId,
+      taxid,
+      source,
+      matched,
+      releaseDate,
+      assemblyName,
+    ]) => ({
+      annotationId,
+      taxid,
+      source,
+      matchedTerms: matched ?? [],
+      releaseDate: normalizeOptionalText(releaseDate),
+      assemblyName: normalizeOptionalText(assemblyName),
+    }),
   )
 }
 
-export function prepareHitRows(
-  hits: HitsResponse | null | undefined,
-  activeTerm: number | null,
-): DecodedHitRow[] {
-  if (!hits) return []
-  const decoded = decodeHitsRows(hits.rows ?? [])
-  return sortHitRows(filterRowsByTerm(decoded, hits.keys ?? [], activeTerm))
+function normalizeOptionalText(raw: string | null | undefined): string | null {
+  if (raw == null) return null
+  const trimmed = String(raw).trim()
+  return trimmed || null
+}
+
+/** Locale date for list display; returns null when unset/unparseable. */
+export function formatReleaseDate(iso: string | null | undefined): string | null {
+  if (!iso) return null
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso
+  return d.toLocaleDateString()
 }
 
 const SOURCE_CODE_TO_DB: Record<number, DatabaseName> = {
@@ -67,13 +67,4 @@ export function sourceColor(code: number): string {
   const name = SOURCE_CODE_TO_DB[code]
   if (name) return DATABASE_COLORS[name]
   return "#94a3b8"
-}
-
-export function resolveMatchedKeys(
-  matchedKeyIndexes: number[],
-  keys: HitKey[],
-): HitKey[] {
-  return matchedKeyIndexes
-    .map((i) => keys[i])
-    .filter((k): k is HitKey => Boolean(k))
 }

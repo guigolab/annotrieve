@@ -60,6 +60,14 @@ describe("useGenesStore selection", () => {
     assert.equal(st.panel.level, "list")
   })
 
+  it("selectCell toggles off the same cell", () => {
+    useGenesStore.getState().selectCell("7742", "TP53")
+    useGenesStore.getState().selectCell("7742", "TP53")
+    const st = useGenesStore.getState()
+    assert.equal(st.t, null)
+    assert.equal(st.g, null)
+  })
+
   it("popPanel walks gene -> annotation -> list", () => {
     useGenesStore.getState().openAnnotation({
       annotationId: "ann-1",

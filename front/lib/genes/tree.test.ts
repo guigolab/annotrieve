@@ -91,24 +91,33 @@ function row(taxid: number, annotationId: string): DecodedHitRow {
     annotationId,
     taxid,
     source: 1,
-    nMatched: 1,
-    matchedKeyIndexes: [0],
+    matchedTerms: [0],
+    releaseDate: null,
+    assemblyName: null,
   }
 }
 
 describe("truncateHitTreeDepth", () => {
   it("clears children at max depth and keeps rolled-up counts", () => {
+    // root(0) → d1(1) → d2(2) → d3(3) → d4(4) → d5 (trimmed)
     const deep = node("root", 10, [
-      node("child", 10, [
-        node("leaf", 10, [node("deep", 10, [node("deeper", 5)])]),
+      node("d1", 10, [
+        node("d2", 10, [
+          node("d3", 10, [
+            node("d4", 10, [node("d5", 5, [node("d6", 1)])]),
+          ]),
+        ]),
       ]),
     ])
     const truncated = truncateHitTreeDepth([deep], HIT_TREE_MAX_DEPTH)
     assert.equal(maxChildDepth(truncated), HIT_TREE_MAX_DEPTH)
-    const leaf = truncated[0]!.children[0]!.children[0]!
-    assert.equal(leaf.id, "leaf")
-    assert.equal(leaf.children.length, 0)
-    assert.equal(leaf.count, 10)
+    let atCap = truncated[0]!
+    for (let i = 0; i < HIT_TREE_MAX_DEPTH; i++) {
+      atCap = atCap.children[0]!
+    }
+    assert.equal(atCap.id, "d4")
+    assert.equal(atCap.children.length, 0)
+    assert.equal(atCap.count, 10)
   })
 
   it("leaves shallow trees unchanged in structure", () => {
@@ -152,7 +161,7 @@ describe("buildHitTree viewRank", () => {
     const rootIds = tree.roots.map((r) => r.id).sort()
     assert.deepEqual(rootIds, ["314147", "9443"])
     assert.ok(tree.roots.every((r) => r.rank === "order"))
-    assert.equal(maxChildDepth(tree.roots), HIT_TREE_MAX_DEPTH)
+    assert.ok(maxChildDepth(tree.roots) <= HIT_TREE_MAX_DEPTH)
   })
 
   it("keeps auto roots when viewRank is null", () => {

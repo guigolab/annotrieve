@@ -3,10 +3,23 @@
 import { useCallback, useEffect, useMemo, useRef } from "react"
 import { keepPreviousData, useQuery } from "@tanstack/react-query"
 
-import { searchHits, XrefsApiError } from "@/lib/api/xrefs"
+import {
+  canonicalNameCsv,
+  canonicalTaxidCsv,
+  searchHits,
+  XrefsApiError,
+} from "@/lib/api/xrefs"
 import { createClientHitsAdapter } from "@/lib/genes/adapter"
-import { hitsToTsv } from "@/lib/genes/coverage"
-import { makeFilter } from "@/lib/genes/filters"
+import {
+  clampCoverageRange,
+  hitsToTsv,
+  isDefaultCoverageRange,
+} from "@/lib/genes/coverage"
+import {
+  ALL_SOURCE_CODES,
+  defaultSources,
+  makeFilter,
+} from "@/lib/genes/filters"
 import {
   activeNames,
   effectiveCoverage,
@@ -15,6 +28,7 @@ import {
   useGenesStore,
 } from "@/lib/genes/store"
 import { buildTaxonIndex } from "@/lib/genes/taxon-index"
+import { GENES_RANK_TAXON_CAP } from "@/components/genes/genes-overview-constants"
 import {
   allowedGenesViewRanks,
   type HitRankStat,
@@ -27,10 +41,17 @@ import {
 } from "@/lib/hooks/use-genes-url-sync"
 import { useFlattenedTreeStore } from "@/lib/stores/flattened-tree"
 
+function hitsRetry(failureCount: number, error: unknown): boolean {
+  if (failureCount >= 2) return false
+  if (error instanceof XrefsApiError) {
+    return error.status === 503
+  }
+  // Network / abort-style failures (no HTTP status).
+  return true
+}
+
 export function useGenesExplorer() {
   const queryNames = useGenesStore((s) => s.queryNames)
-  const resolvedNames = useGenesStore((s) => s.resolvedNames)
-  const prefixExpansions = useGenesStore((s) => s.prefixExpansions)
   const excluded = useGenesStore((s) => s.excluded)
   const t = useGenesStore((s) => s.t)
   const g = useGenesStore((s) => s.g)
@@ -44,8 +65,6 @@ export function useGenesExplorer() {
   const viewRank = useGenesStore((s) => s.viewRank)
   const urlReady = useGenesStore((s) => s.urlReady)
 
-  const setResolvedNames = useGenesStore((s) => s.setResolvedNames)
-  const setPrefixExpansions = useGenesStore((s) => s.setPrefixExpansions)
   const setCoverage = useGenesStore((s) => s.setCoverage)
   const clearCoverage = useGenesStore((s) => s.clearCoverage)
   const toggleSource = useGenesStore((s) => s.toggleSource)
@@ -64,8 +83,6 @@ export function useGenesExplorer() {
   const setViewRank = useGenesStore((s) => s.setViewRank)
   const resetViewFilters = useGenesStore((s) => s.resetViewFilters)
   const setExcluded = useGenesStore((s) => s.setExcluded)
-  const setQueryNames = useGenesStore((s) => s.setQueryNames)
-  const setQueryText = useGenesStore((s) => s.setQueryText)
   const hydrateFromUrl = useGenesStore((s) => s.hydrateFromUrl)
   const setUrlReady = useGenesStore((s) => s.setUrlReady)
 
@@ -83,7 +100,6 @@ export function useGenesExplorer() {
 
   const taxonIndex = useMemo(() => buildTaxonIndex(flatNodes), [flatNodes])
 
-  // Relabel taxa once the flattened tree arrives (URL hydrate only has ids).
   useEffect(() => {
     if (!taxonIndex.size) return
     if (!includeTaxa.length && !excludeTaxa.length) return
@@ -111,14 +127,21 @@ export function useGenesExplorer() {
   )
 
   const hitsQuery = useQuery({
-    queryKey: ["genes-hits", queryNames, includeTaxids, excludeTaxids],
+    queryKey: [
+      "genes-hits",
+      canonicalNameCsv(queryNames),
+      canonicalTaxidCsv(includeTaxids) ?? "",
+      canonicalTaxidCsv(excludeTaxids) ?? "",
+    ],
     enabled: queryNames.length > 0,
     placeholderData: keepPreviousData,
+    structuralSharing: false,
+    staleTime: 10 * 60 * 1000,
+    retry: hitsRetry,
     queryFn: ({ signal }) =>
       searchHits(
         {
           names: queryNames,
-          match: "any",
           include_taxids: includeTaxids.length ? includeTaxids : null,
           exclude_taxids: excludeTaxids.length ? excludeTaxids : null,
         },
@@ -128,25 +151,12 @@ export function useGenesExplorer() {
 
   const hits = hitsQuery.data ?? null
 
-  useEffect(() => {
-    if (!hits) return
-    const names: string[] = []
-    const seen = new Set<string>()
-    for (const key of hits.keys ?? []) {
-      const id = key.name.toLowerCase()
-      if (seen.has(id)) continue
-      seen.add(id)
-      names.push(key.name)
-    }
-    setResolvedNames(names)
-    const expansions = (hits.terms ?? [])
-      .filter((term) => term.expanded && term.expanded.length)
-      .map((term) => ({
-        prefix: term.input.endsWith("*") ? term.input : `${term.input}*`,
-        count: term.expanded!.length,
-      }))
-    setPrefixExpansions(expansions)
-  }, [hits, setResolvedNames, setPrefixExpansions])
+  const resolvedNames = useMemo(() => {
+    if (!hits) return [] as string[]
+    return (hits.terms ?? [])
+      .filter((t) => t.n_hits > 0)
+      .map((t) => t.name)
+  }, [hits])
 
   const adapter = useMemo(() => {
     if (!hits || !taxonIndex.size) return null
@@ -172,46 +182,49 @@ export function useGenesExplorer() {
     }
   }, [termCount, hits, setCoverage])
 
+  // Re-clamp coverage when N changes (e.g. after excluding names).
+  useEffect(() => {
+    if (!coverage) return
+    const next = clampCoverageRange(coverage, termCount)
+    if (isDefaultCoverageRange(next, termCount)) {
+      setCoverage(null, termCount)
+      return
+    }
+    if (next.min !== coverage.min || next.max !== coverage.max) {
+      setCoverage(next, termCount)
+    }
+  }, [termCount, excluded, coverage, setCoverage])
+
   const rankAllowance = useMemo(
     () => allowedGenesViewRanks(includeTaxids, taxonIndex),
     [includeTaxids, taxonIndex],
   )
 
-  // Default to kingdom when there are no include-taxids.
   useEffect(() => {
     if (includeTaxids.length > 0) return
     if (viewRank == null) setViewRank("kingdom")
   }, [includeTaxids.length, viewRank, setViewRank])
 
-  // Clear viewRank when includes mix ranks or the selected rank is no longer allowed.
-  useEffect(() => {
-    if (!viewRank) return
-    if (
-      rankAllowance.mixed ||
-      !(rankAllowance.ranks as readonly string[]).includes(viewRank)
-    ) {
-      setViewRank(null)
-    }
-  }, [viewRank, rankAllowance, setViewRank])
-
-  // Keep the tree collapsed when the query / rank scope changes.
   useEffect(() => {
     setExpanded(new Set())
   }, [queryNames, includeTaxids, excludeTaxids, viewRank, setExpanded])
 
-  const effCoverage = effectiveCoverage(coverage, termCount)
+  const covMin = coverage?.min ?? (termCount > 0 ? 1 : 0)
+  const covMax = coverage?.max ?? termCount
+  const covSegments = coverage?.segments ?? null
   const filter = useMemo(
     () =>
       makeFilter({
         sources,
-        minMatched: effCoverage.min,
-        maxMatched: effCoverage.max,
+        minMatched: covMin,
+        maxMatched: covMax,
+        matchedSegments: covSegments,
         excludeTerms: excluded,
         taxid: t,
         name: g,
         termCount,
       }),
-    [sources, effCoverage, excluded, t, g, termCount],
+    [sources, covMin, covMax, covSegments, excluded, t, g, termCount],
   )
 
   const tree = useMemo(
@@ -235,6 +248,25 @@ export function useGenesExplorer() {
     })
   }, [rankAllowance.ranks, rankStats])
 
+  useEffect(() => {
+    if (!viewRank) return
+    if (
+      rankAllowance.mixed ||
+      !(rankAllowance.ranks as readonly string[]).includes(viewRank)
+    ) {
+      setViewRank(null)
+      return
+    }
+    const opt = rankOptions.find((o) => o.rank === viewRank)
+    if (opt && opt.taxonCount > GENES_RANK_TAXON_CAP) {
+      const fallback =
+        rankOptions.find(
+          (o) => o.taxonCount > 0 && o.taxonCount <= GENES_RANK_TAXON_CAP,
+        )?.rank ?? null
+      setViewRank(fallback)
+    }
+  }, [viewRank, rankAllowance, rankOptions, setViewRank])
+
   const coverageData = useMemo(
     () =>
       adapter
@@ -253,6 +285,25 @@ export function useGenesExplorer() {
     [adapter, excluded],
   )
 
+  const coverageActive =
+    coverage != null && !isDefaultCoverageRange(coverage, termCount)
+  const sourcesActive = sources.size < ALL_SOURCE_CODES.length
+  const hasSlice = Boolean(t || g || coverageActive || sourcesActive)
+
+  const overviewFilter = useMemo(
+    () =>
+      makeFilter({
+        sources: defaultSources(),
+        minMatched: termCount > 0 ? 1 : 0,
+        maxMatched: termCount > 0 ? termCount : Number.MAX_SAFE_INTEGER,
+        excludeTerms: excluded,
+        taxid: null,
+        name: null,
+        termCount,
+      }),
+    [excluded, termCount],
+  )
+
   const annotationTotal = useMemo(() => {
     if (!adapter) return 0
     return adapter.annotations(filter, { limit: 1, offset: 0 }).total
@@ -263,10 +314,38 @@ export function useGenesExplorer() {
     return adapter.organismCount(filter)
   }, [adapter, filter])
 
+  const overviewAnnotationTotal = useMemo(() => {
+    if (!adapter) return 0
+    return adapter.annotations(overviewFilter, { limit: 1, offset: 0 }).total
+  }, [adapter, overviewFilter])
+
+  const overviewOrganismTotal = useMemo(() => {
+    if (!adapter) return 0
+    return adapter.organismCount(overviewFilter)
+  }, [adapter, overviewFilter])
+
+  const downloadAllTotal = useMemo(() => {
+    if (!adapter) return 0
+    const allFilter = makeFilter({
+      sources: defaultSources(),
+      minMatched: 1,
+      maxMatched: Number.MAX_SAFE_INTEGER,
+      excludeTerms: new Set(),
+      taxid: null,
+      name: null,
+    })
+    return adapter.annotations(allFilter, { limit: 1, offset: 0 }).total
+  }, [adapter])
+
+  const excludeList = useMemo(
+    () => [...excluded].sort(),
+    [excluded],
+  )
+
   useGenesUrlSync(
     {
       names: queryNames,
-      exclude: [...excluded],
+      exclude: excludeList,
       t,
       g,
       sources,
@@ -282,13 +361,37 @@ export function useGenesExplorer() {
     onHydrate,
   )
 
-  const downloadTsv = useCallback(() => {
+  const downloadSelectionTsv = useCallback(() => {
     if (!adapter) return
     const page = adapter.annotations(filter, {
       limit: GENES_TSV_DOWNLOAD_CAP,
       offset: 0,
     })
-    const tsv = hitsToTsv(page.results, adapter.keys)
+    const tsv = hitsToTsv(page.results, adapter.terms, page.matched)
+    const blob = new Blob([tsv], { type: "text/tab-separated-values" })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = "genes-hits-selection.tsv"
+    a.click()
+    URL.revokeObjectURL(url)
+  }, [adapter, filter])
+
+  const downloadAllTsv = useCallback(() => {
+    if (!adapter) return
+    const allFilter = makeFilter({
+      sources: defaultSources(),
+      minMatched: 1,
+      maxMatched: Number.MAX_SAFE_INTEGER,
+      excludeTerms: new Set(),
+      taxid: null,
+      name: null,
+    })
+    const page = adapter.annotations(allFilter, {
+      limit: GENES_TSV_DOWNLOAD_CAP,
+      offset: 0,
+    })
+    const tsv = hitsToTsv(page.results, adapter.terms, page.matched)
     const blob = new Blob([tsv], { type: "text/tab-separated-values" })
     const url = URL.createObjectURL(blob)
     const a = document.createElement("a")
@@ -296,7 +399,7 @@ export function useGenesExplorer() {
     a.download = "genes-hits.tsv"
     a.click()
     URL.revokeObjectURL(url)
-  }, [adapter, filter])
+  }, [adapter])
 
   const matchedNothing = (hits?.terms ?? []).filter((term) => term.n_hits === 0)
   const showResults = queryNames.length > 0
@@ -313,21 +416,9 @@ export function useGenesExplorer() {
         ? String((hitsQuery.error as Error).message ?? hitsQuery.error)
         : null
 
-  const removeQueryName = useCallback(
-    (name: string) => {
-      const id = name.toLowerCase()
-      const next = queryNames.filter((n) => n.toLowerCase() !== id)
-      setQueryNames(next)
-      setQueryText(next.join(", "))
-    },
-    [queryNames, setQueryNames, setQueryText],
-  )
-
   return {
-    // query / results
     queryNames,
     resolvedNames,
-    prefixExpansions,
     excluded,
     active,
     matchedNothing,
@@ -343,16 +434,18 @@ export function useGenesExplorer() {
     termCount,
     annotationTotal,
     organismTotal,
+    overviewAnnotationTotal,
+    overviewOrganismTotal,
+    downloadAllTotal,
+    hasSlice,
     taxonIndex,
     taxonLabel,
 
-    // loading / error
     isLoading,
     isFetching,
     errorMessage,
     refetch: () => void hitsQuery.refetch(),
 
-    // selection / filters
     t,
     g,
     sources,
@@ -372,7 +465,6 @@ export function useGenesExplorer() {
       ? "Include taxa at different ranks"
       : null,
 
-    // actions
     setTaxa,
     setExcluded,
     setCoverage,
@@ -390,8 +482,8 @@ export function useGenesExplorer() {
     resetPanel,
     setPopover,
     resetViewFilters,
-    removeQueryName,
-    downloadTsv,
+    downloadAllTsv,
+    downloadSelectionTsv,
   }
 }
 

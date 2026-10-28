@@ -7,6 +7,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { GENES_RANK_TAXON_CAP } from "@/components/genes/genes-overview-constants"
 import { cn } from "@/lib/utils"
 
 const AUTO_VALUE = "__auto__"
@@ -26,6 +27,10 @@ function rankLabel(rank: string): string {
   return rank.charAt(0).toUpperCase() + rank.slice(1)
 }
 
+export function isRankOverCap(taxonCount: number): boolean {
+  return taxonCount > GENES_RANK_TAXON_CAP
+}
+
 interface GenesRankSelectProps {
   viewRank: string | null
   options: GenesRankOption[]
@@ -35,6 +40,8 @@ interface GenesRankSelectProps {
   disabledReason?: string | null
   onViewRankChange: (rank: string | null) => void
   className?: string
+  /** Extra classes for the select trigger (e.g. denser heatmap corner). */
+  triggerClassName?: string
 }
 
 export function GenesRankSelect({
@@ -45,8 +52,12 @@ export function GenesRankSelect({
   disabledReason,
   onViewRankChange,
   className,
+  triggerClassName,
 }: GenesRankSelectProps) {
-  const value = viewRank ?? (hideAuto ? options[0]?.rank ?? AUTO_VALUE : AUTO_VALUE)
+  const selectable = options.filter((o) => !isRankOverCap(o.taxonCount))
+  const value =
+    viewRank ??
+    (hideAuto ? selectable[0]?.rank ?? options[0]?.rank ?? AUTO_VALUE : AUTO_VALUE)
 
   return (
     <div className={cn("min-w-0", className)}>
@@ -58,19 +69,22 @@ export function GenesRankSelect({
         }
       >
         <SelectTrigger
-          className="h-7 w-full min-w-0 px-2 text-[11px] shadow-none"
-          aria-label="Root rank"
+          className={cn(
+            "h-7 w-full min-w-0 px-2 text-[11px] shadow-none",
+            triggerClassName,
+          )}
+          aria-label="Taxonomy root rank"
           title={disabled ? (disabledReason ?? undefined) : undefined}
         >
           <SelectValue placeholder={hideAuto ? "Kingdom" : "Auto"} />
         </SelectTrigger>
-        <SelectContent align="start" className="min-w-[10rem]">
+        <SelectContent align="start" className="min-w-[11rem]">
           {!hideAuto ? (
             <SelectItem value={AUTO_VALUE} className="text-xs">
               Auto
             </SelectItem>
           ) : null}
-          {options.map(({ rank, taxonCount }) => (
+          {selectable.map(({ rank, taxonCount }) => (
             <SelectItem key={rank} value={rank} className="text-xs">
               <span className="flex w-full items-center justify-between gap-3">
                 <span>{rankLabel(rank)}</span>

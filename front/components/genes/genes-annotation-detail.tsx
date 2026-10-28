@@ -11,9 +11,12 @@ import {
   ANNOTATIONS_LIST_PATH,
   ANNOTATION_ID_PARAM,
 } from "@/lib/annotations-url"
-import { listAnnotationGenes, XrefsApiError } from "@/lib/api/xrefs"
+import {
+  canonicalNameCsv,
+  listAnnotationGenes,
+  XrefsApiError,
+} from "@/lib/api/xrefs"
 import type { GenesHitsAdapter } from "@/lib/genes/adapter"
-import { namesForGeneBrowse } from "@/lib/genes/coverage"
 import { sourceColor, sourceLabel } from "@/lib/genes/hits"
 import { sortGenesByMatches } from "@/lib/genes/sort"
 import type { PanelStack } from "@/lib/genes/store"
@@ -38,18 +41,31 @@ export function GenesAnnotationDetail({
   onGeneTitle,
 }: GenesAnnotationDetailProps) {
   const annotationId = panel.annotationId
-  const keys = adapter?.keys ?? []
+  const terms = adapter?.terms ?? []
   const sources = adapter?.hits.sources
 
   const browseNames = useMemo(() => {
     if (!annotationId || !adapter) return activeNames
     const row = adapter.rows.find((r) => r.annotationId === annotationId)
-    if (!row) return activeNames.slice(0, 50)
-    return namesForGeneBrowse(activeNames, row, keys)
-  }, [annotationId, adapter, activeNames, keys])
+    if (!row) return activeNames
+    // Prefer names this annotation actually matched (exact set, already ≤200).
+    const matched = new Set(
+      row.matchedTerms
+        .map((ti) => terms[ti]?.name)
+        .filter((n): n is string => Boolean(n))
+        .map((n) => n.toLowerCase()),
+    )
+    const fromActive = activeNames.filter((n) => matched.has(n.toLowerCase()))
+    return fromActive.length ? fromActive : activeNames
+  }, [annotationId, adapter, activeNames, terms])
+
+  const browseNamesKey = useMemo(
+    () => canonicalNameCsv(browseNames),
+    [browseNames],
+  )
 
   const genesQuery = useQuery({
-    queryKey: ["genes-panel-genes", annotationId, browseNames],
+    queryKey: ["genes-panel-genes", annotationId, browseNamesKey],
     enabled: Boolean(annotationId),
     placeholderData: keepPreviousData,
     queryFn: ({ signal }) =>
@@ -84,17 +100,35 @@ export function GenesAnnotationDetail({
   const matchedRow = annotationId
     ? adapter?.rows.find((r) => r.annotationId === annotationId)
     : null
-  const matchedK = matchedRow?.nMatched ?? 0
+
+  const activeTermIndexes = useMemo(() => {
+    const activeIds = new Set(activeNames.map((n) => n.toLowerCase()))
+    const indexes = new Set<number>()
+    for (let i = 0; i < terms.length; i++) {
+      if (activeIds.has(terms[i]!.name.toLowerCase())) indexes.add(i)
+    }
+    return indexes
+  }, [terms, activeNames])
+
+  const matchedK = useMemo(() => {
+    if (!matchedRow) return 0
+    let k = 0
+    for (const ti of matchedRow.matchedTerms) {
+      if (activeTermIndexes.has(ti)) k += 1
+    }
+    return k
+  }, [matchedRow, activeTermIndexes])
 
   const missingNames = useMemo(() => {
-    if (!matchedRow || !keys.length) return []
+    if (!matchedRow || !terms.length) return []
     const hit = new Set(
-      matchedRow.matchedKeyIndexes
-        .map((ki) => keys[ki]?.name.toLowerCase())
+      matchedRow.matchedTerms
+        .filter((ti) => activeTermIndexes.has(ti))
+        .map((ti) => terms[ti]?.name.toLowerCase())
         .filter(Boolean),
     )
     return activeNames.filter((n) => !hit.has(n.toLowerCase()))
-  }, [matchedRow, keys, activeNames])
+  }, [matchedRow, terms, activeNames, activeTermIndexes])
 
   const openInAnnotationsHref = annotationId
     ? `${ANNOTATIONS_LIST_PATH}?${ANNOTATION_ID_PARAM}=${encodeURIComponent(annotationId)}`

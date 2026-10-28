@@ -1,24 +1,24 @@
 import { getXrefsApiBase, joinUrl } from "@/lib/config/env"
 import { buildQuery, type Query } from "@/lib/api/base"
-import { MAX_CURIES_GET } from "@/lib/genes/curie"
 import type {
   AccessionSort,
   AccessionsResponse,
   AnnotationGeneRow,
   AnnotationGenesResponse,
   GeneXrefsResponse,
-  HitAnnotationsResponse,
   HitsMatch,
   HitsResponse,
   NamespacesResponse,
+  NamesResponse,
   SortOrder,
   XrefsErrorDetail,
 } from "@/lib/api/xrefs-types"
+import {
+  MAX_NAMES_GET,
+  MAX_NAMES_POST,
+} from "@/lib/genes/prefix"
 
-/** Cap for GET /hits names CSV (server MAX_NAMES_GET). */
-export const MAX_NAMES_GET = 50
-/** Cap for POST /hits names list (server MAX_NAMES_POST). */
-export const MAX_NAMES_POST = 200
+export { MAX_NAMES_GET, MAX_NAMES_POST }
 
 export class XrefsApiError extends Error {
   status: number
@@ -75,6 +75,27 @@ async function xrefsPost<T>(path: string, body: unknown, init?: RequestInit): Pr
   return res.json() as Promise<T>
 }
 
+/** Canonical CSV for nginx cache keys: lowercase, sorted, unique. */
+export function canonicalNameCsv(names: string[]): string {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const raw of names) {
+    const id = raw.trim().toLowerCase()
+    if (!id || seen.has(id)) continue
+    seen.add(id)
+    out.push(id)
+  }
+  out.sort()
+  return out.join(",")
+}
+
+export function canonicalTaxidCsv(taxids: number[] | null | undefined): string | undefined {
+  if (!taxids?.length) return undefined
+  return [...new Set(taxids.filter((n) => Number.isFinite(n) && n > 0))]
+    .sort((a, b) => a - b)
+    .join(",")
+}
+
 export function listNamespaces(init?: RequestInit) {
   return xrefsGet<NamespacesResponse>("/namespaces", undefined, init)
 }
@@ -113,23 +134,21 @@ export interface HitsSearchParams {
   names: string[]
   include_taxids?: number[] | null
   exclude_taxids?: number[] | null
-  match?: HitsMatch
 }
 
 function nameHitsBody(params: HitsSearchParams) {
   return {
-    names: params.names,
+    names: params.names.map((n) => n.trim().toLowerCase()).filter(Boolean),
     include_taxids: params.include_taxids?.length
-      ? params.include_taxids
+      ? [...params.include_taxids].sort((a, b) => a - b)
       : undefined,
     exclude_taxids: params.exclude_taxids?.length
-      ? params.exclude_taxids
+      ? [...params.exclude_taxids].sort((a, b) => a - b)
       : undefined,
-    match: params.match ?? undefined,
   }
 }
 
-/** Gene-name presence search (`GET|POST /hits`). */
+/** Gene-name presence search (`GET|POST /hits`). Canonicalizes the GET URL for nginx cache. */
 export function searchHits(params: HitsSearchParams, init?: RequestInit) {
   if (params.names.length > MAX_NAMES_GET) {
     return xrefsPost<HitsResponse>("/hits", nameHitsBody(params), init)
@@ -137,53 +156,28 @@ export function searchHits(params: HitsSearchParams, init?: RequestInit) {
   return xrefsGet<HitsResponse>(
     "/hits",
     {
-      names: params.names.join(","),
-      include_taxids: params.include_taxids?.length
-        ? params.include_taxids.join(",")
-        : undefined,
-      exclude_taxids: params.exclude_taxids?.length
-        ? params.exclude_taxids.join(",")
-        : undefined,
-      match: params.match ?? undefined,
+      names: canonicalNameCsv(params.names),
+      include_taxids: canonicalTaxidCsv(params.include_taxids),
+      exclude_taxids: canonicalTaxidCsv(params.exclude_taxids),
     },
     init,
   )
 }
 
-/** @deprecated Legacy CURIE annotation rollup; kept for older genes UI. */
-export interface HitAnnotationsSearchParams {
-  curies: string[]
-  taxid?: number | null
-  match?: HitsMatch
-  limit?: number
-  next?: string | null
-  previous?: string | null
+export interface NamesSearchParams {
+  prefix: string
+  include_taxids?: number[] | null
+  exclude_taxids?: number[] | null
 }
 
-export function searchHitAnnotations(
-  params: HitAnnotationsSearchParams,
-  init?: RequestInit,
-) {
-  const body = {
-    curies: params.curies,
-    taxid: params.taxid ?? undefined,
-    match: params.match ?? undefined,
-    limit: params.limit,
-    next: params.next ?? undefined,
-    previous: params.previous ?? undefined,
-  }
-  if (params.curies.length > MAX_CURIES_GET) {
-    return xrefsPost<HitAnnotationsResponse>("/hits/annotations", body, init)
-  }
-  return xrefsGet<HitAnnotationsResponse>(
-    "/hits/annotations",
+/** Prefix discovery (`GET /names`). */
+export function searchNames(params: NamesSearchParams, init?: RequestInit) {
+  return xrefsGet<NamesResponse>(
+    "/names",
     {
-      curies: params.curies.join(","),
-      taxid: params.taxid ?? undefined,
-      match: params.match ?? undefined,
-      limit: params.limit,
-      next: params.next ?? undefined,
-      previous: params.previous ?? undefined,
+      prefix: params.prefix.trim().toLowerCase(),
+      include_taxids: canonicalTaxidCsv(params.include_taxids),
+      exclude_taxids: canonicalTaxidCsv(params.exclude_taxids),
     },
     init,
   )
@@ -200,12 +194,19 @@ export function listAnnotationGenes(
   init?: RequestInit,
 ) {
   const names = Array.isArray(params?.names)
-    ? params.names.join(",")
-    : params?.names ?? undefined
+    ? canonicalNameCsv(params.names) || undefined
+    : params?.names
+      ? canonicalNameCsv(
+          String(params.names)
+            .split(",")
+            .map((n) => n.trim())
+            .filter(Boolean),
+        ) || undefined
+      : undefined
   return xrefsGet<AnnotationGenesResponse>(
     `/annotations/${encodeURIComponent(annotationId)}/genes`,
     {
-      names: names || undefined,
+      names,
       match: params?.match,
       limit: params?.limit,
       offset: params?.offset,

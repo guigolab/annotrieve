@@ -12,26 +12,21 @@ function hits(): HitsResponse {
       {
         input: "TP53",
         name: "tp53",
-        matched_namespaces: ["symbol"],
+        namespaces: ["symbol"],
         n_hits: 2,
       },
       {
         input: "BRCA1",
         name: "brca1",
-        matched_namespaces: ["symbol"],
+        namespaces: ["symbol"],
         n_hits: 1,
       },
       {
         input: "EGFR",
         name: "egfr",
-        matched_namespaces: ["symbol"],
+        namespaces: ["symbol"],
         n_hits: 1,
       },
-    ],
-    keys: [
-      { term: 0, name: "TP53", ns: "symbol" },
-      { term: 1, name: "BRCA1", ns: "symbol" },
-      { term: 2, name: "EGFR", ns: "symbol" },
     ],
     sources: {
       "1": { label: "Ensembl" },
@@ -40,11 +35,18 @@ function hits(): HitsResponse {
     include_taxids: [],
     exclude_taxids: [],
     total: 3,
-    fields: ["annotation_id", "taxid", "source", "n_matched", "matched"],
+    fields: [
+      "annotation_id",
+      "taxid",
+      "source",
+      "matched",
+      "release_date",
+      "assembly_name",
+    ],
     rows: [
-      ["ann-a", 9606, 1, 2, [0, 1]],
-      ["ann-b", 9606, 3, 1, [0]],
-      ["ann-c", 10090, 1, 2, [0, 2]],
+      ["ann-a", 9606, 1, [0, 1], "2024-01-02T00:00:00", "GRCh38.p14"],
+      ["ann-b", 9606, 3, [0], null, null],
+      ["ann-c", 10090, 1, [0, 2], "2020-06-01", "GRCm39"],
     ],
   }
 }
@@ -157,6 +159,36 @@ describe("createClientHitsAdapter", () => {
     assert.equal(counts.get(3), 1)
   })
 
+  it("sourceCounts respects heatmap taxon and name filters", () => {
+    const adapter = createClientHitsAdapter(hits(), taxonIndex())
+    const human = adapter.sourceCounts(
+      makeFilter({
+        sources: new Set([1, 2, 3]),
+        excludeTerms: new Set(),
+        termCount: 3,
+        minMatched: 1,
+        maxMatched: 3,
+        taxid: "9606",
+      }),
+    )
+    assert.equal(human.get(1), 1)
+    assert.equal(human.get(3), 1)
+    assert.equal(human.get(2) ?? 0, 0)
+
+    const brca1 = adapter.sourceCounts(
+      makeFilter({
+        sources: new Set([1, 2, 3]),
+        excludeTerms: new Set(),
+        termCount: 3,
+        minMatched: 1,
+        maxMatched: 3,
+        name: "brca1",
+      }),
+    )
+    assert.equal(brca1.get(1), 1)
+    assert.equal(brca1.get(3) ?? 0, 0)
+  })
+
   it("counts unique organism taxids under the filter", () => {
     const adapter = createClientHitsAdapter(hits(), taxonIndex())
     const all = adapter.organismCount(
@@ -257,5 +289,23 @@ describe("createClientHitsAdapter", () => {
     assert.ok(byOrder.roots.every((r) => (r.rank || "").toLowerCase() === "order"))
     const stats = adapter.rankStats(new Set())
     assert.ok(stats.some((s) => s.rank === "order" && s.organismCount >= 1))
+  })
+
+  it("batches overviewRowCounts for visible nodes", () => {
+    const adapter = createClientHitsAdapter(hits(), taxonIndex())
+    const matrix = adapter.overviewRowCounts(new Set(), ["9443", "40674"], "order")
+    assert.equal(matrix.length, 2)
+    assert.ok(matrix[0]!.n >= 1)
+    assert.equal(matrix[0]!.byName.length, 3)
+    // Same result as single-node fold for the first id.
+    const single = adapter.nodeCounts(
+      makeFilter({
+        sources: new Set([1, 2, 3]),
+        excludeTerms: new Set(),
+        termCount: 3,
+      }),
+      "9443",
+    )
+    assert.equal(matrix[0]!.n, single.n)
   })
 })

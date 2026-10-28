@@ -7,19 +7,23 @@ import { Loader2, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
-import { searchHits, XrefsApiError } from "@/lib/api/xrefs"
 import {
-  classifyPrefixName,
-  expandedNameCounts,
+  canonicalTaxidCsv,
+  searchNames,
+  XrefsApiError,
+} from "@/lib/api/xrefs"
+import type { NameCategory } from "@/lib/api/xrefs-types"
+import {
+  MAX_NAMES_GET,
+  NAME_CATEGORY_ORDER,
   normalizePrefix,
-  PREFIX_BUCKETS,
-  type PrefixBucket,
 } from "@/lib/genes/prefix"
 import { cn } from "@/lib/utils"
 
 interface GenesPrefixSheetProps {
   open: boolean
   onClose: () => void
+  onApply: (names: string[]) => void
   names: string[]
   includeTaxids: number[]
   excludeTaxids: number[]
@@ -33,6 +37,7 @@ interface GenesPrefixSheetProps {
 export function GenesPrefixSheet({
   open,
   onClose,
+  onApply,
   names,
   includeTaxids,
   excludeTaxids,
@@ -43,7 +48,7 @@ export function GenesPrefixSheet({
 }: GenesPrefixSheetProps) {
   const [draft, setDraft] = useState("")
   const [debounced, setDebounced] = useState("")
-  const [bucket, setBucket] = useState<PrefixBucket | "all">("all")
+  const [bucket, setBucket] = useState<NameCategory | "all">("all")
 
   useEffect(() => {
     if (!open) return
@@ -59,17 +64,35 @@ export function GenesPrefixSheet({
     return () => clearTimeout(id)
   }, [draft])
 
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault()
+        onClose()
+      }
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [open, onClose])
+
   const normalized = debounced ? normalizePrefix(debounced) : null
   const prefix = normalized && "prefix" in normalized ? normalized.prefix : null
   const localError = normalized && "error" in normalized ? normalized.error : null
 
   const query = useQuery({
-    queryKey: ["genes-prefix", prefix, includeTaxids, excludeTaxids],
+    queryKey: [
+      "genes-names",
+      prefix,
+      canonicalTaxidCsv(includeTaxids) ?? "",
+      canonicalTaxidCsv(excludeTaxids) ?? "",
+    ],
     enabled: open && Boolean(prefix),
+    staleTime: 10 * 60 * 1000,
     queryFn: ({ signal }) =>
-      searchHits(
+      searchNames(
         {
-          names: [prefix!],
+          prefix: prefix!,
           include_taxids: includeTaxids.length ? includeTaxids : null,
           exclude_taxids: excludeTaxids.length ? excludeTaxids : null,
         },
@@ -77,15 +100,11 @@ export function GenesPrefixSheet({
       ),
   })
 
-  const rows = useMemo(
-    () => (query.data ? expandedNameCounts(query.data) : []),
-    [query.data],
-  )
+  const rows = query.data?.results ?? []
   const bucketCounts = useMemo(() => {
-    const counts = new Map<PrefixBucket, number>()
+    const counts = new Map<NameCategory, number>()
     for (const row of rows) {
-      const id = classifyPrefixName(row.name)
-      counts.set(id, (counts.get(id) ?? 0) + 1)
+      counts.set(row.category, (counts.get(row.category) ?? 0) + 1)
     }
     return counts
   }, [rows])
@@ -95,10 +114,12 @@ export function GenesPrefixSheet({
     () =>
       activeBucket === "all"
         ? rows
-        : rows.filter((row) => classifyPrefixName(row.name) === activeBucket),
+        : rows.filter((row) => row.category === activeBucket),
     [rows, activeBucket],
   )
   const selected = new Set(names.map((n) => n.toLowerCase()))
+  const atCap = names.length >= MAX_NAMES_GET
+  const room = Math.max(0, MAX_NAMES_GET - names.length)
 
   const errorMessage =
     (debounced ? localError : null) ??
@@ -115,7 +136,7 @@ export function GenesPrefixSheet({
       <button
         type="button"
         className="absolute inset-0 bg-black/40"
-        aria-label="Close prefix sheet"
+        aria-label="Cancel prefix sheet"
         onClick={onClose}
       />
       <aside className="relative flex h-full w-full max-w-md flex-col border-r bg-background shadow-xl">
@@ -134,7 +155,7 @@ export function GenesPrefixSheet({
             size="icon"
             className="h-8 w-8 shrink-0"
             onClick={onClose}
-            aria-label="Close"
+            aria-label="Cancel"
           >
             <X className="h-4 w-4" />
           </Button>
@@ -149,14 +170,17 @@ export function GenesPrefixSheet({
             autoFocus
           />
           <p className="text-[11px] text-muted-foreground">
-            At least 3 characters. A trailing{" "}
-            <span className="font-mono">*</span> is added automatically.
+            At least 3 characters. Selected{" "}
+            <span className="tabular-nums">
+              {names.length}/{MAX_NAMES_GET}
+            </span>
+            .
           </p>
         </div>
 
         {draft.trim() && rows.length > 0 && (
           <div className="px-4 pb-3 flex flex-wrap gap-1.5 shrink-0">
-            {PREFIX_BUCKETS.map((item) => {
+            {NAME_CATEGORY_ORDER.map((item) => {
               const count =
                 item.id === "all" ? rows.length : bucketCounts.get(item.id) ?? 0
               if (count === 0) return null
@@ -179,8 +203,10 @@ export function GenesPrefixSheet({
             <button
               type="button"
               className="rounded-full border border-border bg-background px-2.5 py-1 text-xs font-medium hover:bg-muted/50 disabled:opacity-50"
-              disabled={!visible.length}
-              onClick={() => onIncludeShown(visible.map((row) => row.name))}
+              disabled={!visible.length || room <= 0}
+              onClick={() =>
+                onIncludeShown(visible.slice(0, room).map((row) => row.name))
+              }
             >
               Add shown
             </button>
@@ -221,13 +247,18 @@ export function GenesPrefixSheet({
           )}
           {visible.map((row) => {
             const checked = selected.has(row.name.toLowerCase())
+            const disabled = !checked && atCap
             return (
               <label
                 key={row.name}
-                className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted/50 cursor-pointer"
+                className={cn(
+                  "flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted/50",
+                  disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer",
+                )}
               >
                 <Checkbox
                   checked={checked}
+                  disabled={disabled}
                   onCheckedChange={(value) =>
                     onToggle(row.name, value === true)
                   }
@@ -239,22 +270,31 @@ export function GenesPrefixSheet({
                   {row.name}
                 </span>
                 <span className="text-xs tabular-nums text-muted-foreground">
-                  {row.count.toLocaleString()}
+                  {row.n_annotations.toLocaleString()}
                 </span>
               </label>
             )
           })}
         </div>
 
-        <footer className="shrink-0 border-t px-4 py-3">
+        <footer className="shrink-0 border-t px-4 py-3 flex gap-2">
           <Button
             type="button"
-            className="w-full h-11 rounded-xl font-semibold"
+            variant="outline"
+            className="h-11 flex-1 rounded-xl"
             onClick={onClose}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            className="h-11 flex-1 rounded-xl font-semibold"
+            disabled={!names.length}
+            onClick={() => onApply(names)}
           >
             {names.length
               ? `Add ${names.length.toLocaleString()} to gene set`
-              : "Done"}
+              : "Add to gene set"}
           </Button>
         </footer>
       </aside>

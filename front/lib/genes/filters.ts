@@ -1,4 +1,4 @@
-import type { CoverageRange } from "@/lib/genes/coverage"
+import type { CoverageRange, CoverageSegment } from "@/lib/genes/coverage"
 import { defaultCoverageRange, isDefaultCoverageRange } from "@/lib/genes/coverage"
 
 /** Shared filter object for adapter calls and (future) backend endpoints. */
@@ -7,6 +7,11 @@ export interface GenesFilter {
   sources: Set<number>
   minMatched: number
   maxMatched: number
+  /**
+   * Exact multi-selected matched-count intervals. When set, coverage matching
+   * uses these instead of the contiguous minMatched–maxMatched window.
+   */
+  matchedSegments: CoverageSegment[] | null
   /** Lowercased accession names to exclude from N / k / columns. */
   excludeTerms: Set<string>
   /** Selected taxonomy node id (string taxid). */
@@ -30,6 +35,7 @@ export function makeFilter(partial: Partial<GenesFilter> & {
     sources: partial.sources ?? defaultSources(),
     minMatched: partial.minMatched ?? def.min,
     maxMatched: partial.maxMatched ?? def.max,
+    matchedSegments: partial.matchedSegments ?? null,
     excludeTerms: partial.excludeTerms ?? new Set(),
     taxid: partial.taxid ?? null,
     name: partial.name ?? null,
@@ -39,7 +45,13 @@ export function makeFilter(partial: Partial<GenesFilter> & {
 export function coverageFromFilter(
   filter: GenesFilter,
 ): CoverageRange {
-  return { min: filter.minMatched, max: filter.maxMatched }
+  return {
+    min: filter.minMatched,
+    max: filter.maxMatched,
+    ...(filter.matchedSegments?.length
+      ? { segments: filter.matchedSegments }
+      : {}),
+  }
 }
 
 export function isDefaultCoverage(
@@ -55,10 +67,14 @@ export function isDefaultCoverage(
 export function filterKey(filter: GenesFilter): string {
   const sources = [...filter.sources].sort((a, b) => a - b).join(",")
   const exclude = [...filter.excludeTerms].sort().join(",")
+  const segments = filter.matchedSegments?.length
+    ? filter.matchedSegments.map((s) => `${s.min}-${s.max}`).join(",")
+    : ""
   return [
     sources,
     filter.minMatched,
     filter.maxMatched,
+    segments,
     exclude,
     filter.taxid ?? "",
     filter.name ?? "",

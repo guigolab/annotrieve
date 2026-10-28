@@ -2,36 +2,20 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
-import { GenesHeatmapCanvas } from "@/components/genes/genes-heatmap-canvas"
 import {
-  GENES_FALLBACK_CELL_W,
-  GENES_FALLBACK_HEADER_H,
-  GENES_FALLBACK_ROW_H,
-  GENES_LEGEND_H,
-  GENES_TREE_W,
-} from "@/components/genes/genes-overview-constants"
+  GenesHeatmapTable,
+  type HeatmapNameColumn,
+} from "@/components/genes/genes-heatmap-table"
+import { GENES_TREE_PAGE_SIZE } from "@/components/genes/genes-overview-constants"
 import type { GenesRankOption } from "@/components/genes/genes-rank-select"
-import { GenesTaxonTree } from "@/components/genes/genes-taxon-tree"
 import type { GenesHitsAdapter } from "@/lib/genes/adapter"
 import type { GenesFilter } from "@/lib/genes/filters"
-import {
-  computeHeatmapLayout,
-  type HeatmapLayout,
-} from "@/lib/genes/heatmap"
 import { flattenHitTree, type HitTree } from "@/lib/genes/tree"
-import { useVirtualWindow } from "@/lib/genes/virtual"
 import { cn } from "@/lib/utils"
 
-const FALLBACK_LAYOUT: HeatmapLayout = {
-  cellW: GENES_FALLBACK_CELL_W,
-  rowH: GENES_FALLBACK_ROW_H,
-  headerH: GENES_FALLBACK_HEADER_H,
-  contentW: GENES_FALLBACK_CELL_W,
-  contentH: GENES_FALLBACK_ROW_H,
-  availableHeight: 0,
-}
+const EMPTY_ROOTS: HitTree["roots"] = []
 
-interface GenesOverviewProps {
+interface GenesOverviewSectionProps {
   adapter: GenesHitsAdapter | null
   filter: GenesFilter
   tree: HitTree | null
@@ -43,6 +27,7 @@ interface GenesOverviewProps {
   onSelectTaxon: (id: string | null) => void
   onSelectName: (name: string | null) => void
   onSelectCell: (taxonId: string, name: string) => void
+  onIncludeName: (id: string) => void
   viewRank: string | null
   rankOptions: GenesRankOption[]
   hideAutoRank?: boolean
@@ -52,7 +37,7 @@ interface GenesOverviewProps {
   className?: string
 }
 
-export function GenesOverview({
+export function GenesOverviewSection({
   adapter,
   filter,
   tree,
@@ -64,6 +49,7 @@ export function GenesOverview({
   onSelectTaxon,
   onSelectName,
   onSelectCell,
+  onIncludeName,
   viewRank,
   rankOptions,
   hideAutoRank,
@@ -71,196 +57,137 @@ export function GenesOverview({
   rankSelectDisabledReason,
   onViewRankChange,
   className,
-}: GenesOverviewProps) {
-  const [hover, setHover] = useState<{ row: number; col: number } | null>(null)
-  const [focus, setFocus] = useState<{ row: number; col: number }>({
-    row: 0,
-    col: 0,
-  })
-  const [liveMsg, setLiveMsg] = useState("")
-  const [scrollLeft, setScrollLeft] = useState(0)
-  const [scrollTop, setScrollTop] = useState(0)
-  const [columnSize, setColumnSize] = useState({ w: 0, h: 0 })
+}: GenesOverviewSectionProps) {
+  const [visibleLimit, setVisibleLimit] = useState(GENES_TREE_PAGE_SIZE)
+  const treeKeyRef = useRef("")
 
-  const gridScrollRef = useRef<HTMLDivElement>(null)
-  const headerScrollRef = useRef<HTMLDivElement>(null)
-  const heatmapColumnRef = useRef<HTMLDivElement>(null)
-  const syncing = useRef(false)
-  const summaryId = "genes-overview-summary"
-
-  const terms = useMemo(
+  // Active columns ignore list-only filters; excluded/empty are appended after.
+  const activeTerms = useMemo(
     () => (adapter ? adapter.activeTerms(filter.excludeTerms) : []),
     [adapter, filter.excludeTerms],
   )
 
-  const roots = tree?.roots ?? []
-  const visible = useMemo(
+  const columns = useMemo((): HeatmapNameColumn[] => {
+    if (!adapter) return []
+    const hitTerms = adapter.hits.terms ?? []
+    const active: HeatmapNameColumn[] = activeTerms.map((t) => ({
+      name: t.name,
+      id: t.id,
+      count: t.count,
+      kind: "active",
+    }))
+    const activeIds = new Set(active.map((c) => c.id))
+
+    const excluded: HeatmapNameColumn[] = []
+    const empty: HeatmapNameColumn[] = []
+    const seenExcluded = new Set<string>()
+    const seenEmpty = new Set<string>()
+
+    for (const term of hitTerms) {
+      const id = term.name.toLowerCase()
+      if (term.n_hits <= 0) {
+        if (seenEmpty.has(id)) continue
+        seenEmpty.add(id)
+        empty.push({
+          name: term.name || term.input,
+          id,
+          count: 0,
+          kind: "empty",
+        })
+        continue
+      }
+      if (filter.excludeTerms.has(id) && !activeIds.has(id)) {
+        if (seenExcluded.has(id)) continue
+        seenExcluded.add(id)
+        excluded.push({
+          name: term.name,
+          id,
+          count: term.n_hits,
+          kind: "excluded",
+        })
+      }
+    }
+
+    return [...active, ...excluded, ...empty]
+  }, [adapter, activeTerms, filter.excludeTerms])
+
+  const roots = tree?.roots ?? EMPTY_ROOTS
+  const allVisible = useMemo(
     () => flattenHitTree(roots, expanded),
     [roots, expanded],
   )
 
-  const layout = useMemo(() => {
-    if (columnSize.w <= 0 || columnSize.h <= 0) return FALLBACK_LAYOUT
-    return computeHeatmapLayout({
-      columnWidth: columnSize.w,
-      columnHeight: columnSize.h,
-      cols: Math.max(1, terms.length),
-      rows: Math.max(1, visible.length),
-      legendH: GENES_LEGEND_H,
-    })
-  }, [columnSize, terms.length, visible.length])
-
-  const win = useVirtualWindow(
-    gridScrollRef,
-    visible.length,
-    layout.rowH,
-    8,
-  )
-
   useEffect(() => {
-    const el = heatmapColumnRef.current
-    if (!el) return
-    const measure = () => {
-      setColumnSize({ w: el.clientWidth, h: el.clientHeight })
+    const key = `${viewRank ?? ""}|${roots.map((r) => r.id).join(",")}`
+    if (key !== treeKeyRef.current) {
+      treeKeyRef.current = key
+      setVisibleLimit(GENES_TREE_PAGE_SIZE)
     }
-    measure()
-    const ro = new ResizeObserver(measure)
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [loading, roots.length, terms.length])
+  }, [viewRank, roots])
 
-  const onGridScroll = useCallback(() => {
-    if (syncing.current) return
-    syncing.current = true
-    const top = gridScrollRef.current?.scrollTop ?? 0
-    const left = gridScrollRef.current?.scrollLeft ?? 0
-    if (headerScrollRef.current) headerScrollRef.current.scrollLeft = left
-    setScrollTop(top)
-    setScrollLeft(left)
-    syncing.current = false
+  const visible = useMemo(
+    () => allVisible.slice(0, visibleLimit),
+    [allVisible, visibleLimit],
+  )
+  const remaining = Math.max(0, allVisible.length - visible.length)
+
+  const rowCounts = useMemo(() => {
+    if (!adapter || !visible.length) return []
+    return adapter.overviewRowCounts(
+      filter.excludeTerms,
+      visible.map((r) => r.node.id),
+      viewRank,
+    )
+  }, [adapter, filter.excludeTerms, visible, viewRank])
+
+  const onLoadMore = useCallback(() => {
+    setVisibleLimit((n) => n + GENES_TREE_PAGE_SIZE)
   }, [])
 
-  const onHeaderScroll = useCallback(() => {
-    if (syncing.current) return
-    syncing.current = true
-    const left = headerScrollRef.current?.scrollLeft ?? 0
-    if (gridScrollRef.current) gridScrollRef.current.scrollLeft = left
-    setScrollLeft(left)
-    syncing.current = false
-  }, [])
+  const empty = !loading && (!roots.length || !columns.length)
 
-  const onTreeWheel = useCallback((deltaY: number) => {
-    const el = gridScrollRef.current
-    if (!el) return
-    el.scrollTop += deltaY
-  }, [])
-
-  const empty = !loading && (!roots.length || !terms.length)
-
-  if (loading) {
-    return (
-      <section
-        className={cn(
-          "flex flex-col min-h-0 overflow-hidden rounded-xl border border-border bg-card/50 shadow-sm",
-          className,
-        )}
-      >
-        <div className="border-b border-border/60 px-3 py-2 space-y-1">
-          <div className="h-3 w-20 rounded bg-muted animate-pulse" />
-          <div className="h-2.5 w-40 rounded bg-muted/70 animate-pulse" />
-        </div>
-        <div className="p-3 space-y-1.5 flex-1">
-          {Array.from({ length: 12 }, (_, i) => (
+  return (
+    <div className={cn("flex min-h-0 flex-1 flex-col overflow-hidden", className)}>
+      {loading ? (
+        <div className="space-y-1.5 rounded-xl border border-border bg-card p-4 shadow-sm">
+          {Array.from({ length: 8 }, (_, i) => (
             <div key={i} className="h-4 rounded bg-muted/50 animate-pulse" />
           ))}
         </div>
-      </section>
-    )
-  }
-
-  if (empty) {
-    return (
-      <section
-        className={cn(
-          "flex items-center justify-center p-4 min-h-[280px] rounded-xl border border-border bg-card/50 shadow-sm",
-          className,
-        )}
-      >
-        <div className="rounded-lg border border-dashed bg-muted/20 px-6 py-10 text-sm text-muted-foreground text-center max-w-sm w-full">
-          {!roots.length
-            ? "No eukaryotic lineages in these hits."
-            : "No names to show. Review names and select at least one."}
+      ) : empty ? (
+        <div className="flex flex-1 items-center justify-center rounded-xl border border-dashed border-border bg-card/50 p-6">
+          <div className="w-full max-w-sm px-6 py-8 text-center text-sm text-muted-foreground">
+            {!roots.length
+              ? "No eukaryotic lineages in these hits."
+              : "No names to show. Review names and select at least one."}
+          </div>
         </div>
-      </section>
-    )
-  }
-
-  if (!adapter) return null
-
-  return (
-    <section
-      className={cn(
-        "flex min-h-0 overflow-hidden rounded-xl border border-border bg-card/50 shadow-sm",
-        className,
-      )}
-    >
-      <p id={summaryId} className="sr-only">
-        Heatmap of {terms.length} gene names across {visible.length} taxa.
-        Arrow keys move the selection; Enter filters annotations to that cell.
-      </p>
-
-      <GenesTaxonTree
-        visible={visible}
-        visibleIndexes={win.visibleIndexes}
-        totalHeight={win.totalHeight}
-        scrollTop={scrollTop}
-        onWheelScroll={onTreeWheel}
-        adapter={adapter}
-        filter={filter}
-        expanded={expanded}
-        selectedTaxon={selectedTaxon}
-        hoverRow={hover?.row ?? null}
-        headerHeight={layout.headerH}
-        rowHeight={layout.rowH}
-        onToggleExpand={onToggleExpand}
-        onSelectTaxon={onSelectTaxon}
-        viewRank={viewRank}
-        rankOptions={rankOptions}
-        hideAutoRank={hideAutoRank}
-        rankSelectDisabled={rankSelectDisabled}
-        rankSelectDisabledReason={rankSelectDisabledReason}
-        onViewRankChange={onViewRankChange}
-        width={GENES_TREE_W}
-      />
-
-      <GenesHeatmapCanvas
-        adapter={adapter}
-        filter={filter}
-        terms={terms}
-        visible={visible}
-        visibleIndexes={win.visibleIndexes}
-        layout={layout}
-        selectedTaxon={selectedTaxon}
-        selectedName={selectedName}
-        hover={hover}
-        focus={focus}
-        onHover={setHover}
-        onFocus={setFocus}
-        onSelectName={onSelectName}
-        onSelectCell={onSelectCell}
-        onAnnounce={setLiveMsg}
-        columnRef={heatmapColumnRef}
-        gridScrollRef={gridScrollRef}
-        headerScrollRef={headerScrollRef}
-        scrollLeft={scrollLeft}
-        onGridScroll={onGridScroll}
-        onHeaderScroll={onHeaderScroll}
-        summaryId={summaryId}
-      />
-
-      <span className="sr-only" aria-live="polite">
-        {liveMsg}
-      </span>
-    </section>
+      ) : adapter ? (
+        <GenesHeatmapTable
+          columns={columns}
+          activeColumnCount={activeTerms.length}
+          rows={visible}
+          rowCounts={rowCounts}
+          expanded={expanded}
+          selectedTaxon={selectedTaxon}
+          selectedName={selectedName}
+          onToggleExpand={onToggleExpand}
+          onSelectTaxon={onSelectTaxon}
+          onSelectName={onSelectName}
+          onSelectCell={onSelectCell}
+          onIncludeName={onIncludeName}
+          remaining={remaining}
+          onLoadMore={onLoadMore}
+          taxonTotal={allVisible.length}
+          viewRank={viewRank}
+          rankOptions={rankOptions}
+          hideAutoRank={hideAutoRank}
+          rankSelectDisabled={rankSelectDisabled}
+          rankSelectDisabledReason={rankSelectDisabledReason}
+          onViewRankChange={onViewRankChange}
+          className="min-h-0 flex-1"
+        />
+      ) : null}
+    </div>
   )
 }

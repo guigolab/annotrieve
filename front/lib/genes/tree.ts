@@ -302,9 +302,9 @@ export function buildHitTree(
 }
 /**
  * Max depth from roots for the overview tree.
- * depth 0 = roots, 1 = children, 2 = leaves (no further nesting).
+ * depth 0 = roots; leaves sit at this depth (no further nesting).
  */
-export const HIT_TREE_MAX_DEPTH = 2
+export const HIT_TREE_MAX_DEPTH = 4
 
 /** Drop children past `maxDepth`; leaf counts keep rolled-up tip totals. */
 export function truncateHitTreeDepth(

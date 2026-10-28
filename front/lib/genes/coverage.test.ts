@@ -1,49 +1,37 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
-import type { HitKey } from "@/lib/api/xrefs-types"
 import type { DecodedHitRow } from "@/lib/genes/hits"
 import {
   buildCoverageBins,
   clampCoverageRange,
   coverageChipLabel,
   defaultCoverageRange,
-  filterRowsByCoverage,
   isDefaultCoverageRange,
-  matchedSelectedTerms,
+  matchedActiveTerms,
+  namesMatchedChipLabel,
 } from "./coverage"
 
-function row(
-  id: string,
-  matched: number[],
-  nMatched?: number,
-): DecodedHitRow {
+function row(id: string, matched: number[]): DecodedHitRow {
   return {
     annotationId: id,
     taxid: 9606,
     source: 1,
-    nMatched: nMatched ?? matched.length,
-    matchedKeyIndexes: matched,
+    matchedTerms: matched,
+    releaseDate: null,
+    assemblyName: null,
   }
 }
 
-const keys: HitKey[] = [
-  { term: 0, name: "TP53", ns: "symbol" },
-  { term: 0, name: "P53", ns: "alias" },
-  { term: 1, name: "BRCA1", ns: "symbol" },
-  { term: 2, name: "EGFR", ns: "symbol" },
-]
-
-describe("matchedSelectedTerms", () => {
-  it("counts distinct terms among selected names", () => {
-    const selected = new Set(["tp53", "brca1"])
-    // TP53 + P53 share term 0; BRCA1 is term 1 → 2
-    assert.equal(matchedSelectedTerms(row("a", [0, 1, 2]), keys, selected), 2)
+describe("matchedActiveTerms", () => {
+  it("counts active term indexes on the row", () => {
+    const active = new Set([0, 1])
+    assert.equal(matchedActiveTerms(row("a", [0, 1, 2]), active), 2)
   })
 
-  it("ignores deselected names", () => {
-    const selected = new Set(["egfr"])
-    assert.equal(matchedSelectedTerms(row("a", [0, 1, 3]), keys, selected), 1)
+  it("ignores inactive terms", () => {
+    const active = new Set([2])
+    assert.equal(matchedActiveTerms(row("a", [0, 1, 2]), active), 1)
   })
 })
 
@@ -97,28 +85,48 @@ describe("clampCoverageRange", () => {
   })
 })
 
-describe("filterRowsByCoverage", () => {
-  it("keeps rows whose selected-term count is in range", () => {
-    const selected = new Set(["tp53", "brca1", "egfr"])
-    const rows = [
-      row("a", [0]), // 1 term
-      row("b", [0, 2]), // 2 terms
-      row("c", [0, 2, 3]), // 3 terms
-    ]
-    const filtered = filterRowsByCoverage(rows, keys, selected, {
-      min: 2,
-      max: 3,
-    })
-    assert.deepEqual(
-      filtered.map((r) => r.annotationId),
-      ["b", "c"],
+describe("coverageChipLabel", () => {
+  it("formats single and range labels", () => {
+    assert.equal(coverageChipLabel({ min: 3, max: 3 }), "Best matches: 3")
+    assert.equal(coverageChipLabel({ min: 1, max: 4 }), "Best matches: 1–4")
+  })
+
+  it("formats multi-selected segments", () => {
+    assert.equal(
+      coverageChipLabel({
+        min: 1,
+        max: 5,
+        segments: [
+          { min: 1, max: 1 },
+          { min: 5, max: 5 },
+        ],
+      }),
+      "Best matches: 1, 5",
     )
   })
 })
 
-describe("coverageChipLabel", () => {
-  it("formats single and range", () => {
-    assert.equal(coverageChipLabel({ min: 3, max: 3 }), "matched 3")
-    assert.equal(coverageChipLabel({ min: 36, max: 44 }), "matched 36-44")
+describe("namesMatchedChipLabel", () => {
+  it("shows idle prompt for null/default", () => {
+    assert.equal(namesMatchedChipLabel(null, 99), "Best matches")
+    assert.equal(namesMatchedChipLabel({ min: 1, max: 99 }, 99), "Best matches")
+  })
+
+  it("lists multi-selected bins without of-N", () => {
+    assert.equal(
+      namesMatchedChipLabel(
+        {
+          min: 1,
+          max: 5,
+          segments: [
+            { min: 1, max: 1 },
+            { min: 3, max: 3 },
+            { min: 5, max: 5 },
+          ],
+        },
+        99,
+      ),
+      "Best matches: 1, 3, 5",
+    )
   })
 })

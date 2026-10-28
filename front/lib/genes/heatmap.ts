@@ -1,6 +1,5 @@
-import type { HitKey } from "@/lib/api/xrefs-types"
+import type { HitTerm } from "@/lib/api/xrefs-types"
 import type { DecodedHitRow } from "@/lib/genes/hits"
-import { annotationCountsByName } from "@/lib/genes/prefix"
 import type { HitTreeNode } from "@/lib/genes/tree"
 
 export type HeatmapColumnOrder = "prevalence" | "typed"
@@ -20,35 +19,45 @@ export interface NodeNameCounts {
   byName: number[]
 }
 
-const SMALL_N_THRESHOLD = 3
+/**
+ * Same blue ramp as comparison-stats heatmap (`getHeatmapColor`):
+ * light sky `rgb(219,234,254)` → deep blue `rgb(30,64,175)`.
+ */
+const HEAT_BLUE_LO: [number, number, number] = [219, 234, 254]
+const HEAT_BLUE_HI: [number, number, number] = [30, 64, 175]
 
-/** Colourblind-safe cividis-like ramp (0 → 1), sRGB 0–255. */
-const CIVIDIS: [number, number, number][] = [
-  [0, 32, 77],
-  [30, 62, 110],
-  [70, 90, 120],
-  [110, 115, 115],
-  [150, 140, 95],
-  [190, 170, 70],
-  [230, 205, 50],
-  [253, 231, 37],
-]
+/** Floor for the perceptual scale so k=1 is visibly above empty. */
+export const CELL_COLOR_FLOOR = 0.18
 
-export function interpolateCividis(t: number): string {
+export function interpolateHeatmapBlue(t: number): string {
   const x = Math.max(0, Math.min(1, t))
-  const scaled = x * (CIVIDIS.length - 1)
-  const i = Math.floor(scaled)
-  const f = scaled - i
-  const a = CIVIDIS[i] ?? CIVIDIS[0]
-  const b = CIVIDIS[Math.min(i + 1, CIVIDIS.length - 1)] ?? a
-  const r = Math.round(a[0] + (b[0] - a[0]) * f)
-  const g = Math.round(a[1] + (b[1] - a[1]) * f)
-  const bl = Math.round(a[2] + (b[2] - a[2]) * f)
-  return `rgb(${r},${g},${bl})`
+  const r = Math.round(HEAT_BLUE_LO[0] + x * (HEAT_BLUE_HI[0] - HEAT_BLUE_LO[0]))
+  const g = Math.round(HEAT_BLUE_LO[1] + x * (HEAT_BLUE_HI[1] - HEAT_BLUE_LO[1]))
+  const b = Math.round(HEAT_BLUE_LO[2] + x * (HEAT_BLUE_HI[2] - HEAT_BLUE_LO[2]))
+  return `rgb(${r}, ${g}, ${b})`
 }
 
-export function cellAlpha(n: number): number {
-  return n < SMALL_N_THRESHOLD ? 0.35 : 1
+/**
+ * Perceptual colour position for a non-zero cell.
+ * Uses a square-root scale with a visible floor so tiny fractions stay distinct from 0.
+ * Returns null when the cell should render as empty (k === 0 or n <= 0).
+ */
+export function cellColorT(matched: number, n: number): number | null {
+  if (n <= 0 || matched <= 0) return null
+  const frac = Math.min(1, matched / n)
+  return CELL_COLOR_FLOOR + (1 - CELL_COLOR_FLOOR) * Math.sqrt(frac)
+}
+
+export function cellBackground(matched: number, n: number): string | undefined {
+  const t = cellColorT(matched, n)
+  return t == null ? undefined : interpolateHeatmapBlue(t)
+}
+
+/** Prefer light text on deep blue, dark text on light sky (matches comparison heatmap). */
+export function cellTextIsDark(matched: number, n: number): boolean {
+  const t = cellColorT(matched, n)
+  if (t == null) return true
+  return t <= 0.5
 }
 
 export function cellFraction(matched: number, n: number): number {
@@ -72,14 +81,25 @@ export function cellTooltip(
 export function orderHeatmapColumns(
   names: string[],
   rows: DecodedHitRow[],
-  keys: HitKey[],
+  terms: HitTerm[],
   order: HeatmapColumnOrder,
 ): HeatmapColumn[] {
-  const counts = annotationCountsByName(rows, keys)
+  const counts = new Map<string, number>()
+  for (const row of rows) {
+    const seen = new Set<string>()
+    for (const ti of row.matchedTerms) {
+      const term = terms[ti]
+      if (!term) continue
+      const id = term.name.toLowerCase()
+      if (seen.has(id)) continue
+      seen.add(id)
+      counts.set(id, (counts.get(id) ?? 0) + 1)
+    }
+  }
   const cols: HeatmapColumn[] = names.map((name) => ({
     name,
     id: name.toLowerCase(),
-    prevalence: counts.get(name.toLowerCase())?.total ?? 0,
+    prevalence: counts.get(name.toLowerCase()) ?? 0,
   }))
   if (order === "typed") return cols
   return [...cols].sort((a, b) => {
@@ -93,7 +113,7 @@ export function orderHeatmapColumns(
  */
 export function tipNameVectors(
   rows: DecodedHitRow[],
-  keys: HitKey[],
+  terms: HitTerm[],
   columns: HeatmapColumn[],
 ): Map<number, NodeNameCounts> {
   const colIndex = new Map(columns.map((c, i) => [c.id, i]))
@@ -106,10 +126,10 @@ export function tipNameVectors(
     }
     entry.n += 1
     const seen = new Set<number>()
-    for (const ki of row.matchedKeyIndexes) {
-      const key = keys[ki]
-      if (!key) continue
-      const idx = colIndex.get(key.name.toLowerCase())
+    for (const ti of row.matchedTerms) {
+      const term = terms[ti]
+      if (!term) continue
+      const idx = colIndex.get(term.name.toLowerCase())
       if (idx == null || seen.has(idx)) continue
       seen.add(idx)
       entry.byName[idx] += 1
@@ -156,6 +176,27 @@ export function tipTaxidsForNode(
 }
 
 /**
+ * Invert organism → path into nodeId → tip taxids (one pass).
+ * Speeds up repeated nodeCount / heatmap matrix builds.
+ */
+export function buildTipsByNode(
+  lineageByTaxid: Map<number, Set<string>>,
+): Map<string, number[]> {
+  const tipsByNode = new Map<string, number[]>()
+  for (const [taxid, path] of lineageByTaxid) {
+    for (const nodeId of path) {
+      let list = tipsByNode.get(nodeId)
+      if (!list) {
+        list = []
+        tipsByNode.set(nodeId, list)
+      }
+      list.push(taxid)
+    }
+  }
+  return tipsByNode
+}
+
+/**
  * Drop columns where every visible row is exactly 0% or exactly 100%.
  * Rows with n === 0 are ignored for the vary check.
  */
@@ -190,72 +231,39 @@ export function filterVaryingColumns(
   })
 }
 
-/** Minimum cell width before horizontal scroll is allowed. */
-export const HEATMAP_MIN_CELL_W = 8
-/** Minimum row height when taxa overflow the viewport. */
-export const HEATMAP_MIN_ROW_H = 28
-/** Room for taxonomy title + rank select. */
-const HEADER_H_MIN = 72
-const HEADER_H_MAX = 140
-/** Default legend strip height (must match UI). */
-export const HEATMAP_DEFAULT_LEGEND_H = 32
+/** Rotate column headers when there are more than this many columns. */
+export const HEATMAP_ROTATE_HEADER_AT = 6
 
-export interface HeatmapLayoutInput {
-  /** Full heatmap column width (grid area). */
-  columnWidth: number
-  /** Full heatmap column height (header + grid + legend). */
-  columnHeight: number
-  cols: number
-  rows: number
-  legendH?: number
-}
+/** Show in-cell counts when the column is at least this wide. */
+export const HEATMAP_COUNT_MIN_CELL_W = 28
 
-export interface HeatmapLayout {
+export interface HeatmapColumnLayout {
+  /** Pixel width for each gene-name column. */
   cellW: number
-  rowH: number
-  headerH: number
-  contentW: number
-  contentH: number
-  /** Grid viewport height after header + legend. */
-  availableHeight: number
-}
-
-function clamp(n: number, lo: number, hi: number): number {
-  return Math.max(lo, Math.min(hi, n))
+  /** Prefer vertical (rotated) column headers. */
+  rotateHeaders: boolean
 }
 
 /**
- * Size heatmap cells to fill the overview column.
- * - Columns always fill width (one gene → one wide column), unless that
- *   would shrink below MIN_CELL_W (then scroll horizontally).
- * - Rows fill height when they fit; otherwise use MIN_ROW_H and scroll.
+ * Fixed column widths for the table heatmap (no container measure).
+ * Wider cells for few columns; denser packing as the set grows.
+ * Floor ≈ 28px so horizontal scroll handles large N instead of hiding columns.
  */
-export function computeHeatmapLayout(input: HeatmapLayoutInput): HeatmapLayout {
-  const cols = Math.max(1, input.cols)
-  const rows = Math.max(1, input.rows)
-  const colW = Math.max(0, Math.floor(input.columnWidth))
-  const colH = Math.max(0, Math.floor(input.columnHeight))
-  const legendH = input.legendH ?? HEATMAP_DEFAULT_LEGEND_H
+export function heatmapColumnLayout(colCount: number): HeatmapColumnLayout {
+  const n = Math.max(0, colCount)
+  if (n <= 8) return { cellW: 64, rotateHeaders: n > HEATMAP_ROTATE_HEADER_AT }
+  if (n <= 20) return { cellW: 40, rotateHeaders: true }
+  return { cellW: 28, rotateHeaders: true }
+}
 
-  const fitW = Math.floor(colW / cols)
-  const cellW = Math.max(HEATMAP_MIN_CELL_W, fitW || HEATMAP_MIN_CELL_W)
-  const headerH = clamp(Math.round(cellW * 2.5), HEADER_H_MIN, HEADER_H_MAX)
-  const availableHeight = Math.max(0, colH - headerH - legendH)
-
-  const minTotalH = rows * HEATMAP_MIN_ROW_H
-  const rowH =
-    availableHeight > 0 && minTotalH <= availableHeight
-      ? Math.max(HEATMAP_MIN_ROW_H, Math.floor(availableHeight / rows))
-      : HEATMAP_MIN_ROW_H
-
-  return {
-    cellW,
-    rowH,
-    headerH,
-    contentW: cellW * cols,
-    contentH: rowH * rows,
-    availableHeight,
-  }
+/** Rotated header height from the longest label, clamped. */
+export function heatmapHeaderHeight(
+  rotateHeaders: boolean,
+  names: readonly string[],
+): number {
+  if (!rotateHeaders) return 40
+  const longest = names.reduce((m, name) => Math.max(m, name.length), 0)
+  return Math.min(120, Math.max(72, longest * 7))
 }
 
 /** Recursively list node ids in a HitTreeNode subtree (self + descendants). */

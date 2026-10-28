@@ -1,5 +1,5 @@
 import type { FlatTreeNode } from "@/lib/api/taxons"
-import type { HitKey } from "@/lib/api/xrefs-types"
+import type { HitTerm } from "@/lib/api/xrefs-types"
 import type { DecodedHitRow } from "@/lib/genes/hits"
 
 const EXCLUDE_TAXIDS = new Set(["root", "131567"])
@@ -42,7 +42,7 @@ export function speciesForTaxid(
 /** Bucket annotations by species rank. Sort by annotation count, highest first. */
 export function groupBySpecies(
   rows: DecodedHitRow[],
-  keys: HitKey[],
+  terms: HitTerm[],
   index: Map<string, FlatTreeNode>,
 ): TaxidGroup[] {
   const buckets = new Map<number, { label: string; rows: DecodedHitRow[] }>()
@@ -58,9 +58,9 @@ export function groupBySpecies(
     const nameSet = new Set<string>()
     const sourceCounts = new Map<number, number>()
     for (const row of bucket.rows) {
-      for (const ki of row.matchedKeyIndexes) {
-        const key = keys[ki]
-        if (key) nameSet.add(key.name)
+      for (const ti of row.matchedTerms) {
+        const term = terms[ti]
+        if (term) nameSet.add(term.name)
       }
       sourceCounts.set(row.source, (sourceCounts.get(row.source) ?? 0) + 1)
     }

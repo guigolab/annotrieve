@@ -1,15 +1,18 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
-import type { HitKey } from "@/lib/api/xrefs-types"
+import type { HitTerm } from "@/lib/api/xrefs-types"
 import type { DecodedHitRow } from "@/lib/genes/hits"
 import {
+  buildTipsByNode,
+  CELL_COLOR_FLOOR,
+  cellColorT,
   cellFraction,
   filterVaryingColumns,
   foldNodeCounts,
-  computeHeatmapLayout,
-  HEATMAP_MIN_CELL_W,
-  HEATMAP_MIN_ROW_H,
+  heatmapColumnLayout,
+  heatmapHeaderHeight,
+  HEATMAP_ROTATE_HEADER_AT,
   orderHeatmapColumns,
   tipNameVectors,
   type HeatmapColumn,
@@ -25,15 +28,16 @@ function row(
     annotationId: id,
     taxid,
     source: 1,
-    nMatched: matched.length,
-    matchedKeyIndexes: matched,
+    matchedTerms: matched,
+    releaseDate: null,
+    assemblyName: null,
   }
 }
 
-const keys: HitKey[] = [
-  { term: 0, name: "TP53", ns: "symbol" },
-  { term: 1, name: "BRCA1", ns: "symbol" },
-  { term: 2, name: "EGFR", ns: "symbol" },
+const terms: HitTerm[] = [
+  { input: "TP53", name: "tp53", namespaces: ["symbol"], n_hits: 1 },
+  { input: "BRCA1", name: "brca1", namespaces: ["symbol"], n_hits: 1 },
+  { input: "EGFR", name: "egfr", namespaces: ["symbol"], n_hits: 1 },
 ]
 
 describe("orderHeatmapColumns", () => {
@@ -47,7 +51,7 @@ describe("orderHeatmapColumns", () => {
     const cols = orderHeatmapColumns(
       ["EGFR", "TP53", "BRCA1"],
       rows,
-      keys,
+      terms,
       "prevalence",
     )
     assert.deepEqual(
@@ -60,7 +64,7 @@ describe("orderHeatmapColumns", () => {
     const cols = orderHeatmapColumns(
       ["EGFR", "TP53", "BRCA1"],
       [],
-      keys,
+      terms,
       "typed",
     )
     assert.deepEqual(
@@ -81,7 +85,7 @@ describe("tipNameVectors + foldNodeCounts", () => {
       { name: "TP53", id: "tp53", prevalence: 2 },
       { name: "BRCA1", id: "brca1", prevalence: 2 },
     ]
-    const tips = tipNameVectors(rows, keys, columns)
+    const tips = tipNameVectors(rows, terms, columns)
     const folded = foldNodeCounts([10, 20], tips, columns.length)
     assert.equal(folded.n, 3)
     assert.deepEqual(folded.byName, [2, 2])
@@ -120,57 +124,22 @@ describe("filterVaryingColumns", () => {
   })
 })
 
-describe("computeHeatmapLayout", () => {
-  it("fills the column for one gene and one row", () => {
-    const layout = computeHeatmapLayout({
-      columnWidth: 400,
-      columnHeight: 300,
-      cols: 1,
-      rows: 1,
-      legendH: 32,
-    })
-    assert.equal(layout.cellW, 400)
-    assert.ok(layout.rowH > HEATMAP_MIN_ROW_H)
-    assert.equal(layout.contentW, 400)
-    assert.equal(layout.contentH, layout.rowH)
-    // header + grid + legend ≈ column
-    assert.ok(layout.headerH + layout.availableHeight + 32 <= 300)
+describe("heatmapColumnLayout", () => {
+  it("uses wide cells for few columns", () => {
+    const layout = heatmapColumnLayout(3)
+    assert.equal(layout.cellW, 64)
+    assert.equal(layout.rotateHeaders, false)
   })
 
-  it("splits width evenly across many columns", () => {
-    const layout = computeHeatmapLayout({
-      columnWidth: 500,
-      columnHeight: 400,
-      cols: 10,
-      rows: 5,
-      legendH: 32,
-    })
-    assert.equal(layout.cellW, 50)
-    assert.equal(layout.contentW, 500)
+  it("rotates headers past the threshold", () => {
+    const layout = heatmapColumnLayout(HEATMAP_ROTATE_HEADER_AT + 1)
+    assert.equal(layout.cellW, 64)
+    assert.equal(layout.rotateHeaders, true)
   })
 
-  it("uses min cell width and scrolls when columns are dense", () => {
-    const layout = computeHeatmapLayout({
-      columnWidth: 200,
-      columnHeight: 400,
-      cols: 50,
-      rows: 5,
-      legendH: 32,
-    })
-    assert.equal(layout.cellW, HEATMAP_MIN_CELL_W)
-    assert.ok(layout.contentW > 200)
-  })
-
-  it("uses min row height when taxa overflow", () => {
-    const layout = computeHeatmapLayout({
-      columnWidth: 400,
-      columnHeight: 200,
-      cols: 2,
-      rows: 100,
-      legendH: 32,
-    })
-    assert.equal(layout.rowH, HEATMAP_MIN_ROW_H)
-    assert.ok(layout.contentH > layout.availableHeight)
+  it("narrows cells as columns grow", () => {
+    assert.equal(heatmapColumnLayout(15).cellW, 40)
+    assert.equal(heatmapColumnLayout(40).cellW, 28)
   })
 })
 
@@ -178,5 +147,61 @@ describe("cellFraction", () => {
   it("returns 0 for empty nodes", () => {
     assert.equal(cellFraction(0, 0), 0)
     assert.equal(cellFraction(3, 10), 0.3)
+  })
+})
+
+describe("cellColorT", () => {
+  it("returns null for zero matches", () => {
+    assert.equal(cellColorT(0, 1000), null)
+    assert.equal(cellColorT(0, 0), null)
+    assert.equal(cellColorT(3, 0), null)
+  })
+
+  it("keeps k=1 visibly above the floor even for huge n", () => {
+    const t = cellColorT(1, 10_000)
+    assert.ok(t != null)
+    assert.ok(t! >= CELL_COLOR_FLOOR)
+    assert.ok(t! > CELL_COLOR_FLOOR - 1e-9)
+    // Still near the floor, not collapsed to the empty end of the ramp.
+    assert.ok(t! < CELL_COLOR_FLOOR + 0.05)
+  })
+
+  it("is monotonic in matched count", () => {
+    const n = 100
+    let prev = cellColorT(1, n)!
+    for (let k = 2; k <= n; k++) {
+      const next = cellColorT(k, n)!
+      assert.ok(next >= prev, `expected t(${k}) >= t(${k - 1})`)
+      prev = next
+    }
+    assert.equal(cellColorT(n, n), 1)
+  })
+})
+
+describe("heatmapHeaderHeight", () => {
+  it("uses a short height for horizontal headers", () => {
+    assert.equal(heatmapHeaderHeight(false, ["TP53", "BRCA1"]), 40)
+  })
+
+  it("clamps rotated height from the longest name", () => {
+    const short = heatmapHeaderHeight(true, ["A", "BC"])
+    const long = heatmapHeaderHeight(true, ["A".repeat(30)])
+    assert.ok(short >= 72)
+    assert.ok(long <= 120)
+    assert.ok(long > short)
+  })
+})
+
+describe("buildTipsByNode", () => {
+  it("inverts lineage paths into node → tip taxids", () => {
+    const lineage = new Map<number, Set<string>>([
+      [9606, new Set(["40674", "9443", "9606"])],
+      [10090, new Set(["40674", "10090"])],
+    ])
+    const tips = buildTipsByNode(lineage)
+    assert.deepEqual(tips.get("40674")?.sort(), [9606, 10090].sort())
+    assert.deepEqual(tips.get("9443"), [9606])
+    assert.deepEqual(tips.get("9606"), [9606])
+    assert.deepEqual(tips.get("10090"), [10090])
   })
 })

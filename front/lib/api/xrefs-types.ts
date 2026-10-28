@@ -1,6 +1,5 @@
 export type AccessionSort = "n_genes" | "n_annotations" | "accession"
 export type SortOrder = "asc" | "desc"
-export type HitsView = "genes" | "annotations"
 export type HitsMatch = "any" | "all"
 
 export interface XrefsPageToken {
@@ -46,27 +45,29 @@ export interface AccessionsResponse extends XrefsPageToken {
   results: AccessionRow[]
 }
 
-/** Compact /hits row: annotation_id, taxid, source, n_matched, matched key indexes. */
-export type HitsRow = [string, number, number, number, number[]]
+/**
+ * Compact /hits row: annotation_id, taxid, source, matched term indexes,
+ * release_date, assembly_name.
+ */
+export type HitsRow = [
+  string,
+  number,
+  number,
+  number[],
+  (string | null)?,
+  (string | null)?,
+]
 
 export interface HitTerm {
   input: string
   name: string
-  matched_namespaces: string[]
+  namespaces: string[]
   n_hits: number
-  expanded?: string[]
-}
-
-export interface HitKey {
-  term: number
-  name: string
-  ns: string
 }
 
 /** Live gene-name presence search (`GET|POST /hits`). */
 export interface HitsResponse {
   terms: HitTerm[]
-  keys: HitKey[]
   sources: Record<string, { label: string }>
   include_taxids: number[]
   exclude_taxids: number[]
@@ -75,39 +76,27 @@ export interface HitsResponse {
   rows: HitsRow[]
 }
 
-/** @deprecated Legacy locus-hit row from older /hits shape. */
-export interface GeneHitRow {
-  annotation_id: string
-  taxid: number
-  assembly_accession: string
-  organism_name: string
-  source_database: string
-  local_id: number
-  seqid: string
-  start: number
-  end: number
-  strand: string | null
-  feature_type: string
-  biotype: string | null
-  primary_name: string | null
-  matched: string[]
+export type NameCategory =
+  | "pseudogene"
+  | "numbered"
+  | "homeolog"
+  | "predicted"
+  | "exact"
+  | "other"
+
+export interface NameSuggestion {
+  name: string
+  category: NameCategory
+  n_annotations: number
 }
 
-export interface AnnotationHitRow {
-  annotation_id: string
-  taxid: number
-  assembly_accession: string
-  organism_name: string
-  source_database: string
-  n_genes: number
-  matched: string[]
-}
-
-export interface HitAnnotationsResponse extends XrefsPageToken {
-  limit: number
-  results: AnnotationHitRow[]
-  errors?: XrefsErrorEntry[]
-  taxid?: number
+/** Prefix discovery (`GET /names`). */
+export interface NamesResponse {
+  prefix: string
+  include_taxids: number[]
+  exclude_taxids: number[]
+  total: number
+  results: NameSuggestion[]
 }
 
 export interface GeneMatch {

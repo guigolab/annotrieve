@@ -6,46 +6,18 @@ import {
   parseGenesSearchParams,
   resolveCoverageFromUrl,
 } from "./url"
-import { parseCovParam } from "./coverage"
-
-describe("parseCovParam", () => {
-  it("parses MIN-MAX", () => {
-    assert.deepEqual(parseCovParam("36-44"), { min: 36, max: 44 })
-  })
-
-  it("returns null for garbage", () => {
-    assert.equal(parseCovParam("all"), null)
-    assert.equal(parseCovParam(null), null)
-  })
-})
 
 describe("resolveCoverageFromUrl", () => {
-  it("prefers lo/hi over match", () => {
+  it("uses lo/hi when present", () => {
     assert.deepEqual(
-      resolveCoverageFromUrl(
-        { cov: null, match: "all", lo: 2, hi: 4 },
-        10,
-      ),
+      resolveCoverageFromUrl({ lo: 2, hi: 4 }, 10),
       { min: 2, max: 4 },
-    )
-  })
-
-  it("maps match=all to [N, N]", () => {
-    assert.deepEqual(
-      resolveCoverageFromUrl(
-        { cov: null, match: "all", lo: null, hi: null },
-        7,
-      ),
-      { min: 7, max: 7 },
     )
   })
 
   it("defaults to [1, N]", () => {
     assert.deepEqual(
-      resolveCoverageFromUrl(
-        { cov: null, match: "any", lo: null, hi: null },
-        7,
-      ),
+      resolveCoverageFromUrl({ lo: null, hi: null }, 7),
       { min: 1, max: 7 },
     )
   })
@@ -67,7 +39,7 @@ describe("buildGenesQueryString", () => {
     assert.equal(qs, "names=TP53")
   })
 
-  it("writes match=all for [N, N]", () => {
+  it("writes lo/hi for non-default coverage including all", () => {
     const qs = buildGenesQueryString({
       names: ["A", "B"],
       exclude: [],
@@ -79,7 +51,7 @@ describe("buildGenesQueryString", () => {
       ann: null,
       gene: null,
     })
-    assert.equal(qs, "names=A%2CB&match=all")
+    assert.equal(qs, "names=A%2CB&lo=2&hi=2")
   })
 
   it("writes lo/hi, t, g, exclude", () => {
@@ -135,13 +107,12 @@ describe("buildGenesQueryString", () => {
 })
 
 describe("parseGenesSearchParams", () => {
-  it("reads new and legacy params", () => {
+  it("reads names and strips wildcards", () => {
     const usp = new URLSearchParams(
-      "names=TP53,BRCA1&match=all&node=9606&name=TP53&exclude=EGFR",
+      "names=TP53,BRCA1,foo*&exclude=EGFR&t=9606&g=TP53",
     )
     const parsed = parseGenesSearchParams(usp)
     assert.deepEqual(parsed.names, ["TP53", "BRCA1"])
-    assert.equal(parsed.match, "all")
     assert.equal(parsed.t, "9606")
     assert.equal(parsed.g, "TP53")
     assert.deepEqual(parsed.exclude, ["EGFR"])
@@ -159,5 +130,17 @@ describe("parseGenesSearchParams", () => {
     assert.equal(ok.viewRank, "family")
     const bad = parseGenesSearchParams(new URLSearchParams("rank=species"))
     assert.equal(bad.viewRank, null)
+  })
+
+  it("ignores legacy match/cov/include/exclude_tax params", () => {
+    const usp = new URLSearchParams(
+      "names=TP53&match=all&cov=2-4&include=9606&exclude_tax=7227&lo=1&hi=3",
+    )
+    const parsed = parseGenesSearchParams(usp)
+    assert.deepEqual(parsed.names, ["TP53"])
+    assert.equal(parsed.lo, 1)
+    assert.equal(parsed.hi, 3)
+    assert.deepEqual(parsed.includeTaxids, [])
+    assert.deepEqual(parsed.excludeTaxids, [])
   })
 })

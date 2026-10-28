@@ -14,7 +14,10 @@ interface GenesSearchBarProps {
   onQueryTextChange: (text: string) => void
   onSearch: () => void
   onOpenPrefix: () => void
+  /** Committed names + draft exact tokens (capped). */
   nameCount: number
+  /** True when the gene-set cap is reached (blocks adding more). */
+  atLimit?: boolean
   includeTaxa: SelectedTaxon[]
   excludeTaxa: SelectedTaxon[]
   onApplyTaxa: (include: SelectedTaxon[], exclude: SelectedTaxon[]) => void
@@ -27,12 +30,15 @@ export function GenesSearchBar({
   onSearch,
   onOpenPrefix,
   nameCount,
+  atLimit,
   includeTaxa,
   excludeTaxa,
   onApplyTaxa,
   className,
 }: GenesSearchBarProps) {
   const hasPrefix = queryText.includes("*")
+  const draftEmpty = !queryText.trim()
+  const limitReached = atLimit ?? nameCount >= MAX_NAMES_GET
 
   return (
     <div className={cn("flex flex-wrap items-center gap-2", className)}>
@@ -59,13 +65,13 @@ export function GenesSearchBar({
           onKeyDown={(e) => {
             if (e.key === "Enter") {
               e.preventDefault()
-              onSearch()
+              if (!draftEmpty) onSearch()
             }
           }}
-          placeholder="Gene names, e.g. TP53, BRCA1, seleno*…"
-          aria-label="Gene names"
+          placeholder="Add gene names (comma or space separated)…"
+          aria-label="Add gene names"
           className="h-11 rounded-xl shadow-sm bg-background pl-10 pr-16"
-          disabled={nameCount >= MAX_NAMES_GET && !queryText}
+          disabled={limitReached && draftEmpty}
         />
         <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs tabular-nums text-muted-foreground">
           {nameCount}/{MAX_NAMES_GET}
@@ -75,6 +81,7 @@ export function GenesSearchBar({
         type="button"
         className="h-11 shrink-0 rounded-xl font-semibold px-4"
         onClick={onSearch}
+        disabled={draftEmpty}
       >
         <Search className="h-4 w-4" />
         Search

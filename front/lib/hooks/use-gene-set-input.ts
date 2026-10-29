@@ -1,7 +1,14 @@
 "use client"
 
 import { useCallback, useReducer } from "react"
+import { toast } from "sonner"
 
+import { planOpenPrefix } from "@/lib/genes/gene-set"
+import {
+  initialPrefixSheet,
+  namesToCommitFromSheet,
+  sheetReducer,
+} from "@/lib/genes/prefix-sheet"
 import {
   exactNamesBeforePrefixSheet,
   mergeGeneNames,
@@ -13,61 +20,7 @@ import {
 } from "@/lib/genes/tokenize"
 import { MAX_NAMES_GET } from "@/lib/genes/prefix"
 import { useGenesStore } from "@/lib/genes/store"
-
-interface PrefixSheetState {
-  open: boolean
-  seed: string
-  names: string[]
-  removed: Set<string>
-}
-
-type PrefixSheetAction =
-  | { type: "open"; seed: string; exact: string[] }
-  | { type: "close" }
-  | { type: "add"; names: string[] }
-  | { type: "drop"; names: string[] }
-
-const initialSheet: PrefixSheetState = {
-  open: false,
-  seed: "",
-  names: [],
-  removed: new Set(),
-}
-
-function sheetReducer(
-  state: PrefixSheetState,
-  action: PrefixSheetAction,
-): PrefixSheetState {
-  switch (action.type) {
-    case "open":
-      return {
-        open: true,
-        seed: action.seed,
-        names: [...action.exact],
-        removed: new Set(),
-      }
-    case "close":
-      return { ...state, open: false }
-    case "add": {
-      const next = uniqueNames([...state.names, ...action.names], MAX_NAMES_GET)
-      const removed = new Set(state.removed)
-      for (const name of action.names) removed.delete(name.toLowerCase())
-      return { ...state, names: next, removed }
-    }
-    case "drop": {
-      const drop = new Set(action.names.map((n) => n.toLowerCase()))
-      const removed = new Set(state.removed)
-      for (const id of drop) removed.add(id)
-      return {
-        ...state,
-        names: state.names.filter((n) => !drop.has(n.toLowerCase())),
-        removed,
-      }
-    }
-    default:
-      return state
-  }
-}
+import { toastUndo } from "@/lib/genes/toast-undo"
 
 export function useGeneSetInput() {
   const queryText = useGenesStore((s) => s.queryText)
@@ -77,7 +30,18 @@ export function useGeneSetInput() {
   const setExcluded = useGenesStore((s) => s.setExcluded)
   const clearGeneSet = useGenesStore((s) => s.clearGeneSet)
 
-  const [sheet, dispatch] = useReducer(sheetReducer, initialSheet)
+  const [sheet, dispatch] = useReducer(sheetReducer, initialPrefixSheet)
+
+  const restoreGeneSet = useCallback(
+    (names: string[], text: string) => {
+      setQueryNames(names)
+      setQueryText(text)
+      const excluded = useGenesStore.getState().excluded
+      const pruned = pruneExcludedToNames(excluded, names)
+      if (pruned !== excluded) setExcluded(pruned)
+    },
+    [setQueryNames, setQueryText, setExcluded],
+  )
 
   /**
    * Merge exact names into the committed gene set and clear the draft input.
@@ -100,7 +64,7 @@ export function useGeneSetInput() {
       const next = opts.replace
         ? uniqueNames(incoming, MAX_NAMES_GET)
         : mergeGeneNames(existing, incoming, MAX_NAMES_GET)
-      if (!next.length) return false
+      if (!next.length && !opts.replace) return false
 
       setQueryNames(next)
       setQueryText(opts.leaveQueryText ?? "")
@@ -118,8 +82,6 @@ export function useGeneSetInput() {
     if (beforePrefix) {
       const tokens = tokenizeGeneQuery(queryText)
       const { prefixes } = partitionTokens(tokens)
-      // Commit exact names now so Cancel only abandons unchecked prefix picks.
-      // Leave prefix tokens in the input until Apply / Cancel.
       if (beforePrefix.length) {
         commitNames(beforePrefix, {
           leaveQueryText: prefixTokensOnly(queryText),
@@ -129,7 +91,7 @@ export function useGeneSetInput() {
       }
       dispatch({
         type: "open",
-        seed: prefixes[0]!,
+        seed: prefixes[0]!.replace(/\*+$/, "").trim(),
         exact: beforePrefix.length
           ? mergeGeneNames(queryNames, beforePrefix, MAX_NAMES_GET)
           : uniqueNames(queryNames, MAX_NAMES_GET),
@@ -145,39 +107,53 @@ export function useGeneSetInput() {
   }, [queryText, queryNames, commitNames, setQueryText])
 
   const openPrefix = useCallback(
-    (seed?: string) => {
-      const tokens = tokenizeGeneQuery(queryText)
-      const { exact, prefixes } = partitionTokens(tokens)
-      const exactNames = uniqueNames(exact, MAX_NAMES_GET)
-      // Keep any exact tokens already typed when opening the sheet manually.
-      if (exactNames.length) {
-        commitNames(exactNames, {
-          leaveQueryText: prefixTokensOnly(queryText) || queryText,
+    (explicitSeed?: string) => {
+      if (explicitSeed != null && explicitSeed !== "") {
+        const stem = explicitSeed.replace(/\*+$/, "").trim()
+        dispatch({
+          type: "open",
+          seed: stem,
+          exact: uniqueNames(queryNames, MAX_NAMES_GET),
         })
+        return
       }
+
+      const plan = planOpenPrefix(queryText)
+      if (plan.mode === "prefix-token") {
+        if (plan.exactToCommit.length) {
+          commitNames(plan.exactToCommit, {
+            leaveQueryText: plan.leaveQueryText,
+          })
+        } else {
+          setQueryText(plan.leaveQueryText)
+        }
+        dispatch({
+          type: "open",
+          seed: plan.seed,
+          exact: plan.exactToCommit.length
+            ? mergeGeneNames(queryNames, plan.exactToCommit, MAX_NAMES_GET)
+            : uniqueNames(queryNames, MAX_NAMES_GET),
+        })
+        return
+      }
+
+      // bare-stem or empty: never commit; seed the sheet only.
       dispatch({
         type: "open",
-        seed: seed ?? prefixes[0] ?? "",
-        exact: exactNames.length
-          ? mergeGeneNames(queryNames, exactNames, MAX_NAMES_GET)
-          : uniqueNames(queryNames, MAX_NAMES_GET),
+        seed: plan.seed,
+        exact: uniqueNames(queryNames, MAX_NAMES_GET),
       })
     },
-    [queryText, queryNames, commitNames],
+    [queryText, queryNames, commitNames, setQueryText],
   )
 
-  /** Discard sheet draft without committing. */
   const cancelPrefix = useCallback(() => {
     dispatch({ type: "close" })
   }, [])
 
-  /** Commit selected sheet names into the gene set and clear the input. */
   const applyPrefix = useCallback(
     (names: string[]) => {
-      const next = uniqueNames(
-        names.filter((n) => !sheet.removed.has(n.toLowerCase())),
-        MAX_NAMES_GET,
-      )
+      const next = namesToCommitFromSheet(names, sheet.removed)
       dispatch({ type: "close" })
       if (next.length) commitNames(next)
       else setQueryText("")
@@ -213,7 +189,7 @@ export function useGeneSetInput() {
         }
         dispatch({
           type: "open",
-          seed: prefixes[0]!,
+          seed: prefixes[0]!.replace(/\*+$/, "").trim(),
           exact: beforePrefix,
         })
         return
@@ -223,25 +199,76 @@ export function useGeneSetInput() {
     [commitNames, setQueryText],
   )
 
+  const removeNames = useCallback(
+    (names: string[]) => {
+      if (!names.length) return
+      const drop = new Set(names.map((n) => n.toLowerCase()))
+      const prevNames = useGenesStore.getState().queryNames
+      const prevText = useGenesStore.getState().queryText
+      const next = prevNames.filter((n) => !drop.has(n.toLowerCase()))
+      setQueryNames(next)
+      const excluded = useGenesStore.getState().excluded
+      const pruned = pruneExcludedToNames(excluded, next)
+      if (pruned !== excluded) setExcluded(pruned)
+      const label =
+        names.length === 1
+          ? `Removed ${names[0]}`
+          : `Removed ${names.length} genes`
+      toastUndo(`${label} · Undo`, () => restoreGeneSet(prevNames, prevText))
+    },
+    [setQueryNames, setExcluded, restoreGeneSet],
+  )
+
   const removeName = useCallback(
     (name: string) => {
-      const id = name.toLowerCase()
-      const next = queryNames.filter((n) => n.toLowerCase() !== id)
-      setQueryNames(next)
-      // Drop any view-exclusion keyed by this name (input or accession id).
-      const excluded = useGenesStore.getState().excluded
-      if (excluded.has(id)) {
-        const nextExcluded = new Set(excluded)
-        nextExcluded.delete(id)
-        setExcluded(nextExcluded)
-      }
+      removeNames([name])
     },
-    [queryNames, setQueryNames, setExcluded],
+    [removeNames],
   )
 
   const clearAll = useCallback(() => {
+    const prevNames = useGenesStore.getState().queryNames
+    const prevText = useGenesStore.getState().queryText
+    if (!prevNames.length && !prevText.trim()) {
+      clearGeneSet()
+      return
+    }
     clearGeneSet()
-  }, [clearGeneSet])
+    toastUndo("Cleared gene set · Undo", () =>
+      restoreGeneSet(prevNames, prevText),
+    )
+  }, [clearGeneSet, restoreGeneSet])
+
+  const removeZeroHitNames = useCallback(
+    (zeroHitNames: string[]) => {
+      if (!zeroHitNames.length) return
+      removeNames(zeroHitNames)
+    },
+    [removeNames],
+  )
+
+  /** Paste handler: 2+ exact tokens commit immediately with Undo. */
+  const commitPaste = useCallback(
+    (pasted: string) => {
+      const exact = uniqueNames(
+        partitionTokens(tokenizeGeneQuery(pasted)).exact,
+        MAX_NAMES_GET,
+      )
+      if (exact.length < 2) return false
+      const prevNames = useGenesStore.getState().queryNames
+      const prevText = useGenesStore.getState().queryText
+      const before = prevNames.length
+      commitNames(exact)
+      const added = useGenesStore.getState().queryNames.length - before
+      if (added > 0) {
+        toastUndo(`Added ${added} genes · Undo`, () =>
+          restoreGeneSet(prevNames, prevText),
+        )
+      }
+      return true
+    },
+    [commitNames, restoreGeneSet],
+  )
 
   const draftExact = partitionTokens(tokenizeGeneQuery(queryText)).exact
   const nameCount = mergeGeneNames(queryNames, draftExact, MAX_NAMES_GET).length
@@ -257,7 +284,11 @@ export function useGeneSetInput() {
     applyPrefix,
     applyExample,
     removeName,
+    removeNames,
+    removeZeroHitNames,
     clearAll,
+    commitNames,
+    commitPaste,
     prefixSheet: {
       open: sheet.open,
       seed: sheet.seed,

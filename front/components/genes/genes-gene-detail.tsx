@@ -2,7 +2,14 @@
 
 import { useState } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { Check, ChevronDown, ChevronRight, Copy, Loader2 } from "lucide-react"
+import {
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Copy,
+  Loader2,
+  Pin,
+} from "lucide-react"
 
 import { GenesGeneBrowser } from "@/components/genes/genes-gene-browser"
 import { GenesGeneXrefs } from "@/components/genes/genes-gene-xrefs"
@@ -21,11 +28,15 @@ import { cn } from "@/lib/utils"
 interface GenesGeneDetailProps {
   annotationId: string
   gene: AnnotationGeneRow
+  pinned?: boolean
+  onTogglePin?: () => void
 }
 
 export function GenesGeneDetail({
   annotationId,
   gene,
+  pinned,
+  onTogglePin,
 }: GenesGeneDetailProps) {
   const [xrefsOpen, setXrefsOpen] = useState(false)
   const [xrefTotal, setXrefTotal] = useState<number | null>(null)
@@ -62,8 +73,6 @@ export function GenesGeneDetail({
 
   const length = locusLength(gene.start, gene.end)
   const locus = formatLocus(gene.seqid, gene.start, gene.end, gene.strand)
-  const showFeatureType =
-    gene.feature_type && gene.feature_type.toLowerCase() !== "gene"
   const geneName = gene.primary_name || `Gene ${gene.local_id}`
   const spanLabel =
     gene.seqid
@@ -76,6 +85,9 @@ export function GenesGeneDetail({
     hasCds: gffModel?.transcripts.some((t) => t.cds.length > 0),
   })
   const catStyle = GENE_CATEGORY_STYLE[category]
+  const hasLocus = Boolean(gene.seqid)
+  const strand =
+    gene.strand === "+" || gene.strand === "-" ? gene.strand : "·"
 
   const copy = async (kind: "locus" | "gene", text: string) => {
     try {
@@ -88,161 +100,139 @@ export function GenesGeneDetail({
   }
 
   return (
-    <div className="flex-1 min-h-0 overflow-y-auto">
-      <div className="px-3 py-3 space-y-3 border-b">
-        {/* 1. Identity */}
-        <div className="flex flex-wrap items-center gap-1.5 min-w-0">
+    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+      <div className="space-y-2.5 border-b border-border/60 px-3 py-3">
+        <div className="flex min-w-0 items-center gap-2">
           <span
             className={cn(
-              "rounded px-1.5 py-0.5 text-[10px] font-medium shrink-0",
+              "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium",
               catStyle.textClass,
               catStyle.bgClass,
             )}
           >
             {catStyle.label}
           </span>
-          <h3 className="text-base font-semibold truncate">{geneName}</h3>
-          {gene.source_gene_id && (
+          <h3 className="min-w-0 flex-1 truncate text-base font-semibold">
+            {geneName}
+          </h3>
+          {onTogglePin ? (
             <Button
               type="button"
               variant="ghost"
               size="icon"
-              className="h-6 w-6 shrink-0"
-              onClick={() => void copy("gene", gene.source_gene_id!)}
-              aria-label="Copy gene id"
-            >
-              {copied === "gene" ? (
-                <Check className="h-3 w-3 text-emerald-600" />
-              ) : (
-                <Copy className="h-3 w-3" />
+              className={cn(
+                "h-8 w-8 shrink-0",
+                pinned ? "text-primary" : "text-muted-foreground",
               )}
+              disabled={!hasLocus && !pinned}
+              aria-label={
+                pinned
+                  ? `Unpin ${geneName}`
+                  : hasLocus
+                    ? `Pin ${geneName} for transcript compare`
+                    : "Cannot pin gene without locus"
+              }
+              aria-pressed={Boolean(pinned)}
+              title={
+                !hasLocus
+                  ? "No genomic locus to pin"
+                  : pinned
+                    ? "Unpin"
+                    : "Pin for transcript compare"
+              }
+              onClick={onTogglePin}
+            >
+              <Pin className={cn("h-3.5 w-3.5", pinned && "fill-current")} />
             </Button>
-          )}
-          <div className="ml-auto flex flex-wrap items-center gap-1">
-            {showFeatureType && (
-              <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                {gene.feature_type}
-              </span>
-            )}
-            {gene.biotype && (
-              <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                {gene.biotype}
-              </span>
-            )}
-          </div>
+          ) : null}
         </div>
 
-        {/* 2. Description */}
         {gene.prose ? (
-          <p className="text-sm text-foreground">
-            {gene.prose_kind && (
-              <span className="mr-1.5 rounded bg-muted px-1 py-0.5 text-[9px] uppercase tracking-wide text-muted-foreground">
-                {gene.prose_kind}
+          <p className="text-sm leading-snug text-foreground/90">{gene.prose}</p>
+        ) : null}
+
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+          {gene.seqid ? (
+            <span className="inline-flex min-w-0 max-w-full items-center gap-0.5">
+              <span className="truncate font-mono tabular-nums" title={locus}>
+                {locus}
               </span>
-            )}
-            {gene.prose}
-          </p>
-        ) : (
-          <p className="text-sm text-muted-foreground">No description</p>
-        )}
-
-        {/* 3. Matched by */}
-        <div className="space-y-1">
-          <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
-            Matched by
-          </div>
-          <GenesMatchChips matches={gene.matches} />
-        </div>
-
-        {/* 4. Facts grid */}
-        <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-xs sm:grid-cols-3">
-          {gene.seqid && (
-            <div className="min-w-0">
-              <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                Locus
-              </dt>
-              <dd className="mt-0.5 flex items-center gap-1 min-w-0">
-                <span className="font-mono tabular-nums truncate" title={locus}>
-                  {locus}
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-5 w-5 shrink-0"
+                onClick={() => void copy("locus", locus)}
+                aria-label="Copy locus"
+              >
+                {copied === "locus" ? (
+                  <Check className="h-3 w-3 text-emerald-600" />
+                ) : (
+                  <Copy className="h-3 w-3" />
+                )}
+              </Button>
+            </span>
+          ) : null}
+          <span aria-hidden>·</span>
+          <span className="tabular-nums">{formatBp(length)}</span>
+          <span aria-hidden>·</span>
+          <span className="font-mono">{strand}</span>
+          {gene.source_gene_id ? (
+            <>
+              <span aria-hidden>·</span>
+              <span className="inline-flex min-w-0 max-w-[14rem] items-center gap-0.5">
+                <span
+                  className="truncate font-mono"
+                  title={gene.source_gene_id}
+                >
+                  {gene.source_gene_id.replace(/^gene:/i, "")}
                 </span>
                 <Button
                   type="button"
                   variant="ghost"
                   size="icon"
                   className="h-5 w-5 shrink-0"
-                  onClick={() => void copy("locus", locus)}
-                  aria-label="Copy locus"
+                  onClick={() => void copy("gene", gene.source_gene_id!)}
+                  aria-label="Copy gene id"
                 >
-                  {copied === "locus" ? (
+                  {copied === "gene" ? (
                     <Check className="h-3 w-3 text-emerald-600" />
                   ) : (
                     <Copy className="h-3 w-3" />
                   )}
                 </Button>
-              </dd>
-            </div>
-          )}
-          <div>
-            <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">
-              Length
-            </dt>
-            <dd className="mt-0.5 tabular-nums">{formatBp(length)}</dd>
-          </div>
-          <div>
-            <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">
-              Strand
-            </dt>
-            <dd className="mt-0.5 font-mono">
-              {gene.strand === "+" || gene.strand === "-" ? gene.strand : "·"}
-            </dd>
-          </div>
-          {gene.source_gene_id && (
-            <div className="min-w-0">
-              <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                Source ID
-              </dt>
-              <dd
-                className="mt-0.5 font-mono truncate"
-                title={gene.source_gene_id}
-              >
-                {gene.source_gene_id}
-              </dd>
-            </div>
-          )}
-          <div>
-            <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">
-              Transcripts
-            </dt>
-            <dd className="mt-0.5 tabular-nums">
-              {transcriptCount != null
-                ? transcriptCount.toLocaleString()
-                : gffQuery.isLoading
-                  ? "…"
-                  : "—"}
-            </dd>
-          </div>
-        </dl>
+              </span>
+            </>
+          ) : null}
+          {transcriptCount != null ? (
+            <>
+              <span aria-hidden>·</span>
+              <span className="tabular-nums">
+                {transcriptCount.toLocaleString()} transcripts
+              </span>
+            </>
+          ) : null}
+        </div>
+
+        {gene.matches && gene.matches.length > 0 ? (
+          <GenesMatchChips matches={gene.matches} />
+        ) : null}
       </div>
 
-      <section className="px-3 py-3 space-y-2 border-b">
+      <section className="space-y-2 border-b border-border/60 px-3 py-3">
         <header className="flex flex-wrap items-baseline gap-2">
-          <h4 className="text-sm font-medium">
-            Transcripts of {geneName}
-            {transcriptCount != null && (
-              <span className="ml-1.5 tabular-nums text-muted-foreground font-normal">
-                · {transcriptCount}
-              </span>
-            )}
-          </h4>
-          {spanLabel && (
+          <h4 className="text-sm font-medium">Transcripts</h4>
+          {spanLabel ? (
             <span className="ml-auto text-[11px] tabular-nums text-muted-foreground">
-              {spanLabel} · {formatBp(length)}
+              {spanLabel}
             </span>
-          )}
+          ) : null}
         </header>
 
         {!gene.seqid && (
-          <p className="text-xs text-muted-foreground">No sequence id for this gene.</p>
+          <p className="text-xs text-muted-foreground">
+            No sequence id for this gene.
+          </p>
         )}
         {gene.seqid && gffQuery.isLoading && (
           <div className="flex items-center gap-2 py-6 text-xs text-muted-foreground">
@@ -251,13 +241,17 @@ export function GenesGeneDetail({
           </div>
         )}
         {gffQuery.error && (
-          <p className="text-xs text-destructive">Could not load the gene model.</p>
+          <p className="text-xs text-destructive">
+            Could not load the gene model.
+          </p>
         )}
         {gffModel && (
           <GenesGeneBrowser model={gffModel} geneCategory={category} />
         )}
         {gene.seqid && gffQuery.data && !gffModel && !gffQuery.isLoading && (
-          <p className="text-xs text-muted-foreground">No transcripts in this window.</p>
+          <p className="text-xs text-muted-foreground">
+            No transcripts in this window.
+          </p>
         )}
       </section>
 
@@ -275,7 +269,7 @@ export function GenesGeneDetail({
           )}
           <span>Cross-references</span>
           {xrefTotal != null && (
-            <span className="tabular-nums text-muted-foreground font-normal text-xs">
+            <span className="text-xs font-normal tabular-nums text-muted-foreground">
               · {xrefTotal.toLocaleString()}
             </span>
           )}

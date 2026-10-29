@@ -1,16 +1,23 @@
 "use client"
 
-import { Suspense } from "react"
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react"
 import { Dna } from "lucide-react"
 
+import { GenesCompareView } from "@/components/genes/genes-compare-view"
 import { GenesEmptyState } from "@/components/genes/genes-empty-state"
 import { GenesErrorAlert } from "@/components/genes/genes-error-alert"
-import { GenesNameChips } from "@/components/genes/genes-name-chips"
-import { GenesOverviewSection } from "@/components/genes/genes-overview"
+import { GenesAnnotationsView } from "@/components/genes/genes-annotations-view"
+import {
+  filterFromSelection,
+  GenesOverviewSection,
+} from "@/components/genes/genes-overview"
 import { GenesPrefixSheet } from "@/components/genes/genes-prefix-sheet"
-import { GenesResultsSection } from "@/components/genes/genes-results-section"
-import { GenesSearchBar } from "@/components/genes/genes-search-bar"
-import { MAX_NAMES_GET } from "@/lib/genes/prefix"
+import { GenesQueryBar } from "@/components/genes/genes-query-bar"
+import { GenesViewTabs } from "@/components/genes/genes-view-tabs"
+import { useCompareStore } from "@/lib/genes/compare-store"
+import { EMPTY_LIST_FILTERS } from "@/lib/genes/list-filters"
+import { taxaFromIds } from "@/lib/genes/taxa"
+import { flattenHitTree } from "@/lib/genes/tree"
 import { useGeneSetInput } from "@/lib/hooks/use-gene-set-input"
 import { useGenesExplorer } from "@/lib/hooks/use-genes-explorer"
 import { cn } from "@/lib/utils"
@@ -18,6 +25,176 @@ import { cn } from "@/lib/utils"
 function GenesPageContent() {
   const explorer = useGenesExplorer()
   const geneSet = useGeneSetInput()
+  const pinCount = useCompareStore((s) => s.pins.length)
+  const [selectionNameMatch, setSelectionNameMatch] = useState<"any" | "all">(
+    "any",
+  )
+  const [annSelectionNameMatch, setAnnSelectionNameMatch] = useState<
+    "any" | "all"
+  >("any")
+  const [editorOpenSignal, setEditorOpenSignal] = useState(0)
+
+  const visibleRowIds = useMemo(() => {
+    if (!explorer.tree) return [] as string[]
+    return flattenHitTree(explorer.tree.roots, explorer.expanded).map(
+      (r) => r.node.id,
+    )
+  }, [explorer.tree, explorer.expanded])
+
+  const visibleColNames = useMemo(
+    () => explorer.adapterTerms.map((t) => t.name),
+    [explorer.adapterTerms],
+  )
+
+  // Prune selection when tree ids / active genes change.
+  useEffect(() => {
+    const rowIds = new Set(visibleRowIds)
+    const colNames = new Set(
+      explorer.adapterTerms.map((t) => t.id.toLowerCase()),
+    )
+    explorer.dispatchSelection({ type: "prune", rowIds, colNames })
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- prune on identity of sets
+  }, [visibleRowIds.join(","), explorer.adapterTerms.map((t) => t.id).join(",")])
+
+  const selectionCounts = useMemo(() => {
+    if (!explorer.adapter) return { annotations: 0, species: 0 }
+    const pred = filterFromSelection(
+      explorer.filter,
+      explorer.distributionSelection,
+      selectionNameMatch,
+    )
+    return {
+      annotations: explorer.adapter.annotations(pred, {
+        limit: 1,
+        offset: 0,
+      }).total,
+      species: explorer.adapter.speciesCount(pred),
+    }
+  }, [
+    explorer.adapter,
+    explorer.filter,
+    explorer.distributionSelection,
+    selectionNameMatch,
+  ])
+
+  const dispatchSelection = explorer.dispatchSelection
+  const setSelectionAnchor = explorer.setSelectionAnchor
+  const selectionAnchor = explorer.selectionAnchor
+
+  const onSelectRow = useCallback(
+    (id: string, opts: { toggle: boolean; shift: boolean }) => {
+      const mod = opts.toggle ? "toggle" : "replace"
+      dispatchSelection({
+        type: "click-row",
+        id,
+        mod,
+        visibleRows: visibleRowIds,
+        shiftAnchor: opts.shift ? selectionAnchor.row : null,
+      })
+      if (!opts.shift) setSelectionAnchor({ row: id })
+    },
+    [dispatchSelection, setSelectionAnchor, selectionAnchor.row, visibleRowIds],
+  )
+
+  const onSelectCol = useCallback(
+    (name: string, opts: { toggle: boolean; shift: boolean }) => {
+      const mod = opts.toggle ? "toggle" : "replace"
+      dispatchSelection({
+        type: "click-col",
+        name,
+        mod,
+        visibleCols: visibleColNames,
+        shiftAnchor: opts.shift ? selectionAnchor.col : null,
+      })
+      if (!opts.shift) setSelectionAnchor({ col: name })
+    },
+    [dispatchSelection, setSelectionAnchor, selectionAnchor.col, visibleColNames],
+  )
+
+  const onSelectCell = useCallback(
+    (
+      taxid: string,
+      gene: string,
+      opts: { toggle: boolean; shift: boolean },
+    ) => {
+      const mod = opts.toggle ? "toggle" : "replace"
+      dispatchSelection({
+        type: "click-cell",
+        taxid,
+        gene,
+        mod,
+        visibleRows: visibleRowIds,
+        visibleCols: visibleColNames,
+        shiftAnchor: opts.shift ? selectionAnchor.cell : null,
+      })
+      if (!opts.shift) setSelectionAnchor({ cell: { taxid, gene } })
+    },
+    [
+      dispatchSelection,
+      setSelectionAnchor,
+      selectionAnchor.cell,
+      visibleRowIds,
+      visibleColNames,
+    ],
+  )
+
+  const distributionSelection = explorer.distributionSelection
+  const setListFilters = explorer.setListFilters
+  const clearDistributionSelection = explorer.clearDistributionSelection
+  const setView = explorer.setView
+  const setTaxa = explorer.setTaxa
+  const excludeTaxa = explorer.excludeTaxa
+
+  const onShowOnly = useCallback(() => {
+    const sel = distributionSelection
+    if (!sel.kind) return
+    if (sel.kind === "rows") {
+      setListFilters({
+        ...EMPTY_LIST_FILTERS,
+        includeTaxids: [...sel.rows],
+        nameMatch: selectionNameMatch,
+      })
+    } else if (sel.kind === "cols") {
+      setListFilters({
+        ...EMPTY_LIST_FILTERS,
+        includeNames: [...sel.cols],
+        nameMatch: selectionNameMatch,
+      })
+    } else {
+      setListFilters({
+        ...EMPTY_LIST_FILTERS,
+        includeCells: sel.cells.map((c) => ({
+          taxid: c.taxid,
+          gene: c.gene,
+        })),
+        nameMatch: selectionNameMatch,
+      })
+    }
+    clearDistributionSelection()
+    setView("annotations")
+  }, [
+    distributionSelection,
+    setListFilters,
+    clearDistributionSelection,
+    setView,
+    selectionNameMatch,
+  ])
+
+  const onRestrictSearch = useCallback(() => {
+    const sel = distributionSelection
+    if (sel.kind !== "rows" || !sel.rows.length) return
+    const taxids = sel.rows
+      .map((id) => Number(id))
+      .filter((n) => Number.isFinite(n) && n > 0)
+    if (!taxids.length) return
+    setTaxa(taxaFromIds(taxids), excludeTaxa)
+    clearDistributionSelection()
+  }, [
+    distributionSelection,
+    setTaxa,
+    excludeTaxa,
+    clearDistributionSelection,
+  ])
 
   return (
     <div className="relative flex h-[calc(100vh-4rem)] flex-col">
@@ -32,11 +209,23 @@ function GenesPageContent() {
 
       <header className="shrink-0 space-y-2.5 border-b border-border bg-background px-4 py-3 sm:px-5">
         <div className="flex items-start gap-2.5">
-          <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+          <span
+            className={cn(
+              "mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary",
+              explorer.showResults && "sr-only",
+            )}
+          >
             <Dna className="h-4 w-4" aria-hidden />
           </span>
           <div className="min-w-0">
-            <h1 className="text-base font-semibold tracking-tight">Genes</h1>
+            <h1
+              className={cn(
+                "text-base font-semibold tracking-tight",
+                explorer.showResults && "sr-only",
+              )}
+            >
+              Genes
+            </h1>
             {!explorer.showResults ? (
               <p className="mt-0.5 text-xs text-muted-foreground">
                 Explore and download annotations that contain a gene set across
@@ -46,35 +235,28 @@ function GenesPageContent() {
           </div>
         </div>
 
-        <GenesSearchBar
+        <GenesQueryBar
           queryText={geneSet.queryText}
           onQueryTextChange={geneSet.setQueryText}
           onSearch={() => geneSet.runSearch()}
           onOpenPrefix={() => geneSet.openPrefix()}
+          onPasteCommit={geneSet.commitPaste}
+          queryNames={geneSet.queryNames}
           nameCount={geneSet.nameCount}
-          atLimit={geneSet.queryNames.length >= MAX_NAMES_GET}
+          hitTerms={explorer.hitsTerms}
+          activeTerms={explorer.adapterTerms}
+          onApplyText={(names) =>
+            geneSet.commitNames(names, { replace: true })
+          }
+          onPreparePrefixDraft={geneSet.setQueryText}
+          onRemoveName={geneSet.removeName}
+          onRemoveZeroHits={geneSet.removeZeroHitNames}
+          onClearAll={geneSet.clearAll}
           includeTaxa={explorer.includeTaxa}
           excludeTaxa={explorer.excludeTaxa}
           onApplyTaxa={explorer.setTaxa}
+          editorOpenSignal={editorOpenSignal}
         />
-
-        {explorer.showResults ? (
-          <GenesNameChips
-            hitTerms={explorer.hitsTerms}
-            terms={explorer.adapterTerms}
-            excluded={explorer.excluded}
-            onApplyExcluded={explorer.setExcluded}
-            onRemoveName={geneSet.removeName}
-            onClearAll={geneSet.clearAll}
-            includeTaxa={explorer.includeTaxa}
-            excludeTaxa={explorer.excludeTaxa}
-            onApplyTaxa={explorer.setTaxa}
-            reviewOpen={explorer.openPopover === "review"}
-            onReviewOpenChange={(open) =>
-              explorer.setPopover(open ? "review" : null)
-            }
-          />
-        ) : null}
       </header>
 
       {explorer.errorMessage && (
@@ -84,83 +266,120 @@ function GenesPageContent() {
         />
       )}
 
+      {explorer.showResults ? (
+        <GenesViewTabs
+          view={explorer.view}
+          onViewChange={explorer.setView}
+          annotationTotal={explorer.annotationTotal}
+          pinCount={pinCount}
+        />
+      ) : null}
+
       <div
         className={cn(
-          "flex min-h-0 flex-1 flex-col gap-2 overflow-hidden px-3 pb-3 pt-2 sm:px-5",
+          "flex min-h-0 flex-1 flex-col overflow-hidden",
           !explorer.showResults && "overflow-y-auto",
         )}
       >
         {explorer.showResults ? (
-          <div className="grid min-h-0 flex-1 grid-cols-1 gap-2 lg:grid-cols-5 lg:grid-rows-1">
-            <GenesOverviewSection
-              className="min-h-[18rem] max-h-[45vh] lg:col-span-3 lg:max-h-none lg:h-full"
-              adapter={explorer.adapter}
-              filter={explorer.filter}
-              tree={explorer.tree}
-              expanded={explorer.expanded}
-              selectedTaxon={explorer.t}
-              selectedName={explorer.g}
-              loading={explorer.isLoading}
-              onToggleExpand={explorer.toggleExpanded}
-              onSelectTaxon={explorer.selectTaxon}
-              onSelectName={explorer.selectName}
-              onSelectCell={explorer.selectCell}
-              onIncludeName={(id) => {
-                if (!explorer.excluded.has(id)) return
-                const next = new Set(explorer.excluded)
-                next.delete(id)
-                explorer.setExcluded(next)
-              }}
-              viewRank={explorer.viewRank}
-              rankOptions={explorer.rankOptions}
-              hideAutoRank={explorer.hideAutoRank}
-              rankSelectDisabled={explorer.rankSelectDisabled}
-              rankSelectDisabledReason={explorer.rankSelectDisabledReason}
-              onViewRankChange={explorer.setViewRank}
-            />
+          <div
+            role="tabpanel"
+            id={`genes-panel-${explorer.view}`}
+            aria-labelledby={`genes-tab-${explorer.view}`}
+            className="flex min-h-0 flex-1 flex-col overflow-hidden"
+          >
+            {explorer.view === "distribution" ? (
+              <GenesOverviewSection
+                className="h-full min-h-0"
+                adapter={explorer.adapter}
+                filter={explorer.filter}
+                tree={explorer.tree}
+                expanded={explorer.expanded}
+                loading={explorer.isLoading}
+                onToggleExpand={explorer.toggleExpanded}
+                selection={explorer.distributionSelection}
+                selectionNameMatch={selectionNameMatch}
+                onSelectionNameMatchChange={setSelectionNameMatch}
+                onSelectRow={onSelectRow}
+                onSelectCol={onSelectCol}
+                onSelectCell={onSelectCell}
+                onClearSelection={explorer.clearDistributionSelection}
+                onShowOnly={onShowOnly}
+                onRestrictSearch={onRestrictSearch}
+                selectionAnnotationCount={selectionCounts.annotations}
+                selectionSpeciesCount={selectionCounts.species}
+                unit={explorer.unit}
+                onUnitChange={explorer.setUnit}
+                overviewAnnotationTotal={explorer.overviewAnnotationTotal}
+                overviewSpeciesTotal={explorer.overviewSpeciesTotal}
+                zeroHitCount={explorer.matchedNothing.length}
+                onReviewZeroHits={() =>
+                  setEditorOpenSignal((n) => n + 1)
+                }
+                viewRank={explorer.effectiveViewRank}
+                rankOptions={explorer.rankOptions}
+                hideAutoRank={explorer.hideAutoRank}
+                rankSelectDisabled={explorer.rankSelectDisabled}
+                rankSelectDisabledReason={explorer.rankSelectDisabledReason}
+                onViewRankChange={explorer.setViewRank}
+              />
+            ) : null}
 
-            <GenesResultsSection
-              className="min-h-0 lg:col-span-2 lg:h-full"
-              adapter={explorer.adapter}
-              filter={explorer.filter}
-              taxonIndex={explorer.taxonIndex}
-              taxonLabel={explorer.taxonLabel}
-              panel={explorer.panel}
-              loading={explorer.isLoading}
-              isFetching={explorer.isFetching && !explorer.isLoading}
-              hasSlice={explorer.hasSlice}
-              activeNames={explorer.active}
-              activeCount={explorer.active.length}
-              resolvedCount={explorer.resolvedNames.length}
-              matchedNothingCount={explorer.matchedNothing.length}
-              annotationTotal={explorer.annotationTotal}
-              overviewAnnotationTotal={explorer.overviewAnnotationTotal}
-              overviewOrganismTotal={explorer.overviewOrganismTotal}
-              downloadAllTotal={explorer.downloadAllTotal}
-              sources={explorer.sources}
-              sourceCounts={explorer.sourceCounts}
-              onToggleSource={explorer.toggleSource}
-              matchedCounts={explorer.coverageData.matchedCounts}
-              termCount={explorer.termCount}
-              coverage={explorer.coverage}
-              onCoverageChange={(range) =>
-                explorer.setCoverage(range, explorer.termCount)
-              }
-              coverageOpen={explorer.openPopover === "coverage"}
-              onCoverageOpenChange={(open) =>
-                explorer.setPopover(open ? "coverage" : null)
-              }
-              onClearTaxon={() => explorer.selectTaxon(null)}
-              onClearName={() => explorer.selectName(null)}
-              onClearCoverage={explorer.clearCoverage}
-              onResetViewFilters={explorer.resetViewFilters}
-              onDownloadAll={explorer.downloadAllTsv}
-              onDownloadSelection={explorer.downloadSelectionTsv}
-              onOpenAnnotation={explorer.openAnnotation}
-              onOpenGene={explorer.openGene}
-              onPop={explorer.popPanel}
-              onPopToList={explorer.resetPanel}
-            />
+            {explorer.view === "annotations" ? (
+              <GenesAnnotationsView
+                className="h-full min-h-0"
+                adapter={explorer.adapter}
+                filter={explorer.filter}
+                hasExcludedNames={explorer.excluded.size > 0}
+                taxonIndex={explorer.taxonIndex}
+                listFilters={explorer.listFilters}
+                onPatchListFilters={explorer.patchListFilters}
+                onSetListFilters={explorer.setListFilters}
+                pipeline={explorer.annotationsPipeline}
+                overviewTotal={explorer.overviewAnnotationTotal}
+                activeTerms={explorer.adapterTerms}
+                activeNames={explorer.active}
+                sources={explorer.sources}
+                sourceCounts={explorer.sourceCounts}
+                onToggleSource={explorer.toggleSource}
+                coverage={explorer.coverage}
+                onCoverageChange={(range) =>
+                  explorer.setCoverage(range, explorer.termCount)
+                }
+                coverageOpen={explorer.openPopover === "coverage"}
+                onCoverageOpenChange={(open) =>
+                  explorer.setPopover(open ? "coverage" : null)
+                }
+                matchedCounts={explorer.coverageData.matchedCounts}
+                termCount={explorer.termCount}
+                keep={explorer.keep}
+                onKeepChange={explorer.setKeep}
+                sort={explorer.sort}
+                onSortChange={explorer.setSort}
+                search={explorer.search}
+                onSearchChange={explorer.setSearch}
+                selection={explorer.annotationsSelection}
+                selectionNameMatch={annSelectionNameMatch}
+                onSelectionNameMatchChange={setAnnSelectionNameMatch}
+                onDispatchSelection={explorer.dispatchAnnotationsSelection}
+                onClearSelection={explorer.clearAnnotationsSelection}
+                selectionAnchor={explorer.annotationsSelectionAnchor}
+                onSetSelectionAnchor={explorer.setAnnotationsSelectionAnchor}
+                onReset={explorer.resetViewFilters}
+                drawer={explorer.drawer}
+                onOpenDrawer={explorer.openDrawer}
+                onSetDrawerGene={explorer.setDrawerGene}
+                onCloseDrawer={explorer.closeDrawer}
+                loading={explorer.isLoading}
+              />
+            ) : null}
+
+            {explorer.view === "compare" ? (
+              <GenesCompareView
+                className="h-full min-h-0"
+                onGoToAnnotations={() => explorer.setView("annotations")}
+              />
+            ) : null}
           </div>
         ) : (
           <GenesEmptyState onExample={geneSet.applyExample} />

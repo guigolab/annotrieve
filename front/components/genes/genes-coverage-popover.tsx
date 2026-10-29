@@ -8,6 +8,7 @@ import {
   useState,
   type KeyboardEvent,
   type PointerEvent as ReactPointerEvent,
+  type ReactNode,
 } from "react"
 
 import { Button } from "@/components/ui/button"
@@ -34,6 +35,8 @@ interface GenesCoveragePopoverProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   disabled?: boolean
+  /** Optional custom trigger (e.g. More … in the Annotations toolbar). */
+  trigger?: ReactNode
 }
 
 function binKey(bin: CoverageBin): string {
@@ -94,6 +97,7 @@ export function GenesCoveragePopover({
   open,
   onOpenChange,
   disabled,
+  trigger,
 }: GenesCoveragePopoverProps) {
   const [focusIndex, setFocusIndex] = useState(0)
   const [hoverIndex, setHoverIndex] = useState<number | null>(null)
@@ -216,20 +220,24 @@ export function GenesCoveragePopover({
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
       <PopoverTrigger asChild>
-        <button
-          type="button"
-          disabled={disabled || termCount <= 0}
-          className={cn(
-            "inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-            active
-              ? "border-primary/40 bg-primary/10 text-foreground"
-              : "border-border bg-background text-foreground hover:bg-muted/50",
-            disabled && "opacity-50",
-          )}
-        >
-          {namesMatchedChipLabel(range, termCount)}
-          <span className="text-muted-foreground">▾</span>
-        </button>
+        {trigger ? (
+          trigger
+        ) : (
+          <button
+            type="button"
+            disabled={disabled || termCount <= 0}
+            className={cn(
+              "inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              active
+                ? "border-primary/40 bg-primary/10 text-foreground"
+                : "border-border bg-background text-foreground hover:bg-muted/50",
+              disabled && "opacity-50",
+            )}
+          >
+            {namesMatchedChipLabel(range, termCount)}
+            <span className="text-muted-foreground">▾</span>
+          </button>
+        )}
       </PopoverTrigger>
       <PopoverContent align="start" className="w-[360px] overflow-hidden p-0">
         <div className="flex items-start justify-between gap-2 border-b border-border/60 px-3 py-2">

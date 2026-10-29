@@ -12,28 +12,24 @@ import {
 import { createClientHitsAdapter } from "@/lib/genes/adapter"
 import {
   clampCoverageRange,
-  hitsToTsv,
   isDefaultCoverageRange,
 } from "@/lib/genes/coverage"
-import {
-  ALL_SOURCE_CODES,
-  defaultSources,
-  makeFilter,
-} from "@/lib/genes/filters"
+import { defaultSources, makeFilter } from "@/lib/genes/filters"
 import {
   activeNames,
   effectiveCoverage,
+  effectiveViewRank,
   excludeTaxids as excludeTaxidsOf,
   includeTaxids as includeTaxidsOf,
   useGenesStore,
 } from "@/lib/genes/store"
+import { runAnnotationsPipeline } from "@/lib/genes/annotations-pipeline"
 import { buildTaxonIndex } from "@/lib/genes/taxon-index"
 import { GENES_RANK_TAXON_CAP } from "@/components/genes/genes-overview-constants"
 import {
   allowedGenesViewRanks,
   type HitRankStat,
 } from "@/lib/genes/tree"
-import { GENES_TSV_DOWNLOAD_CAP } from "@/lib/genes/ui"
 import { resolveCoverageFromUrl } from "@/lib/genes/url"
 import {
   useGenesUrlSync,
@@ -53,36 +49,63 @@ function hitsRetry(failureCount: number, error: unknown): boolean {
 export function useGenesExplorer() {
   const queryNames = useGenesStore((s) => s.queryNames)
   const excluded = useGenesStore((s) => s.excluded)
-  const t = useGenesStore((s) => s.t)
-  const g = useGenesStore((s) => s.g)
+  const listFilters = useGenesStore((s) => s.listFilters)
+  const distributionSelection = useGenesStore((s) => s.distributionSelection)
+  const selectionAnchor = useGenesStore((s) => s.selectionAnchor)
   const sources = useGenesStore((s) => s.sources)
   const coverage = useGenesStore((s) => s.coverage)
   const expanded = useGenesStore((s) => s.expanded)
-  const panel = useGenesStore((s) => s.panel)
+  const drawer = useGenesStore((s) => s.drawer)
   const openPopover = useGenesStore((s) => s.openPopover)
   const includeTaxa = useGenesStore((s) => s.includeTaxa)
   const excludeTaxa = useGenesStore((s) => s.excludeTaxa)
   const viewRank = useGenesStore((s) => s.viewRank)
+  const view = useGenesStore((s) => s.view)
+  const unit = useGenesStore((s) => s.unit)
+  const keep = useGenesStore((s) => s.keep)
+  const group = useGenesStore((s) => s.group)
+  const sort = useGenesStore((s) => s.sort)
+  const search = useGenesStore((s) => s.search)
+  const annotationsSelection = useGenesStore((s) => s.annotationsSelection)
+  const annotationsSelectionAnchor = useGenesStore(
+    (s) => s.annotationsSelectionAnchor,
+  )
   const urlReady = useGenesStore((s) => s.urlReady)
 
   const setCoverage = useGenesStore((s) => s.setCoverage)
-  const clearCoverage = useGenesStore((s) => s.clearCoverage)
   const toggleSource = useGenesStore((s) => s.toggleSource)
-  const selectTaxon = useGenesStore((s) => s.selectTaxon)
-  const selectName = useGenesStore((s) => s.selectName)
-  const selectCell = useGenesStore((s) => s.selectCell)
+  const setListFilters = useGenesStore((s) => s.setListFilters)
+  const patchListFilters = useGenesStore((s) => s.patchListFilters)
+  const dispatchSelection = useGenesStore((s) => s.dispatchSelection)
+  const clearDistributionSelection = useGenesStore(
+    (s) => s.clearDistributionSelection,
+  )
+  const setSelectionAnchor = useGenesStore((s) => s.setSelectionAnchor)
+  const dispatchAnnotationsSelection = useGenesStore(
+    (s) => s.dispatchAnnotationsSelection,
+  )
+  const clearAnnotationsSelection = useGenesStore(
+    (s) => s.clearAnnotationsSelection,
+  )
+  const setAnnotationsSelectionAnchor = useGenesStore(
+    (s) => s.setAnnotationsSelectionAnchor,
+  )
+  const setKeep = useGenesStore((s) => s.setKeep)
+  const setGroup = useGenesStore((s) => s.setGroup)
+  const setSort = useGenesStore((s) => s.setSort)
+  const setSearch = useGenesStore((s) => s.setSearch)
   const toggleExpanded = useGenesStore((s) => s.toggleExpanded)
   const setExpanded = useGenesStore((s) => s.setExpanded)
-  const openAnnotation = useGenesStore((s) => s.openAnnotation)
-  const openGene = useGenesStore((s) => s.openGene)
-  const popPanel = useGenesStore((s) => s.popPanel)
-  const resetPanel = useGenesStore((s) => s.resetPanel)
+  const openDrawer = useGenesStore((s) => s.openDrawer)
+  const setDrawerGene = useGenesStore((s) => s.setDrawerGene)
+  const closeDrawer = useGenesStore((s) => s.closeDrawer)
   const setPopover = useGenesStore((s) => s.setPopover)
   const setTaxa = useGenesStore((s) => s.setTaxa)
   const relabelTaxa = useGenesStore((s) => s.relabelTaxa)
   const setViewRank = useGenesStore((s) => s.setViewRank)
+  const setView = useGenesStore((s) => s.setView)
+  const setUnit = useGenesStore((s) => s.setUnit)
   const resetViewFilters = useGenesStore((s) => s.resetViewFilters)
-  const setExcluded = useGenesStore((s) => s.setExcluded)
   const hydrateFromUrl = useGenesStore((s) => s.hydrateFromUrl)
   const setUrlReady = useGenesStore((s) => s.setUrlReady)
 
@@ -112,14 +135,19 @@ export function useGenesExplorer() {
       hydrateFromUrl({
         queryNames: parsed.queryNames,
         excluded: parsed.excluded,
-        t: parsed.t,
-        g: parsed.g,
+        listFilters: parsed.listFilters,
         sources: parsed.sources ?? undefined,
         annotationId: parsed.annotationId,
         localId: parsed.localId,
         includeTaxa: parsed.includeTaxa,
         excludeTaxa: parsed.excludeTaxa,
         viewRank: parsed.viewRank,
+        view: parsed.view,
+        unit: parsed.unit,
+        keep: parsed.keep,
+        group: parsed.group,
+        sort: parsed.sort,
+        search: parsed.search,
       })
       setUrlReady(true)
     },
@@ -201,11 +229,6 @@ export function useGenesExplorer() {
   )
 
   useEffect(() => {
-    if (includeTaxids.length > 0) return
-    if (viewRank == null) setViewRank("kingdom")
-  }, [includeTaxids.length, viewRank, setViewRank])
-
-  useEffect(() => {
     setExpanded(new Set())
   }, [queryNames, includeTaxids, excludeTaxids, viewRank, setExpanded])
 
@@ -220,16 +243,24 @@ export function useGenesExplorer() {
         maxMatched: covMax,
         matchedSegments: covSegments,
         excludeTerms: excluded,
-        taxid: t,
-        name: g,
+        includeTaxids: listFilters.includeTaxids,
+        includeNames: listFilters.includeNames,
+        nameMatch: listFilters.nameMatch,
+        includeCells: listFilters.includeCells,
+        includeAnnotationIds: listFilters.includeAnnotationIds,
         termCount,
       }),
-    [sources, covMin, covMax, covSegments, excluded, t, g, termCount],
+    [sources, covMin, covMax, covSegments, excluded, listFilters, termCount],
+  )
+
+  const effectiveRank = useMemo(
+    () => effectiveViewRank(viewRank, includeTaxids.length),
+    [viewRank, includeTaxids.length],
   )
 
   const tree = useMemo(
-    () => (adapter ? adapter.tree(filter, viewRank) : null),
-    [adapter, filter, viewRank],
+    () => (adapter ? adapter.tree(filter, effectiveRank) : null),
+    [adapter, filter, effectiveRank],
   )
 
   const rankStats = useMemo(
@@ -267,6 +298,19 @@ export function useGenesExplorer() {
     }
   }, [viewRank, rankAllowance, rankOptions, setViewRank])
 
+  const annotationsPipeline = useMemo(() => {
+    if (!adapter || view !== "annotations") return null
+    return runAnnotationsPipeline({
+      adapter,
+      filter,
+      taxonIndex,
+      keep,
+      group: "none",
+      sort,
+      search,
+    })
+  }, [adapter, filter, taxonIndex, keep, sort, search, view])
+
   const coverageData = useMemo(
     () =>
       adapter
@@ -285,11 +329,6 @@ export function useGenesExplorer() {
     [adapter, excluded],
   )
 
-  const coverageActive =
-    coverage != null && !isDefaultCoverageRange(coverage, termCount)
-  const sourcesActive = sources.size < ALL_SOURCE_CODES.length
-  const hasSlice = Boolean(t || g || coverageActive || sourcesActive)
-
   const overviewFilter = useMemo(
     () =>
       makeFilter({
@@ -299,6 +338,9 @@ export function useGenesExplorer() {
         excludeTerms: excluded,
         taxid: null,
         name: null,
+        includeTaxids: [],
+        includeNames: [],
+        includeCells: [],
         termCount,
       }),
     [excluded, termCount],
@@ -309,33 +351,15 @@ export function useGenesExplorer() {
     return adapter.annotations(filter, { limit: 1, offset: 0 }).total
   }, [adapter, filter])
 
-  const organismTotal = useMemo(() => {
-    if (!adapter) return 0
-    return adapter.organismCount(filter)
-  }, [adapter, filter])
-
   const overviewAnnotationTotal = useMemo(() => {
     if (!adapter) return 0
     return adapter.annotations(overviewFilter, { limit: 1, offset: 0 }).total
   }, [adapter, overviewFilter])
 
-  const overviewOrganismTotal = useMemo(() => {
+  const overviewSpeciesTotal = useMemo(() => {
     if (!adapter) return 0
-    return adapter.organismCount(overviewFilter)
+    return adapter.speciesCount(overviewFilter)
   }, [adapter, overviewFilter])
-
-  const downloadAllTotal = useMemo(() => {
-    if (!adapter) return 0
-    const allFilter = makeFilter({
-      sources: defaultSources(),
-      minMatched: 1,
-      maxMatched: Number.MAX_SAFE_INTEGER,
-      excludeTerms: new Set(),
-      taxid: null,
-      name: null,
-    })
-    return adapter.annotations(allFilter, { limit: 1, offset: 0 }).total
-  }, [adapter])
 
   const excludeList = useMemo(
     () => [...excluded].sort(),
@@ -346,68 +370,30 @@ export function useGenesExplorer() {
     {
       names: queryNames,
       exclude: excludeList,
-      t,
-      g,
+      listFilters,
       sources,
       coverage,
       termCount,
-      ann: panel.annotationId,
-      gene: panel.localId,
+      ann: drawer?.annotationId ?? null,
+      gene: drawer?.localId ?? null,
       includeTaxids,
       excludeTaxids,
       viewRank,
+      view,
+      unit,
+      keep,
+      group,
+      sort,
+      search,
       ready: urlReady,
     },
     onHydrate,
   )
 
-  const downloadSelectionTsv = useCallback(() => {
-    if (!adapter) return
-    const page = adapter.annotations(filter, {
-      limit: GENES_TSV_DOWNLOAD_CAP,
-      offset: 0,
-    })
-    const tsv = hitsToTsv(page.results, adapter.terms, page.matched)
-    const blob = new Blob([tsv], { type: "text/tab-separated-values" })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement("a")
-    a.href = url
-    a.download = "genes-hits-selection.tsv"
-    a.click()
-    URL.revokeObjectURL(url)
-  }, [adapter, filter])
-
-  const downloadAllTsv = useCallback(() => {
-    if (!adapter) return
-    const allFilter = makeFilter({
-      sources: defaultSources(),
-      minMatched: 1,
-      maxMatched: Number.MAX_SAFE_INTEGER,
-      excludeTerms: new Set(),
-      taxid: null,
-      name: null,
-    })
-    const page = adapter.annotations(allFilter, {
-      limit: GENES_TSV_DOWNLOAD_CAP,
-      offset: 0,
-    })
-    const tsv = hitsToTsv(page.results, adapter.terms, page.matched)
-    const blob = new Blob([tsv], { type: "text/tab-separated-values" })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement("a")
-    a.href = url
-    a.download = "genes-hits.tsv"
-    a.click()
-    URL.revokeObjectURL(url)
-  }, [adapter])
-
   const matchedNothing = (hits?.terms ?? []).filter((term) => term.n_hits === 0)
   const showResults = queryNames.length > 0
   const isLoading = hitsQuery.isLoading && !hits
   const isFetching = hitsQuery.isFetching
-  const taxonLabel = t
-    ? taxonIndex.get(t)?.scientific_name ?? t
-    : null
 
   const errorMessage =
     hitsQuery.error instanceof XrefsApiError
@@ -423,7 +409,6 @@ export function useGenesExplorer() {
     active,
     matchedNothing,
     showResults,
-    hits,
     hitsTerms: hits?.terms ?? [],
     adapter,
     adapterTerms,
@@ -433,31 +418,38 @@ export function useGenesExplorer() {
     sourceCounts,
     termCount,
     annotationTotal,
-    organismTotal,
     overviewAnnotationTotal,
-    overviewOrganismTotal,
-    downloadAllTotal,
-    hasSlice,
+    overviewSpeciesTotal,
     taxonIndex,
-    taxonLabel,
 
     isLoading,
     isFetching,
     errorMessage,
     refetch: () => void hitsQuery.refetch(),
 
-    t,
-    g,
+    listFilters,
+    distributionSelection,
+    selectionAnchor,
+    annotationsSelection,
+    annotationsSelectionAnchor,
+    annotationsPipeline,
     sources,
     coverage,
+    keep,
+    group,
+    sort,
+    search,
     expanded,
-    panel,
+    drawer,
     openPopover,
     includeTaxa,
     excludeTaxa,
     includeTaxids,
     excludeTaxids,
     viewRank,
+    effectiveViewRank: effectiveRank,
+    view,
+    unit,
     rankOptions,
     hideAutoRank: includeTaxids.length === 0,
     rankSelectDisabled: rankAllowance.mixed,
@@ -466,24 +458,29 @@ export function useGenesExplorer() {
       : null,
 
     setTaxa,
-    setExcluded,
     setCoverage,
-    clearCoverage,
     toggleSource,
-    selectTaxon,
-    selectName,
-    selectCell,
+    setListFilters,
+    patchListFilters,
+    dispatchSelection,
+    clearDistributionSelection,
+    setSelectionAnchor,
+    dispatchAnnotationsSelection,
+    clearAnnotationsSelection,
+    setAnnotationsSelectionAnchor,
+    setKeep,
+    setGroup,
+    setSort,
+    setSearch,
     setViewRank,
+    setView,
+    setUnit,
     toggleExpanded,
-    setExpanded: (ids: Set<string>) => setExpanded(ids),
-    openAnnotation,
-    openGene,
-    popPanel,
-    resetPanel,
+    openDrawer,
+    setDrawerGene,
+    closeDrawer,
     setPopover,
     resetViewFilters,
-    downloadAllTsv,
-    downloadSelectionTsv,
   }
 }
 

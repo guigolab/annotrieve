@@ -3,21 +3,38 @@
 import { useEffect, useRef } from "react"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 
+import type {
+  AnnotationsSort,
+  GroupMode,
+  KeepPolicy,
+} from "@/lib/genes/annotations-controls"
+import {
+  DEFAULT_GROUP,
+  DEFAULT_KEEP,
+  DEFAULT_SORT,
+} from "@/lib/genes/annotations-controls"
 import type { CoverageRange } from "@/lib/genes/coverage"
 import type { SelectedTaxon } from "@/lib/genes/taxa"
 import { taxaFromIds } from "@/lib/genes/taxa"
+import type { GenesListFilters } from "@/lib/genes/list-filters"
 import {
   buildGenesQueryString,
+  listFiltersFromUrlState,
   parseGenesSearchParams,
   resolveCoverageFromUrl,
   type GenesUrlState,
 } from "@/lib/genes/url"
+import {
+  DEFAULT_COUNT_UNIT,
+  resolveViewFromUrl,
+  type CountUnit,
+  type GenesView,
+} from "@/lib/genes/view"
 
 export type GenesHydratePayload = {
   queryNames: string[]
   excluded: Set<string>
-  t: string | null
-  g: string | null
+  listFilters: GenesListFilters
   sources: Set<number> | null
   coverage: CoverageRange | null
   annotationId: string | null
@@ -25,6 +42,12 @@ export type GenesHydratePayload = {
   includeTaxa: SelectedTaxon[]
   excludeTaxa: SelectedTaxon[]
   viewRank: string | null
+  view: GenesView
+  unit: CountUnit
+  keep: KeepPolicy
+  group: GroupMode
+  sort: AnnotationsSort
+  search: string
   raw: GenesUrlState
 }
 
@@ -32,11 +55,11 @@ function payloadFromSearchParams(
   searchParams: URLSearchParams,
 ): GenesHydratePayload {
   const raw = parseGenesSearchParams(searchParams)
+  const listFilters = listFiltersFromUrlState(raw)
   return {
     queryNames: raw.names,
     excluded: new Set(raw.exclude.map((n) => n.toLowerCase())),
-    t: raw.t,
-    g: raw.g,
+    listFilters,
     sources: raw.sources != null ? new Set(raw.sources) : null,
     coverage: null, // resolved later when termCount known
     annotationId: raw.ann,
@@ -44,21 +67,32 @@ function payloadFromSearchParams(
     includeTaxa: taxaFromIds(raw.includeTaxids),
     excludeTaxa: taxaFromIds(raw.excludeTaxids),
     viewRank: raw.viewRank,
+    view: resolveViewFromUrl({ view: raw.view, ann: raw.ann }),
+    unit: raw.unit ?? DEFAULT_COUNT_UNIT,
+    keep: raw.keep ?? DEFAULT_KEEP,
+    group: raw.group ?? DEFAULT_GROUP,
+    sort: raw.sort ?? DEFAULT_SORT,
+    search: raw.q ?? "",
     raw,
   }
 }
 
+function stackAnn(stackKey: string): string {
+  return stackKey.split("|")[0] ?? ""
+}
+
 /**
  * Sync genes URL with store state.
- * Panel stack changes (ann/gene) use push; other changes use replace.
+ * Push only when opening the drawer (`ann` appears) or changing `view`.
+ * Closing the drawer uses `history.back()` when that open was pushed;
+ * otherwise replace. Gene expand/collapse always replaces.
  * External URL changes (Back/Forward) re-hydrate the store.
  */
 export function useGenesUrlSync(
   state: {
     names: string[]
     exclude: string[]
-    t: string | null
-    g: string | null
+    listFilters: GenesListFilters
     sources: Set<number>
     coverage: CoverageRange | null
     termCount: number
@@ -67,6 +101,12 @@ export function useGenesUrlSync(
     includeTaxids: number[]
     excludeTaxids: number[]
     viewRank: string | null
+    view: GenesView
+    unit: CountUnit
+    keep: KeepPolicy
+    group: GroupMode
+    sort: AnnotationsSort
+    search: string
     ready: boolean
   },
   onHydrate: (parsed: GenesHydratePayload) => void,
@@ -76,7 +116,10 @@ export function useGenesUrlSync(
   const searchParams = useSearchParams()
   const hydratedRef = useRef(false)
   const prevStackRef = useRef<string>("")
+  const prevViewRef = useRef<GenesView | null>(null)
   const lastWrittenQsRef = useRef<string | null>(null)
+  /** True when the current history entry was created by opening the drawer. */
+  const drawerPushedRef = useRef(false)
 
   // Initial hydrate + Back/Forward (external URL changes).
   useEffect(() => {
@@ -100,15 +143,39 @@ export function useGenesUrlSync(
     const current = searchParams.toString()
     if (qs === current) {
       lastWrittenQsRef.current = qs
+      prevViewRef.current = state.view
+      prevStackRef.current = `${state.ann ?? ""}|${state.gene ?? ""}`
       return
     }
     const href = qs ? `${pathname}?${qs}` : pathname
     const stackKey = `${state.ann ?? ""}|${state.gene ?? ""}`
     const prevStack = prevStackRef.current
-    const stackChanged = stackKey !== prevStack
+    const prevAnn = stackAnn(prevStack)
+    const nextAnn = state.ann ?? ""
+    const annOpened = Boolean(nextAnn) && !prevAnn
+    const annClosed = Boolean(prevAnn) && !nextAnn
+    const viewChanged =
+      prevViewRef.current != null && prevViewRef.current !== state.view
+
     prevStackRef.current = stackKey
+    prevViewRef.current = state.view
+
+    // Closing after a pushed open → Back (restore URL without a new entry).
+    if (annClosed && drawerPushedRef.current) {
+      drawerPushedRef.current = false
+      router.back()
+      return
+    }
+
+    if (viewChanged) {
+      drawerPushedRef.current = false
+    }
+    if (annOpened) {
+      drawerPushedRef.current = true
+    }
+
     lastWrittenQsRef.current = qs
-    if (stackChanged && (state.ann || prevStack)) {
+    if (annOpened || viewChanged) {
       router.push(href, { scroll: false })
     } else {
       router.replace(href, { scroll: false })
@@ -116,8 +183,7 @@ export function useGenesUrlSync(
   }, [
     state.names,
     state.exclude,
-    state.t,
-    state.g,
+    state.listFilters,
     state.sources,
     state.coverage,
     state.termCount,
@@ -126,6 +192,12 @@ export function useGenesUrlSync(
     state.includeTaxids,
     state.excludeTaxids,
     state.viewRank,
+    state.view,
+    state.unit,
+    state.keep,
+    state.group,
+    state.sort,
+    state.search,
     state.ready,
     pathname,
     router,

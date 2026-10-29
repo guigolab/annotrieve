@@ -29,6 +29,14 @@ describe("partitionTokens", () => {
       prefixes: ["seleno*"],
     })
   })
+
+  it("handles a mixed typed query TP53, seleno*", () => {
+    const tokens = tokenizeGeneQuery("TP53, seleno*")
+    assert.deepEqual(partitionTokens(tokens), {
+      exact: ["TP53"],
+      prefixes: ["seleno*"],
+    })
+  })
 })
 
 describe("uniqueNames", () => {

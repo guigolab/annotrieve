@@ -322,3 +322,45 @@ export function parseGff(
 export function cdsLength(cds: GffInterval[]): number {
   return cds.reduce((sum, block) => sum + Math.max(0, block.end - block.start + 1), 0)
 }
+
+/** Genomic span of a transcript (inclusive endpoints). */
+export function transcriptSpan(transcript: GffTranscript): number {
+  return Math.max(0, transcript.end - transcript.start + 1)
+}
+
+/**
+ * Prefer longest genomic span; ties → longer CDS, then id.
+ */
+export function pickLongestTranscript(
+  transcripts: readonly GffTranscript[],
+): GffTranscript | null {
+  if (!transcripts.length) return null
+  let best = transcripts[0]!
+  let bestSpan = transcriptSpan(best)
+  let bestCds = cdsLength(best.cds)
+  for (let i = 1; i < transcripts.length; i++) {
+    const tx = transcripts[i]!
+    const span = transcriptSpan(tx)
+    const cds = cdsLength(tx.cds)
+    if (
+      span > bestSpan ||
+      (span === bestSpan && cds > bestCds) ||
+      (span === bestSpan &&
+        cds === bestCds &&
+        tx.id.localeCompare(best.id) < 0)
+    ) {
+      best = tx
+      bestSpan = span
+      bestCds = cds
+    }
+  }
+  return best
+}
+
+export function findTranscriptById(
+  transcripts: readonly GffTranscript[],
+  transcriptId: string | null | undefined,
+): GffTranscript | null {
+  if (!transcriptId) return null
+  return transcripts.find((t) => t.id === transcriptId) ?? null
+}

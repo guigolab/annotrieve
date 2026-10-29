@@ -1,5 +1,6 @@
 import type { CoverageRange, CoverageSegment } from "@/lib/genes/coverage"
 import { defaultCoverageRange, isDefaultCoverageRange } from "@/lib/genes/coverage"
+import type { NameMatchMode } from "@/lib/genes/list-filters"
 
 /** Shared filter object for adapter calls and (future) backend endpoints. */
 export interface GenesFilter {
@@ -14,10 +15,23 @@ export interface GenesFilter {
   matchedSegments: CoverageSegment[] | null
   /** Lowercased accession names to exclude from N / k / columns. */
   excludeTerms: Set<string>
-  /** Selected taxonomy node id (string taxid). */
+  /**
+   * Legacy single taxonomy node id. Prefer `includeTaxids` when set;
+   * when both empty/null, no taxon include filter.
+   */
   taxid: string | null
-  /** Selected gene name (display form). */
+  /** Legacy single gene name. Prefer `includeNames` when set. */
   name: string | null
+  /** Include-only clade ids (OR within). Empty = no clade include filter. */
+  includeTaxids: string[]
+  /** Include-only gene names (display form). */
+  includeNames: string[]
+  /** How multiple includeNames combine. */
+  nameMatch: NameMatchMode
+  /** Include cells: annotation under clade AND has gene (OR within). */
+  includeCells: { taxid: string; gene: string }[]
+  /** Include-only annotation ids (OR within). Empty = no id filter. */
+  includeAnnotationIds: string[]
 }
 
 export const ALL_SOURCE_CODES = [1, 2, 3] as const
@@ -31,14 +45,31 @@ export function makeFilter(partial: Partial<GenesFilter> & {
 }): GenesFilter {
   const termCount = partial.termCount ?? 0
   const def = defaultCoverageRange(termCount)
+  const includeTaxids = partial.includeTaxids?.length
+    ? [...partial.includeTaxids]
+    : partial.taxid
+      ? [partial.taxid]
+      : []
+  const includeNames = partial.includeNames?.length
+    ? [...partial.includeNames]
+    : partial.name
+      ? [partial.name]
+      : []
   return {
     sources: partial.sources ?? defaultSources(),
     minMatched: partial.minMatched ?? def.min,
     maxMatched: partial.maxMatched ?? def.max,
     matchedSegments: partial.matchedSegments ?? null,
     excludeTerms: partial.excludeTerms ?? new Set(),
-    taxid: partial.taxid ?? null,
-    name: partial.name ?? null,
+    taxid: includeTaxids.length === 1 ? includeTaxids[0]! : null,
+    name: includeNames.length === 1 ? includeNames[0]! : null,
+    includeTaxids,
+    includeNames,
+    nameMatch: partial.nameMatch ?? "any",
+    includeCells: partial.includeCells ? [...partial.includeCells] : [],
+    includeAnnotationIds: partial.includeAnnotationIds
+      ? [...partial.includeAnnotationIds]
+      : [],
   }
 }
 
@@ -70,13 +101,26 @@ export function filterKey(filter: GenesFilter): string {
   const segments = filter.matchedSegments?.length
     ? filter.matchedSegments.map((s) => `${s.min}-${s.max}`).join(",")
     : ""
+  const taxids = [...filter.includeTaxids].sort().join(",")
+  const names = [...filter.includeNames]
+    .map((n) => n.toLowerCase())
+    .sort()
+    .join(",")
+  const cells = [...filter.includeCells]
+    .map((c) => `${c.taxid}:${c.gene.toLowerCase()}`)
+    .sort()
+    .join(",")
+  const anns = [...(filter.includeAnnotationIds ?? [])].sort().join(",")
   return [
     sources,
     filter.minMatched,
     filter.maxMatched,
     segments,
     exclude,
-    filter.taxid ?? "",
-    filter.name ?? "",
+    taxids,
+    names,
+    filter.nameMatch,
+    cells,
+    anns,
   ].join("|")
 }

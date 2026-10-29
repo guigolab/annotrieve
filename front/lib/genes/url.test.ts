@@ -28,8 +28,6 @@ describe("buildGenesQueryString", () => {
     const qs = buildGenesQueryString({
       names: ["TP53"],
       exclude: [],
-      t: null,
-      g: null,
       sources: new Set([1, 2, 3]),
       coverage: { min: 1, max: 3 },
       termCount: 3,
@@ -43,8 +41,6 @@ describe("buildGenesQueryString", () => {
     const qs = buildGenesQueryString({
       names: ["A", "B"],
       exclude: [],
-      t: null,
-      g: null,
       sources: new Set([1, 2, 3]),
       coverage: { min: 2, max: 2 },
       termCount: 2,
@@ -54,12 +50,17 @@ describe("buildGenesQueryString", () => {
     assert.equal(qs, "names=A%2CB&lo=2&hi=2")
   })
 
-  it("writes lo/hi, t, g, exclude", () => {
+  it("writes lo/hi, t, g, exclude via listFilters", () => {
     const qs = buildGenesQueryString({
       names: [],
       exclude: ["EGFR"],
-      t: "9606",
-      g: "TP53",
+      listFilters: {
+        includeTaxids: ["9606"],
+        includeNames: ["TP53"],
+        nameMatch: "any",
+        includeCells: [],
+        includeAnnotationIds: [],
+      },
       sources: new Set([1]),
       coverage: { min: 2, max: 5 },
       termCount: 8,
@@ -76,8 +77,6 @@ describe("buildGenesQueryString", () => {
     const qs = buildGenesQueryString({
       names: ["TP53"],
       exclude: [],
-      t: null,
-      g: null,
       sources: new Set([1, 2, 3]),
       coverage: null,
       termCount: 1,
@@ -93,8 +92,6 @@ describe("buildGenesQueryString", () => {
     const qs = buildGenesQueryString({
       names: ["TP53"],
       exclude: [],
-      t: null,
-      g: null,
       sources: new Set([1, 2, 3]),
       coverage: null,
       termCount: 1,
@@ -103,6 +100,132 @@ describe("buildGenesQueryString", () => {
       viewRank: "order",
     })
     assert.equal(qs, "names=TP53&rank=order")
+  })
+
+  it("after a view-filter reset omits t, g, sources, lo/hi and rank", () => {
+    // State shape matching store.resetViewFilters() output (viewRank null).
+    const qs = buildGenesQueryString({
+      names: ["TP53", "EGFR"],
+      exclude: [],
+      sources: new Set([1, 2, 3]),
+      coverage: null,
+      termCount: 2,
+      ann: null,
+      gene: null,
+      viewRank: null,
+    })
+    assert.equal(qs, "names=TP53%2CEGFR")
+  })
+
+  it("omits view when distribution (default)", () => {
+    const qs = buildGenesQueryString({
+      names: ["TP53"],
+      exclude: [],
+      sources: new Set([1, 2, 3]),
+      coverage: null,
+      termCount: 1,
+      ann: null,
+      gene: null,
+      view: "distribution",
+    })
+    assert.equal(qs, "names=TP53")
+  })
+
+  it("writes non-default view", () => {
+    const qs = buildGenesQueryString({
+      names: ["TP53"],
+      exclude: [],
+      sources: new Set([1, 2, 3]),
+      coverage: null,
+      termCount: 1,
+      ann: null,
+      gene: null,
+      view: "annotations",
+    })
+    assert.equal(qs, "names=TP53&view=annotations")
+  })
+
+  it("omits default unit and writes species", () => {
+    const omitted = buildGenesQueryString({
+      names: ["TP53"],
+      exclude: [],
+      sources: new Set([1, 2, 3]),
+      coverage: null,
+      termCount: 1,
+      ann: null,
+      gene: null,
+      unit: "annotations",
+    })
+    assert.equal(omitted, "names=TP53")
+    const qs = buildGenesQueryString({
+      names: ["TP53"],
+      exclude: [],
+      sources: new Set([1, 2, 3]),
+      coverage: null,
+      termCount: 1,
+      ann: null,
+      gene: null,
+      unit: "species",
+    })
+    assert.equal(qs, "names=TP53&unit=species")
+  })
+
+  it("round-trips listFilters via t/g/gm/c", () => {
+    const qs = buildGenesQueryString({
+      names: ["TP53"],
+      exclude: [],
+      listFilters: {
+        includeTaxids: ["9606", "10090"],
+        includeNames: ["TP53", "BRCA1"],
+        nameMatch: "all",
+        includeCells: [{ taxid: "9606", gene: "TP53" }],
+        includeAnnotationIds: [],
+      },
+      sources: new Set([1, 2, 3]),
+      coverage: null,
+      termCount: 2,
+      ann: null,
+      gene: null,
+    })
+    const parsed = parseGenesSearchParams(new URLSearchParams(qs))
+    assert.equal(parsed.t, "9606,10090")
+    assert.equal(parsed.g, "TP53,BRCA1")
+    assert.equal(parsed.gm, "all")
+    assert.equal(parsed.c, "9606:TP53")
+  })
+
+  it("omits rank when viewRank is null (auto / effective kingdom)", () => {
+    const qs = buildGenesQueryString({
+      names: ["TP53"],
+      exclude: [],
+      sources: new Set([1, 2, 3]),
+      coverage: null,
+      termCount: 1,
+      ann: null,
+      gene: null,
+      viewRank: null,
+    })
+    assert.equal(qs.includes("rank="), false)
+  })
+
+  it("writes keep/group/sort/q when non-default", () => {
+    const qs = buildGenesQueryString({
+      names: ["TP53"],
+      exclude: [],
+      sources: new Set([1, 2, 3]),
+      coverage: null,
+      termCount: 1,
+      ann: null,
+      gene: null,
+      keep: "best",
+      group: "order",
+      sort: "species",
+      search: "homo",
+    })
+    assert.equal(
+      qs,
+      "names=TP53&keep=best&group=order&sort=species&q=homo",
+    )
   })
 })
 
@@ -142,5 +265,20 @@ describe("parseGenesSearchParams", () => {
     assert.equal(parsed.hi, 3)
     assert.deepEqual(parsed.includeTaxids, [])
     assert.deepEqual(parsed.excludeTaxids, [])
+  })
+
+  it("reads view and rejects invalid values", () => {
+    assert.equal(
+      parseGenesSearchParams(new URLSearchParams("view=compare")).view,
+      "compare",
+    )
+    assert.equal(
+      parseGenesSearchParams(new URLSearchParams("view=heatmap")).view,
+      null,
+    )
+    assert.equal(
+      parseGenesSearchParams(new URLSearchParams("names=TP53")).view,
+      null,
+    )
   })
 })

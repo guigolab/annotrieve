@@ -3,6 +3,9 @@ import { describe, it } from "node:test"
 
 import type { HitTerm } from "@/lib/api/xrefs-types"
 import type { DecodedHitRow } from "@/lib/genes/hits"
+import type { FlatTreeNode } from "@/lib/api/taxons"
+
+import { heatmapPngExportScale } from "./heatmap-export"
 import {
   buildTipsByNode,
   CELL_COLOR_FLOOR,
@@ -10,11 +13,13 @@ import {
   cellFraction,
   filterVaryingColumns,
   foldNodeCounts,
+  foldNodeSpeciesCounts,
   heatmapColumnLayout,
   heatmapHeaderHeight,
   HEATMAP_ROTATE_HEADER_AT,
   orderHeatmapColumns,
   tipNameVectors,
+  tipSpeciesVectors,
   type HeatmapColumn,
   type NodeNameCounts,
 } from "./heatmap"
@@ -92,6 +97,65 @@ describe("tipNameVectors + foldNodeCounts", () => {
   })
 })
 
+describe("tipSpeciesVectors + foldNodeSpeciesCounts", () => {
+  it("de-duplicates species under a parent", () => {
+    const node = (
+      id: string,
+      parentId: string,
+      name: string,
+      rank: string,
+    ): FlatTreeNode =>
+      ({
+        id,
+        parentId,
+        scientific_name: name,
+        rank,
+        annotations_count: 0,
+        assemblies_count: 0,
+        organisms_count: 0,
+        coding_count: 0,
+        non_coding_count: 0,
+        pseudogene_count: 0,
+        mrna_count: 0,
+        lncrna_count: 0,
+        trna_count: 0,
+        mirna_count: 0,
+        busco_single_copy_mean: 0,
+        busco_duplicated_mean: 0,
+        busco_fragmented_mean: 0,
+        busco_missing_mean: 0,
+      }) as FlatTreeNode
+
+    // Two strain tips of the same species, one tip of another.
+    const index = new Map<string, FlatTreeNode>([
+      ["100", node("100", "1", "Species A", "species")],
+      ["101", node("101", "100", "Strain A1", "no rank")],
+      ["102", node("102", "100", "Strain A2", "no rank")],
+      ["200", node("200", "1", "Species B", "species")],
+    ])
+    const rows = [
+      row("a", 101, [0]),
+      row("b", 101, [0]),
+      row("c", 102, [1]),
+      row("d", 200, [0, 1]),
+    ]
+    const columns: HeatmapColumn[] = [
+      { name: "TP53", id: "tp53", prevalence: 1 },
+      { name: "BRCA1", id: "brca1", prevalence: 1 },
+    ]
+    const tips = tipSpeciesVectors(rows, terms, columns, index)
+    const folded = foldNodeSpeciesCounts(
+      [101, 102, 200],
+      tips,
+      columns.length,
+    )
+    // Species A (from 101+102) + Species B → n=2
+    assert.equal(folded.n, 2)
+    // Both species have TP53; both have BRCA1
+    assert.deepEqual(folded.byName, [2, 2])
+  })
+})
+
 describe("filterVaryingColumns", () => {
   const columns: HeatmapColumn[] = [
     { name: "A", id: "a", prevalence: 1 },
@@ -140,6 +204,16 @@ describe("heatmapColumnLayout", () => {
   it("narrows cells as columns grow", () => {
     assert.equal(heatmapColumnLayout(15).cellW, 40)
     assert.equal(heatmapColumnLayout(40).cellW, 28)
+  })
+})
+
+describe("heatmapPngExportScale", () => {
+  it("keeps the requested scale for modest canvases", () => {
+    assert.equal(heatmapPngExportScale(800, 600, 2), 2)
+  })
+
+  it("drops to scale 1 when the base area already exceeds the pixel cap", () => {
+    assert.equal(heatmapPngExportScale(8000, 8000, 2), 1)
   })
 })
 

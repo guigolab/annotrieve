@@ -1,8 +1,9 @@
 "use client"
 
-import type { KeyboardEvent } from "react"
-import { ChevronRight } from "lucide-react"
+import type { KeyboardEvent, MouseEvent } from "react"
+import { ChevronDown, ChevronRight, Pin } from "lucide-react"
 
+import { Button } from "@/components/ui/button"
 import type { AnnotationGeneRow } from "@/lib/api/xrefs-types"
 import {
   geneCategoryOf,
@@ -14,13 +15,20 @@ import { cn } from "@/lib/utils"
 interface GenesGeneRowProps {
   gene: AnnotationGeneRow
   selected?: boolean
+  /** When true, show ▾ instead of ▸ (inline expand in drawer). */
+  expanded?: boolean
+  pinned?: boolean
   onSelect: () => void
+  onTogglePin?: () => void
 }
 
 export function GenesGeneRow({
   gene,
   selected,
+  expanded,
+  pinned,
   onSelect,
+  onTogglePin,
 }: GenesGeneRowProps) {
   const length = locusLength(gene.start, gene.end)
   const category = geneCategoryOf({
@@ -31,12 +39,19 @@ export function GenesGeneRow({
   const hasLocus = Boolean(gene.seqid)
   const strand =
     gene.strand === "+" || gene.strand === "-" ? gene.strand : null
+  const canPin = Boolean(onTogglePin) && hasLocus
 
   const onKeyDown = (e: KeyboardEvent) => {
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault()
       onSelect()
     }
+  }
+
+  const onPinClick = (e: MouseEvent) => {
+    e.stopPropagation()
+    e.preventDefault()
+    onTogglePin?.()
   }
 
   return (
@@ -79,7 +94,45 @@ export function GenesGeneRow({
             </p>
           ) : null}
         </div>
-        <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+        {onTogglePin ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className={cn(
+              "h-8 w-8 shrink-0",
+              pinned
+                ? "text-primary hover:text-primary"
+                : "text-muted-foreground",
+            )}
+            disabled={!canPin && !pinned}
+            aria-label={
+              pinned
+                ? `Unpin ${gene.primary_name || gene.local_id}`
+                : hasLocus
+                  ? `Pin ${gene.primary_name || gene.local_id} for transcript compare`
+                  : "Cannot pin gene without locus"
+            }
+            aria-pressed={pinned}
+            title={
+              !hasLocus
+                ? "No genomic locus to pin"
+                : pinned
+                  ? "Unpin"
+                  : "Pin for transcript compare"
+            }
+            onClick={onPinClick}
+          >
+            <Pin
+              className={cn("h-3.5 w-3.5", pinned && "fill-current")}
+            />
+          </Button>
+        ) : null}
+        {expanded ? (
+          <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+        ) : (
+          <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+        )}
       </div>
     </div>
   )

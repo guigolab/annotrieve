@@ -6,20 +6,43 @@ import {
   defaultCoverageRange,
   isDefaultCoverageRange,
 } from "@/lib/genes/coverage"
-import { ALL_SOURCE_CODES, defaultSources } from "@/lib/genes/filters"
+import {
+  DEFAULT_GROUP,
+  DEFAULT_KEEP,
+  DEFAULT_SORT,
+  type AnnotationsSort,
+  type GroupMode,
+  type KeepPolicy,
+} from "@/lib/genes/annotations-controls"
+import { defaultSources } from "@/lib/genes/filters"
+import {
+  EMPTY_LIST_FILTERS,
+  type GenesListFilters,
+} from "@/lib/genes/list-filters"
 import { MAX_NAMES_GET } from "@/lib/genes/prefix"
+import {
+  EMPTY_SELECTION,
+  reduceSelection,
+  type DistributionSelection,
+  type SelectionAction,
+} from "@/lib/genes/selection"
 import type { SelectedTaxon } from "@/lib/genes/taxa"
 import { taxidsOf } from "@/lib/genes/taxa"
 import { uniqueNames } from "@/lib/genes/tokenize"
+import {
+  DEFAULT_COUNT_UNIT,
+  DEFAULT_VIEW,
+  type CountUnit,
+  type GenesView,
+} from "@/lib/genes/view"
 
-export type PanelLevel = "list" | "annotation" | "gene"
-export type PopoverId = "review" | "coverage" | null
+export type PopoverId = "coverage" | null
 
-export interface PanelStack {
-  level: PanelLevel
-  annotationId: string | null
+/** Open annotation drawer (null = closed). URL syncs `ann` / `gene`. */
+export interface GenesDrawer {
+  annotationId: string
   localId: number | null
-  /** Species label for headers. */
+  /** Species label for headers (may be null after URL hydrate). */
   species: string | null
   source: number | null
 }
@@ -29,16 +52,37 @@ export interface GenesState {
   queryText: string
   /** Names sent to /hits (resolved set after Search / prefix apply). */
   queryNames: string[]
-  /** Lowercased names excluded via Review names. */
+  /**
+   * Internal optimistic excludeTerms mask (URL `exclude=` / prune).
+   * Not a user-facing Review UI concept (removed in P2).
+   */
   excluded: Set<string>
-  /** Selected taxonomy node id. */
-  t: string | null
-  /** Selected gene name. */
-  g: string | null
+  /** Include-only Annotations list filters (Show only hand-off). */
+  listFilters: GenesListFilters
+  /** In-memory Distribution multi-select (not URL-synced). */
+  distributionSelection: DistributionSelection
+  /** In-memory Annotations table multi-select (rows = annotation ids). */
+  annotationsSelection: DistributionSelection
+  /** Anchor for shift-range row/col/cell selection (Distribution). */
+  selectionAnchor: {
+    row: string | null
+    col: string | null
+    cell: { taxid: string; gene: string } | null
+  }
+  /** Anchor for Annotations table selection. */
+  annotationsSelectionAnchor: {
+    row: string | null
+    col: string | null
+  }
   sources: Set<number>
   coverage: CoverageRange | null
+  keep: KeepPolicy
+  group: GroupMode
+  sort: AnnotationsSort
+  /** Species / assembly search (URL `q`). */
+  search: string
   expanded: Set<string>
-  panel: PanelStack
+  drawer: GenesDrawer | null
   openPopover: PopoverId
   /** Include-scope taxa (labels + taxids). */
   includeTaxa: SelectedTaxon[]
@@ -49,6 +93,10 @@ export interface GenesState {
    * null = auto roots (include taxids / children of Eukaryota).
    */
   viewRank: string | null
+  /** Active lens: distribution | annotations | compare. */
+  view: GenesView
+  /** Heatmap count unit. */
+  unit: CountUnit
   /** Hydrated from URL once. */
   urlReady: boolean
 
@@ -58,32 +106,50 @@ export interface GenesState {
   toggleSource: (code: number) => void
   setSources: (sources: Set<number>) => void
   setCoverage: (range: CoverageRange | null, termCount: number) => void
-  clearCoverage: () => void
-  selectTaxon: (id: string | null) => void
-  selectName: (name: string | null) => void
-  selectCell: (taxonId: string, name: string) => void
+  setListFilters: (filters: GenesListFilters) => void
+  patchListFilters: (patch: Partial<GenesListFilters>) => void
+  dispatchSelection: (action: SelectionAction) => void
+  clearDistributionSelection: () => void
+  setSelectionAnchor: (anchor: Partial<GenesState["selectionAnchor"]>) => void
+  dispatchAnnotationsSelection: (action: SelectionAction) => void
+  clearAnnotationsSelection: () => void
+  setAnnotationsSelectionAnchor: (
+    anchor: Partial<GenesState["annotationsSelectionAnchor"]>,
+  ) => void
+  setKeep: (keep: KeepPolicy) => void
+  setGroup: (group: GroupMode) => void
+  setSort: (sort: AnnotationsSort) => void
+  setSearch: (search: string) => void
   toggleExpanded: (id: string) => void
   setExpanded: (ids: Set<string>) => void
-  openAnnotation: (opts: {
+  openDrawer: (opts: {
     annotationId: string
-    species: string
-    source: number
+    species: string | null
+    source: number | null
+    /** When set, open with that gene already expanded. */
+    localId?: number | null
   }) => void
-  openGene: (localId: number) => void
-  popPanel: () => void
-  resetPanel: () => void
+  /** Expand/collapse gene inline in the drawer (same id toggles closed). */
+  setDrawerGene: (localId: number | null) => void
+  closeDrawer: () => void
   setPopover: (id: PopoverId) => void
   setTaxa: (include: SelectedTaxon[], exclude: SelectedTaxon[]) => void
   /** Refresh labels once the flattened taxon tree is available. */
   relabelTaxa: (labelFor: (taxid: number) => string | undefined) => void
   setViewRank: (rank: string | null) => void
+  setView: (view: GenesView) => void
+  setUnit: (unit: CountUnit) => void
+  /**
+   * Annotations list Reset: clears list filters, sources, coverage, keep,
+   * group, sort, search, excluded, selections. Does not touch query,
+   * viewRank, unit, or pins.
+   */
   resetViewFilters: () => void
   clearGeneSet: () => void
   hydrateFromUrl: (partial: Partial<{
     queryNames: string[]
     excluded: Set<string>
-    t: string | null
-    g: string | null
+    listFilters: GenesListFilters
     sources: Set<number>
     coverage: CoverageRange | null
     annotationId: string | null
@@ -91,6 +157,12 @@ export interface GenesState {
     includeTaxa: SelectedTaxon[]
     excludeTaxa: SelectedTaxon[]
     viewRank: string | null
+    view: GenesView
+    unit: CountUnit
+    keep: KeepPolicy
+    group: GroupMode
+    sort: AnnotationsSort
+    search: string
   }>) => void
   setUrlReady: (ready: boolean) => void
 }
@@ -104,88 +176,111 @@ export function excludeTaxids(state: Pick<GenesState, "excludeTaxa">): number[] 
   return taxidsOf(state.excludeTaxa)
 }
 
-const emptyPanel = (): PanelStack => ({
-  level: "list",
-  annotationId: null,
-  localId: null,
-  species: null,
-  source: null,
-})
-
-function resetToList(panel: PanelStack): PanelStack {
-  return emptyPanel()
-}
-
 export const useGenesStore = create<GenesState>((set, get) => ({
   queryText: "",
   queryNames: [],
   excluded: new Set(),
-  t: null,
-  g: null,
+  listFilters: { ...EMPTY_LIST_FILTERS },
+  distributionSelection: EMPTY_SELECTION,
+  annotationsSelection: EMPTY_SELECTION,
+  selectionAnchor: { row: null, col: null, cell: null },
+  annotationsSelectionAnchor: { row: null, col: null },
   sources: defaultSources(),
   coverage: null,
+  keep: DEFAULT_KEEP,
+  group: DEFAULT_GROUP,
+  sort: DEFAULT_SORT,
+  search: "",
   expanded: new Set(),
-  panel: emptyPanel(),
+  drawer: null,
   openPopover: null,
   includeTaxa: [],
   excludeTaxa: [],
   viewRank: null,
+  view: DEFAULT_VIEW,
+  unit: DEFAULT_COUNT_UNIT,
   urlReady: false,
 
   setQueryText: (text) => set({ queryText: text }),
   setQueryNames: (names) =>
     set({
       queryNames: names,
-      panel: resetToList(get().panel),
-      t: null,
-      g: null,
+      drawer: null,
+      listFilters: { ...EMPTY_LIST_FILTERS },
+      distributionSelection: EMPTY_SELECTION,
+      annotationsSelection: EMPTY_SELECTION,
+      selectionAnchor: { row: null, col: null, cell: null },
+      annotationsSelectionAnchor: { row: null, col: null },
     }),
   setExcluded: (excluded) =>
-    set({ excluded, panel: resetToList(get().panel) }),
+    set({ excluded, drawer: null }),
 
   toggleSource: (code) => {
     const next = new Set(get().sources)
     if (next.has(code)) next.delete(code)
     else next.add(code)
-    set({ sources: next, panel: resetToList(get().panel) })
+    set({ sources: next, drawer: null })
   },
   setSources: (sources) => set({ sources }),
 
   setCoverage: (range, termCount) => {
     if (!range || isDefaultCoverageRange(range, termCount)) {
-      set({ coverage: null, panel: resetToList(get().panel) })
+      set({ coverage: null, drawer: null })
       return
     }
     set({
       coverage: clampCoverageRange(range, termCount),
-      panel: resetToList(get().panel),
+      drawer: null,
     })
   },
-  clearCoverage: () => set({ coverage: null, panel: resetToList(get().panel) }),
-
-  selectTaxon: (id) => {
-    const cur = get().t
-    const next = cur === id ? null : id
-    set({ t: next, panel: resetToList(get().panel) })
-  },
-  selectName: (name) => {
-    const cur = get().g
-    const next =
-      cur && name && cur.toLowerCase() === name.toLowerCase() ? null : name
-    set({ g: next, panel: resetToList(get().panel) })
-  },
-  selectCell: (taxonId, name) => {
-    const { t, g } = get()
-    const same =
-      t === taxonId &&
-      g != null &&
-      g.toLowerCase() === name.toLowerCase()
+  setListFilters: (filters) =>
     set({
-      t: same ? null : taxonId,
-      g: same ? null : name,
-      panel: resetToList(get().panel),
+      listFilters: filters,
+      drawer: null,
+    }),
+  patchListFilters: (patch) => {
+    const listFilters = { ...get().listFilters, ...patch }
+    set({
+      listFilters,
+      drawer: null,
     })
   },
+
+  dispatchSelection: (action) => {
+    const next = reduceSelection(get().distributionSelection, action)
+    set({ distributionSelection: next })
+  },
+  clearDistributionSelection: () =>
+    set({
+      distributionSelection: EMPTY_SELECTION,
+      selectionAnchor: { row: null, col: null, cell: null },
+    }),
+  setSelectionAnchor: (anchor) =>
+    set({
+      selectionAnchor: { ...get().selectionAnchor, ...anchor },
+    }),
+
+  dispatchAnnotationsSelection: (action) => {
+    const next = reduceSelection(get().annotationsSelection, action)
+    set({ annotationsSelection: next })
+  },
+  clearAnnotationsSelection: () =>
+    set({
+      annotationsSelection: EMPTY_SELECTION,
+      annotationsSelectionAnchor: { row: null, col: null },
+    }),
+  setAnnotationsSelectionAnchor: (anchor) =>
+    set({
+      annotationsSelectionAnchor: {
+        ...get().annotationsSelectionAnchor,
+        ...anchor,
+      },
+    }),
+
+  setKeep: (keep) => set({ keep }),
+  setGroup: (group) => set({ group }),
+  setSort: (sort) => set({ sort }),
+  setSearch: (search) => set({ search }),
 
   toggleExpanded: (id) => {
     const next = new Set(get().expanded)
@@ -195,43 +290,39 @@ export const useGenesStore = create<GenesState>((set, get) => ({
   },
   setExpanded: (ids) => set({ expanded: ids }),
 
-  openAnnotation: ({ annotationId, species, source }) =>
+  openDrawer: ({ annotationId, species, source, localId }) =>
     set({
-      panel: {
-        level: "annotation",
+      drawer: {
         annotationId,
-        localId: null,
+        localId: localId ?? null,
         species,
         source,
       },
     }),
-  openGene: (localId) => {
-    const panel = get().panel
-    if (!panel.annotationId) return
-    set({
-      panel: { ...panel, level: "gene", localId },
-    })
-  },
-  popPanel: () => {
-    const panel = get().panel
-    if (panel.level === "gene") {
-      set({
-        panel: { ...panel, level: "annotation", localId: null },
-      })
-    } else if (panel.level === "annotation") {
-      set({ panel: emptyPanel() })
+  setDrawerGene: (localId) => {
+    const drawer = get().drawer
+    if (!drawer) return
+    if (localId != null && drawer.localId === localId) {
+      set({ drawer: { ...drawer, localId: null } })
+      return
     }
+    set({ drawer: { ...drawer, localId } })
   },
-  resetPanel: () => set({ panel: emptyPanel() }),
+  closeDrawer: () => set({ drawer: null }),
 
   setPopover: (id) => set({ openPopover: id }),
   setTaxa: (include, exclude) =>
     set({
       includeTaxa: include,
       excludeTaxa: exclude,
-      panel: resetToList(get().panel),
-      t: null,
+      drawer: null,
+      listFilters: {
+        ...get().listFilters,
+        includeTaxids: [],
+        includeCells: [],
+      },
       viewRank: null,
+      distributionSelection: EMPTY_SELECTION,
     }),
   relabelTaxa: (labelFor) => {
     const map = (list: SelectedTaxon[]) =>
@@ -247,29 +338,47 @@ export const useGenesStore = create<GenesState>((set, get) => ({
   setViewRank: (rank) =>
     set({
       viewRank: rank,
-      t: null,
-      panel: resetToList(get().panel),
+      distributionSelection: EMPTY_SELECTION,
+      selectionAnchor: { row: null, col: null, cell: null },
+      drawer: null,
       expanded: new Set(),
     }),
+  setView: (view) => set({ view }),
+  setUnit: (unit) => set({ unit }),
   resetViewFilters: () =>
     set({
       sources: defaultSources(),
       coverage: null,
-      t: null,
-      g: null,
-      viewRank: null,
-      panel: emptyPanel(),
+      listFilters: { ...EMPTY_LIST_FILTERS },
+      excluded: new Set(),
+      keep: DEFAULT_KEEP,
+      group: DEFAULT_GROUP,
+      sort: DEFAULT_SORT,
+      search: "",
+      annotationsSelection: EMPTY_SELECTION,
+      annotationsSelectionAnchor: { row: null, col: null },
+      drawer: null,
+      // Does not clear viewRank / unit / queryNames / pins
     }),
   clearGeneSet: () =>
     set({
       queryNames: [],
       queryText: "",
       excluded: new Set(),
-      t: null,
-      g: null,
+      listFilters: { ...EMPTY_LIST_FILTERS },
+      distributionSelection: EMPTY_SELECTION,
+      annotationsSelection: EMPTY_SELECTION,
+      selectionAnchor: { row: null, col: null, cell: null },
+      annotationsSelectionAnchor: { row: null, col: null },
       coverage: null,
-      panel: emptyPanel(),
+      keep: DEFAULT_KEEP,
+      group: DEFAULT_GROUP,
+      sort: DEFAULT_SORT,
+      search: "",
+      drawer: null,
       expanded: new Set(),
+      view: DEFAULT_VIEW,
+      unit: DEFAULT_COUNT_UNIT,
     }),
 
   hydrateFromUrl: (partial) => {
@@ -277,25 +386,26 @@ export const useGenesStore = create<GenesState>((set, get) => ({
       partial.queryNames !== undefined
         ? uniqueNames(partial.queryNames, MAX_NAMES_GET)
         : undefined
-    const nextPanel =
+    const nextDrawer =
       partial.annotationId !== undefined
         ? partial.annotationId
           ? {
-              level: (partial.localId != null ? "gene" : "annotation") as PanelLevel,
               annotationId: partial.annotationId,
               localId: partial.localId ?? null,
-              species: null,
-              source: null,
+              species: null as string | null,
+              source: null as number | null,
             }
-          : emptyPanel()
+          : null
         : undefined
+
     set({
       ...(cappedNames !== undefined
         ? { queryNames: cappedNames, queryText: "" }
         : {}),
       ...(partial.excluded !== undefined ? { excluded: partial.excluded } : {}),
-      ...(partial.t !== undefined ? { t: partial.t } : {}),
-      ...(partial.g !== undefined ? { g: partial.g } : {}),
+      ...(partial.listFilters !== undefined
+        ? { listFilters: partial.listFilters }
+        : {}),
       ...(partial.sources != null ? { sources: partial.sources } : {}),
       ...(partial.coverage !== undefined ? { coverage: partial.coverage } : {}),
       ...(partial.includeTaxa !== undefined
@@ -305,11 +415,29 @@ export const useGenesStore = create<GenesState>((set, get) => ({
         ? { excludeTaxa: partial.excludeTaxa }
         : {}),
       ...(partial.viewRank !== undefined ? { viewRank: partial.viewRank } : {}),
-      ...(nextPanel !== undefined ? { panel: nextPanel } : {}),
+      ...(partial.view !== undefined ? { view: partial.view } : {}),
+      ...(partial.unit !== undefined ? { unit: partial.unit } : {}),
+      ...(partial.keep !== undefined ? { keep: partial.keep } : {}),
+      ...(partial.group !== undefined ? { group: partial.group } : {}),
+      ...(partial.sort !== undefined ? { sort: partial.sort } : {}),
+      ...(partial.search !== undefined ? { search: partial.search } : {}),
+      ...(nextDrawer !== undefined ? { drawer: nextDrawer } : {}),
     })
   },
   setUrlReady: (ready) => set({ urlReady: ready }),
 }))
+
+/**
+ * Heatmap rank when store `viewRank` is null: kingdom if there are no include
+ * taxa, otherwise auto (null). Never writes back into the store/URL.
+ */
+export function effectiveViewRank(
+  viewRank: string | null,
+  includeTaxidCount: number,
+): string | null {
+  if (viewRank != null) return viewRank
+  return includeTaxidCount === 0 ? "kingdom" : null
+}
 
 /** Active (non-excluded) resolved names. */
 export function activeNames(
@@ -324,9 +452,4 @@ export function effectiveCoverage(
   termCount: number,
 ): CoverageRange {
   return coverage ?? defaultCoverageRange(termCount)
-}
-
-export function sourcesLabel(sources: Set<number>): string | null {
-  if (sources.size === ALL_SOURCE_CODES.length) return null
-  return [...sources].sort((a, b) => a - b).join(",")
 }

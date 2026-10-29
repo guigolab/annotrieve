@@ -1,227 +1,195 @@
 "use client"
 
-import { useEffect, useMemo } from "react"
+import { useMemo } from "react"
 import { keepPreviousData, useQuery } from "@tanstack/react-query"
-import { ExternalLink, Loader2 } from "lucide-react"
-import Link from "next/link"
+import { Loader2 } from "lucide-react"
 
 import { GenesGeneDetail } from "@/components/genes/genes-gene-detail"
-import { GenesGeneRow } from "@/components/genes/genes-gene-row"
 import {
-  ANNOTATIONS_LIST_PATH,
-  ANNOTATION_ID_PARAM,
-} from "@/lib/annotations-url"
-import {
-  canonicalNameCsv,
+  getAnnotationGene,
   listAnnotationGenes,
   XrefsApiError,
 } from "@/lib/api/xrefs"
+import type { AnnotationGeneRow } from "@/lib/api/xrefs-types"
 import type { GenesHitsAdapter } from "@/lib/genes/adapter"
-import { sourceColor, sourceLabel } from "@/lib/genes/hits"
-import { sortGenesByMatches } from "@/lib/genes/sort"
-import type { PanelStack } from "@/lib/genes/store"
+import { pinIdFor, useCompareStore } from "@/lib/genes/compare-store"
+import {
+  locusSiblings,
+  shortGeneId,
+} from "@/lib/genes/locus-siblings"
+import { pinInputFromGene } from "@/lib/genes/pin-gene"
+import type { GenesDrawer } from "@/lib/genes/store"
+import { cn } from "@/lib/utils"
 
-const MATCH_SORT_CAP = 200
+const MATCH_SORT_CAP = 50
 
 interface GenesAnnotationDetailProps {
   adapter: GenesHitsAdapter | null
-  panel: PanelStack
+  drawer: GenesDrawer
   activeNames: string[]
   termCount: number
-  onOpenGene: (localId: number) => void
-  onGeneTitle?: (title: string | null) => void
+  onToggleGene: (localId: number | null) => void
 }
 
 export function GenesAnnotationDetail({
-  adapter,
-  panel,
-  activeNames,
-  termCount,
-  onOpenGene,
-  onGeneTitle,
+  drawer,
+  onToggleGene,
 }: GenesAnnotationDetailProps) {
-  const annotationId = panel.annotationId
-  const terms = adapter?.terms ?? []
-  const sources = adapter?.hits.sources
+  const annotationId = drawer.annotationId
+  const localId = drawer.localId
+  const pins = useCompareStore((s) => s.pins)
+  const togglePin = useCompareStore((s) => s.togglePin)
 
-  const browseNames = useMemo(() => {
-    if (!annotationId || !adapter) return activeNames
-    const row = adapter.rows.find((r) => r.annotationId === annotationId)
-    if (!row) return activeNames
-    // Prefer names this annotation actually matched (exact set, already ≤200).
-    const matched = new Set(
-      row.matchedTerms
-        .map((ti) => terms[ti]?.name)
-        .filter((n): n is string => Boolean(n))
-        .map((n) => n.toLowerCase()),
-    )
-    const fromActive = activeNames.filter((n) => matched.has(n.toLowerCase()))
-    return fromActive.length ? fromActive : activeNames
-  }, [annotationId, adapter, activeNames, terms])
+  const geneQuery = useQuery({
+    queryKey: ["genes-drawer-gene", annotationId, localId],
+    enabled: Boolean(annotationId && localId != null),
+    placeholderData: keepPreviousData,
+    queryFn: ({ signal }) =>
+      getAnnotationGene(annotationId, localId!, { signal }),
+  })
 
-  const browseNamesKey = useMemo(
-    () => canonicalNameCsv(browseNames),
-    [browseNames],
-  )
+  const focusName = useMemo(() => {
+    const g = geneQuery.data
+    if (!g) return null
+    return g.primary_name || g.matches?.[0]?.input || null
+  }, [geneQuery.data])
 
-  const genesQuery = useQuery({
-    queryKey: ["genes-panel-genes", annotationId, browseNamesKey],
-    enabled: Boolean(annotationId),
+  const siblingsQuery = useQuery({
+    queryKey: [
+      "genes-drawer-siblings",
+      annotationId,
+      focusName?.toLowerCase() ?? "",
+    ],
+    enabled: Boolean(annotationId && focusName),
     placeholderData: keepPreviousData,
     queryFn: ({ signal }) =>
       listAnnotationGenes(
-        annotationId!,
-        { names: browseNames, limit: MATCH_SORT_CAP, offset: 0 },
+        annotationId,
+        { names: [focusName!], limit: MATCH_SORT_CAP, offset: 0 },
         { signal },
       ),
   })
 
-  const genes = useMemo(
-    () => sortGenesByMatches(genesQuery.data?.results ?? []),
-    [genesQuery.data],
-  )
-  const selectedGene =
-    panel.localId != null
-      ? genes.find((g) => g.local_id === panel.localId) ?? null
-      : null
-
-  useEffect(() => {
-    if (!onGeneTitle) return
-    if (panel.level !== "gene") {
-      onGeneTitle(null)
-      return
-    }
-    onGeneTitle(
-      selectedGene?.primary_name ||
-        (panel.localId != null ? `Gene ${panel.localId}` : null),
+  const activeGene: AnnotationGeneRow | null = useMemo(() => {
+    if (localId == null) return null
+    const fromSiblings = siblingsQuery.data?.results.find(
+      (g) => g.local_id === localId,
     )
-  }, [onGeneTitle, panel.level, panel.localId, selectedGene])
+    if (fromSiblings) return fromSiblings
+    return geneQuery.data ?? null
+  }, [localId, siblingsQuery.data, geneQuery.data])
 
-  const matchedRow = annotationId
-    ? adapter?.rows.find((r) => r.annotationId === annotationId)
-    : null
+  const siblings = useMemo(() => {
+    if (localId == null || !siblingsQuery.data) return []
+    return locusSiblings(siblingsQuery.data.results, localId)
+  }, [localId, siblingsQuery.data])
 
-  const activeTermIndexes = useMemo(() => {
-    const activeIds = new Set(activeNames.map((n) => n.toLowerCase()))
-    const indexes = new Set<number>()
-    for (let i = 0; i < terms.length; i++) {
-      if (activeIds.has(terms[i]!.name.toLowerCase())) indexes.add(i)
-    }
-    return indexes
-  }, [terms, activeNames])
-
-  const matchedK = useMemo(() => {
-    if (!matchedRow) return 0
-    let k = 0
-    for (const ti of matchedRow.matchedTerms) {
-      if (activeTermIndexes.has(ti)) k += 1
-    }
-    return k
-  }, [matchedRow, activeTermIndexes])
-
-  const missingNames = useMemo(() => {
-    if (!matchedRow || !terms.length) return []
-    const hit = new Set(
-      matchedRow.matchedTerms
-        .filter((ti) => activeTermIndexes.has(ti))
-        .map((ti) => terms[ti]?.name.toLowerCase())
-        .filter(Boolean),
+  const onTogglePin = () => {
+    if (!annotationId || !activeGene) return
+    const input = pinInputFromGene(
+      annotationId,
+      drawer.species ?? "Annotation",
+      drawer.source ?? 0,
+      activeGene,
+      activeGene.primary_name || `Gene ${activeGene.local_id}`,
     )
-    return activeNames.filter((n) => !hit.has(n.toLowerCase()))
-  }, [matchedRow, terms, activeNames, activeTermIndexes])
+    if (!input) return
+    togglePin(input)
+  }
 
-  const openInAnnotationsHref = annotationId
-    ? `${ANNOTATIONS_LIST_PATH}?${ANNOTATION_ID_PARAM}=${encodeURIComponent(annotationId)}`
-    : null
-
-  const totalReported = genesQuery.data?.total ?? genes.length
-  const truncated = totalReported > genes.length
-
-  if (!annotationId) return null
-
-  if (panel.level === "gene") {
-    if (selectedGene) {
-      return (
-        <GenesGeneDetail annotationId={annotationId} gene={selectedGene} />
-      )
-    }
+  if (localId == null) {
     return (
-      <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">
-        {genesQuery.isLoading ? (
-          <Loader2 className="h-4 w-4 animate-spin" />
-        ) : (
-          "Gene not found in this annotation."
-        )}
+      <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center text-sm text-muted-foreground">
+        <p>Click a filled gene cell to view details.</p>
       </div>
     )
   }
 
-  return (
-    <div className="flex-1 min-h-0 overflow-y-auto">
-      <div className="px-3 py-2 border-b space-y-1.5 text-xs">
-        <div className="flex flex-wrap items-center gap-2">
-          <span
-            className="h-2 w-2 rounded-full"
-            style={{ backgroundColor: sourceColor(panel.source ?? 0) }}
-          />
-          <span>{sourceLabel(panel.source ?? 0, sources)}</span>
-          <span className="font-mono text-muted-foreground truncate">
-            {annotationId}
-          </span>
-          {openInAnnotationsHref && (
-            <Link
-              href={openInAnnotationsHref}
-              className="inline-flex items-center gap-1 text-primary hover:underline ml-auto"
-            >
-              Open in Annotations
-              <ExternalLink className="h-3 w-3" />
-            </Link>
-          )}
-        </div>
-        <p className="text-muted-foreground">
-          {matchedK} of {termCount} names found
-        </p>
-        {missingNames.length > 0 && (
-          <p className="text-muted-foreground">
-            Missing:{" "}
-            <span className="font-mono">
-              {missingNames.slice(0, 12).join(", ")}
-              {missingNames.length > 12
-                ? ` +${missingNames.length - 12}`
-                : ""}
-            </span>
-          </p>
-        )}
-        {truncated && (
-          <p className="text-amber-700 dark:text-amber-400">
-            Showing {genes.length.toLocaleString()} of{" "}
-            {totalReported.toLocaleString()} genes
-          </p>
-        )}
+  const loading =
+    (geneQuery.isLoading && !activeGene) ||
+    (siblingsQuery.isLoading && !activeGene)
+  const error = geneQuery.error || siblingsQuery.error
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center gap-2 py-16 text-sm text-muted-foreground">
+        <Loader2 className="h-4 w-4 animate-spin" />
+        Loading gene…
       </div>
-      {genesQuery.isLoading && (
-        <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          Loading genes…
+    )
+  }
+
+  if (error && !activeGene) {
+    return (
+      <p className="px-4 py-6 text-sm text-destructive">
+        {error instanceof XrefsApiError
+          ? error.detail?.message ?? error.message
+          : String(error)}
+      </p>
+    )
+  }
+
+  if (!activeGene) {
+    return (
+      <p className="px-4 py-6 text-sm text-muted-foreground">
+        Gene not found in this annotation.
+      </p>
+    )
+  }
+
+  const pinned = pins.some(
+    (p) => p.id === pinIdFor(annotationId, activeGene.local_id),
+  )
+  const showChooser = siblings.length > 1
+
+  return (
+    <div className="flex h-full min-h-0 flex-col overflow-y-auto">
+      {showChooser ? (
+        <div className="shrink-0 space-y-2 border-b border-border/70 bg-amber-50/80 px-3 py-2.5 text-xs dark:bg-amber-950/30">
+          <p className="text-amber-900 dark:text-amber-200">
+            {siblings.length} genes share this locus and match. Choose which
+            gene ID to inspect (transcripts and pin follow your choice).
+          </p>
+          <div
+            role="group"
+            aria-label="Genes at this locus"
+            className="flex flex-wrap gap-1"
+          >
+            {siblings.map((g) => {
+              const selected = g.local_id === activeGene.local_id
+              const label = shortGeneId(g)
+              return (
+                <button
+                  key={g.local_id}
+                  type="button"
+                  aria-pressed={selected}
+                  title={g.source_gene_id ?? label}
+                  onClick={() => {
+                    if (g.local_id !== activeGene.local_id) {
+                      onToggleGene(g.local_id)
+                    }
+                  }}
+                  className={cn(
+                    "rounded-md border px-2 py-1 font-mono text-[11px] tabular-nums",
+                    selected
+                      ? "border-primary bg-primary/10 text-primary"
+                      : "border-border bg-background text-muted-foreground hover:bg-muted/50",
+                  )}
+                >
+                  {label}
+                </button>
+              )
+            })}
+          </div>
         </div>
-      )}
-      {genesQuery.error && (
-        <p className="px-3 py-4 text-sm text-destructive">
-          {genesQuery.error instanceof XrefsApiError
-            ? genesQuery.error.detail?.message ?? genesQuery.error.message
-            : String(genesQuery.error)}
-        </p>
-      )}
-      <ul className="divide-y">
-        {genes.map((gene) => (
-          <li key={gene.local_id}>
-            <GenesGeneRow
-              gene={gene}
-              onSelect={() => onOpenGene(gene.local_id)}
-            />
-          </li>
-        ))}
-      </ul>
+      ) : null}
+
+      <GenesGeneDetail
+        annotationId={annotationId}
+        gene={activeGene}
+        pinned={pinned}
+        onTogglePin={onTogglePin}
+      />
     </div>
   )
 }

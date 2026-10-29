@@ -1,6 +1,9 @@
+import type { FlatTreeNode } from "@/lib/api/taxons"
 import type { HitTerm } from "@/lib/api/xrefs-types"
 import type { DecodedHitRow } from "@/lib/genes/hits"
+import { speciesForTaxid } from "@/lib/genes/species"
 import type { HitTreeNode } from "@/lib/genes/tree"
+import type { CountUnit } from "@/lib/genes/view"
 
 export type HeatmapColumnOrder = "prevalence" | "typed"
 
@@ -70,9 +73,82 @@ export function cellTooltip(
   geneName: string,
   matched: number,
   n: number,
+  unit: CountUnit = "annotations",
 ): string {
   const pct = n > 0 ? Math.round((matched / n) * 100) : 0
-  return `${taxonLabel} · ${geneName} · ${matched.toLocaleString()} of ${n.toLocaleString()} annotations (${pct}%)`
+  const unitLabel = unit === "species" ? "species" : "annotations"
+  return `${taxonLabel} · ${geneName} · ${matched.toLocaleString()} of ${n.toLocaleString()} ${unitLabel} (${pct}%)`
+}
+
+/** Per-tip species contribution for species-mode heatmap counts. */
+export interface SpeciesTipVector {
+  speciesId: number
+  /** 0/1 presence per column for this species. */
+  byName: number[]
+}
+
+/**
+ * Build tip→species vectors: each tip taxid maps to its species id and a
+ * 0/1 gene-presence vector (any annotation of that species with gene i).
+ */
+export function tipSpeciesVectors(
+  rows: DecodedHitRow[],
+  terms: HitTerm[],
+  columns: HeatmapColumn[],
+  taxonIndex: Map<string, FlatTreeNode>,
+): Map<number, SpeciesTipVector> {
+  const colIndex = new Map(columns.map((c, i) => [c.id, i]))
+  const bySpecies = new Map<number, number[]>()
+  const tipToSpecies = new Map<number, number>()
+
+  for (const row of rows) {
+    const species = speciesForTaxid(row.taxid, taxonIndex)
+    tipToSpecies.set(row.taxid, species.id)
+    let byName = bySpecies.get(species.id)
+    if (!byName) {
+      byName = new Array(columns.length).fill(0)
+      bySpecies.set(species.id, byName)
+    }
+    const seen = new Set<number>()
+    for (const ti of row.matchedTerms) {
+      const term = terms[ti]
+      if (!term) continue
+      const idx = colIndex.get(term.name.toLowerCase())
+      if (idx == null || seen.has(idx)) continue
+      seen.add(idx)
+      byName[idx] = 1
+    }
+  }
+
+  const out = new Map<number, SpeciesTipVector>()
+  for (const [taxid, speciesId] of tipToSpecies) {
+    const byName = bySpecies.get(speciesId) ?? new Array(columns.length).fill(0)
+    out.set(taxid, { speciesId, byName })
+  }
+  return out
+}
+
+/**
+ * Fold tip species vectors under a node, de-duplicating species among tips.
+ * `n` = distinct species; `byName[i]` = species with gene i.
+ */
+export function foldNodeSpeciesCounts(
+  tipTaxids: Iterable<number>,
+  tipVectors: Map<number, SpeciesTipVector>,
+  columnCount: number,
+): NodeNameCounts {
+  const byName = new Array(columnCount).fill(0)
+  const seenSpecies = new Set<number>()
+  for (const taxid of tipTaxids) {
+    const tip = tipVectors.get(taxid)
+    if (!tip) continue
+    if (seenSpecies.has(tip.speciesId)) continue
+    seenSpecies.add(tip.speciesId)
+    for (let i = 0; i < columnCount; i++) {
+      if (tip.byName[i]) byName[i] += 1
+    }
+  }
+  return { n: seenSpecies.size, byName }
 }
 
 /**
@@ -254,6 +330,17 @@ export function heatmapColumnLayout(colCount: number): HeatmapColumnLayout {
   if (n <= 8) return { cellW: 64, rotateHeaders: n > HEATMAP_ROTATE_HEADER_AT }
   if (n <= 20) return { cellW: 40, rotateHeaders: true }
   return { cellW: 28, rotateHeaders: true }
+}
+
+/**
+ * Wider gene columns for the Annotations matrix (always-horizontal headers).
+ * Horizontal scroll + virtual columns handle large N; floor is 72px.
+ */
+export function annotationsGeneColumnWidth(colCount: number): number {
+  const n = Math.max(0, colCount)
+  if (n <= 12) return 96
+  if (n <= 24) return 80
+  return 72
 }
 
 /** Rotated header height from the longest label, clamped. */

@@ -9,10 +9,14 @@ import { filterKey } from "@/lib/genes/filters"
 import {
   buildTipsByNode,
   foldNodeCounts,
+  foldNodeSpeciesCounts,
   tipNameVectors,
+  tipSpeciesVectors,
   type HeatmapColumn,
   type NodeNameCounts,
+  type SpeciesTipVector,
 } from "@/lib/genes/heatmap"
+import { speciesForTaxid } from "@/lib/genes/species"
 import {
   buildHitTree,
   hitRankStats,
@@ -21,6 +25,7 @@ import {
   type HitTreeNode,
 } from "@/lib/genes/tree"
 import type { FlatTreeNode } from "@/lib/api/taxons"
+import type { CountUnit } from "@/lib/genes/view"
 
 export interface ResolvedTerm {
   /** Display name (accession). */
@@ -72,11 +77,14 @@ export interface GenesHitsAdapter {
     excludeTerms: Set<string>,
     nodeIds: string[],
     viewRank?: string | null,
+    unit?: CountUnit,
   ): NodeNameCounts[]
   /** Overview tree; `viewRank` re-roots at taxa of that rank. */
   tree(filter: GenesFilter, viewRank?: string | null): HitTree
   /** Per-rank annotation / organism counts for the overview rank select. */
   rankStats(excludeTerms: Set<string>): HitRankStat[]
+  /** Distinct species under the filtered annotation set. */
+  speciesCount(filter: GenesFilter): number
   sourceCounts(filter: Omit<GenesFilter, "sources"> & { sources?: Set<number> }): Map<number, number>
   terms: HitTerm[]
   rows: DecodedHitRow[]
@@ -129,6 +137,12 @@ export function createClientHitsAdapter(
   const treeCache = new Map<string, HitTree>()
   const rankStatsCache = new Map<string, HitRankStat[]>()
   const tipsByNodeCache = new Map<string, Map<string, number[]>>()
+  /** Tip vectors keyed without nodeIds (reusable across Load more / export). */
+  const tipVectorCache = new Map<
+    string,
+    Map<number, NodeNameCounts> | Map<number, SpeciesTipVector>
+  >()
+  /** Folded node counts: tipKey + nodeIds. */
   const matrixCache = new Map<string, NodeNameCounts[]>()
 
   function excludeKey(exclude: Set<string>): string {
@@ -164,12 +178,52 @@ export function createClientHitsAdapter(
     return value
   }
 
-  function rowMatchesName(entry: IndexedRow, name: string | null): boolean {
-    if (!name) return true
-    const want = name.toLowerCase()
-    const ti = termByName.get(want)
-    if (ti == null) return false
-    return entry.terms.includes(ti)
+  function effectiveIncludeTaxids(filter: GenesFilter): string[] {
+    if (filter.includeTaxids?.length) return filter.includeTaxids
+    return filter.taxid ? [filter.taxid] : []
+  }
+
+  function effectiveIncludeNames(filter: GenesFilter): string[] {
+    if (filter.includeNames?.length) return filter.includeNames
+    return filter.name ? [filter.name] : []
+  }
+
+  function rowMatchesNames(
+    entry: IndexedRow,
+    names: string[],
+    match: "any" | "all",
+  ): boolean {
+    if (!names.length) return true
+    const hits = names.map((name) => {
+      const ti = termByName.get(name.toLowerCase())
+      return ti != null && entry.terms.includes(ti)
+    })
+    return match === "all" ? hits.every(Boolean) : hits.some(Boolean)
+  }
+
+  function rowUnderAnyTaxid(
+    entry: IndexedRow,
+    taxids: string[],
+    tree: HitTree,
+  ): boolean {
+    const path = tree.lineageByTaxid.get(entry.row.taxid)
+    if (!path) return false
+    return taxids.some((id) => path.has(id))
+  }
+
+  function rowMatchesCells(
+    entry: IndexedRow,
+    cells: { taxid: string; gene: string }[],
+    tree: HitTree,
+  ): boolean {
+    if (!cells.length) return true
+    const path = tree.lineageByTaxid.get(entry.row.taxid)
+    if (!path) return false
+    return cells.some((cell) => {
+      if (!path.has(cell.taxid)) return false
+      const ti = termByName.get(cell.gene.toLowerCase())
+      return ti != null && entry.terms.includes(ti)
+    })
   }
 
   function filterIndexed(
@@ -179,25 +233,45 @@ export function createClientHitsAdapter(
       applyTaxon?: boolean
       applyName?: boolean
       applySources?: boolean
+      applyCells?: boolean
     } = {},
   ): { entries: IndexedRow[]; indexes: number[]; kByRow: number[] } {
     const applyCoverage = opts.applyCoverage !== false
     const applyTaxon = opts.applyTaxon !== false
     const applyName = opts.applyName !== false
     const applySources = opts.applySources !== false
+    const applyCells = opts.applyCells !== false
     const { activeSet, kByRow } = layer1(filter.excludeTerms)
-    const tree = applyTaxon && filter.taxid ? getTree(filter) : null
+    const includeTaxids = effectiveIncludeTaxids(filter)
+    const includeNames = effectiveIncludeNames(filter)
+    const includeCells = filter.includeCells ?? []
+    const includeAnnotationIds = filter.includeAnnotationIds ?? []
+    const annIdSet =
+      includeAnnotationIds.length > 0
+        ? new Set(includeAnnotationIds)
+        : null
+    const needsTree =
+      (applyTaxon && includeTaxids.length > 0) ||
+      (applyCells && includeCells.length > 0)
+    const tree = needsTree ? getTree(filter) : null
 
     const entries: IndexedRow[] = []
     const indexes: number[] = []
     for (let i = 0; i < indexed.length; i++) {
       const entry = indexed[i]!
+      if (annIdSet && !annIdSet.has(entry.row.annotationId)) continue
       if (applySources && !filter.sources.has(entry.row.source)) continue
-      if (applyName && !rowMatchesName(entry, filter.name)) continue
-      if (applyTaxon && filter.taxid && tree) {
-        if (!tree.lineageByTaxid.get(entry.row.taxid)?.has(filter.taxid)) {
-          continue
-        }
+      if (
+        applyName &&
+        !rowMatchesNames(entry, includeNames, filter.nameMatch ?? "any")
+      ) {
+        continue
+      }
+      if (applyTaxon && includeTaxids.length && tree) {
+        if (!rowUnderAnyTaxid(entry, includeTaxids, tree)) continue
+      }
+      if (applyCells && includeCells.length && tree) {
+        if (!rowMatchesCells(entry, includeCells, tree)) continue
       }
       const k = kByRow[i] ?? 0
       if (k <= 0) continue
@@ -245,12 +319,21 @@ export function createClientHitsAdapter(
 
   function overviewRows(filter: GenesFilter): DecodedHitRow[] {
     const { entries } = filterIndexed(
-      { ...filter, taxid: null, name: null },
+      {
+        ...filter,
+        taxid: null,
+        name: null,
+        includeTaxids: [],
+        includeNames: [],
+        includeCells: [],
+        includeAnnotationIds: [],
+      },
       {
         applyCoverage: false,
         applyTaxon: false,
         applyName: false,
         applySources: false,
+        applyCells: false,
       },
     )
     return entries.map((e) => e.row)
@@ -270,11 +353,8 @@ export function createClientHitsAdapter(
     return tree
   }
 
-  function getRankStats(excludeTerms: Set<string>): HitRankStat[] {
-    const key = [...excludeTerms].sort().join(",")
-    const cached = rankStatsCache.get(key)
-    if (cached) return cached
-    const filter: GenesFilter = {
+  function emptyScopeFilter(excludeTerms: Set<string>): GenesFilter {
+    return {
       sources: new Set([1, 2, 3]),
       minMatched: 0,
       maxMatched: Number.MAX_SAFE_INTEGER,
@@ -282,7 +362,19 @@ export function createClientHitsAdapter(
       excludeTerms,
       taxid: null,
       name: null,
+      includeTaxids: [],
+      includeNames: [],
+      nameMatch: "any",
+      includeCells: [],
+      includeAnnotationIds: [],
     }
+  }
+
+  function getRankStats(excludeTerms: Set<string>): HitRankStat[] {
+    const key = [...excludeTerms].sort().join(",")
+    const cached = rankStatsCache.get(key)
+    if (cached) return cached
+    const filter = emptyScopeFilter(excludeTerms)
     const stats = hitRankStats(overviewRows(filter), taxonIndex, includeTaxids)
     rankStatsCache.set(key, stats)
     return stats
@@ -298,19 +390,12 @@ export function createClientHitsAdapter(
     if (cached) return cached
 
     const { active, activeSet } = layer1(excludeTerms)
-    const baseFilter: GenesFilter = {
-      sources: new Set([1, 2, 3]),
-      minMatched: 0,
-      maxMatched: Number.MAX_SAFE_INTEGER,
-      matchedSegments: null,
-      excludeTerms,
-      taxid: null,
-      name: null,
-    }
+    const baseFilter = emptyScopeFilter(excludeTerms)
     const { entries } = filterIndexed(baseFilter, {
       applyCoverage: false,
       applyTaxon: false,
       applyName: false,
+      applyCells: false,
     })
     const counts = new Map<number, number>()
     for (const entry of entries) {
@@ -339,8 +424,17 @@ export function createClientHitsAdapter(
 
   function coverage(filter: GenesFilter): CoverageResult {
     const { entries, indexes, kByRow } = filterIndexed(
-      { ...filter, name: null },
-      { applyCoverage: false, applyTaxon: true, applyName: false },
+      {
+        ...filter,
+        name: null,
+        includeNames: [],
+      },
+      {
+        applyCoverage: false,
+        applyTaxon: true,
+        applyName: false,
+        applyCells: true,
+      },
     )
     const n = termCount(filter.excludeTerms)
     const matchedCounts = indexes.map((i) => kByRow[i] ?? 0)
@@ -377,22 +471,19 @@ export function createClientHitsAdapter(
     return taxids.size
   }
 
+  function speciesCount(filter: GenesFilter): number {
+    const seen = new Set<number>()
+    for (const entry of cachedFilter(filter).entries) {
+      seen.add(speciesForTaxid(entry.row.taxid, taxonIndex).id)
+    }
+    return seen.size
+  }
+
   function tipsIndexFor(
     excludeTerms: Set<string>,
     viewRank: string | null = null,
   ): { tree: HitTree; tipsByNode: Map<string, number[]> } {
-    const tree = getTree(
-      {
-        sources: new Set([1, 2, 3]),
-        minMatched: 0,
-        maxMatched: Number.MAX_SAFE_INTEGER,
-        matchedSegments: null,
-        excludeTerms,
-        taxid: null,
-        name: null,
-      },
-      viewRank,
-    )
+    const tree = getTree(emptyScopeFilter(excludeTerms), viewRank)
     const key = overviewKey(excludeTerms, viewRank)
     let tipsByNode = tipsByNodeCache.get(key)
     if (!tipsByNode) {
@@ -412,12 +503,21 @@ export function createClientHitsAdapter(
     const tips = tipsByNode.get(nodeId) ?? []
     const tipSet = new Set(tips)
     const { entries } = filterIndexed(
-      { ...filter, taxid: null, name: null },
+      {
+        ...filter,
+        taxid: null,
+        name: null,
+        includeTaxids: [],
+        includeNames: [],
+        includeCells: [],
+        includeAnnotationIds: [],
+      },
       {
         applyCoverage: false,
         applyTaxon: false,
         applyName: false,
         applySources: false,
+        applyCells: false,
       },
     )
     const under = entries.filter((e) => tipSet.has(e.row.taxid))
@@ -442,47 +542,59 @@ export function createClientHitsAdapter(
     excludeTerms: Set<string>,
     nodeIds: string[],
     viewRank: string | null = null,
+    unit: CountUnit = "annotations",
   ): NodeNameCounts[] {
     const resolved = activeTerms(excludeTerms)
-    const matrixKey = `${overviewKey(excludeTerms, viewRank)}::${resolved.map((t) => t.id).join(",")}::${nodeIds.join(",")}`
+    const tipKey = `${overviewKey(excludeTerms, viewRank)}::${unit}::${resolved.map((t) => t.id).join(",")}`
+    const matrixKey = `${tipKey}::${nodeIds.join(",")}`
     const cached = matrixCache.get(matrixKey)
     if (cached) return cached
 
     const { tipsByNode } = tipsIndexFor(excludeTerms, viewRank)
-    const overviewFilter: GenesFilter = {
-      sources: new Set([1, 2, 3]),
-      minMatched: 0,
-      maxMatched: Number.MAX_SAFE_INTEGER,
-      matchedSegments: null,
-      excludeTerms,
-      taxid: null,
-      name: null,
-    }
-    const { entries } = filterIndexed(overviewFilter, {
-      applyCoverage: false,
-      applyTaxon: false,
-      applyName: false,
-      applySources: false,
-    })
-    const columns: HeatmapColumn[] = resolved.map((t) => ({
-      name: t.name,
-      id: t.id,
-      prevalence: t.count,
-    }))
-    const tipVectors = tipNameVectors(
-      entries.map((e) => e.row),
-      terms,
-      columns,
-    )
     const empty: NodeNameCounts = {
       n: 0,
       byName: new Array(resolved.length).fill(0),
     }
-    const result = nodeIds.map((id) => {
-      const tips = tipsByNode.get(id)
-      if (!tips?.length) return empty
-      return foldNodeCounts(tips, tipVectors, resolved.length)
-    })
+
+    let tipVectors = tipVectorCache.get(tipKey)
+    if (!tipVectors) {
+      const overviewFilter = emptyScopeFilter(excludeTerms)
+      const { entries } = filterIndexed(overviewFilter, {
+        applyCoverage: false,
+        applyTaxon: false,
+        applyName: false,
+        applySources: false,
+        applyCells: false,
+      })
+      const columns: HeatmapColumn[] = resolved.map((t) => ({
+        name: t.name,
+        id: t.id,
+        prevalence: t.count,
+      }))
+      const tipRows = entries.map((e) => e.row)
+      tipVectors =
+        unit === "species"
+          ? tipSpeciesVectors(tipRows, terms, columns, taxonIndex)
+          : tipNameVectors(tipRows, terms, columns)
+      tipVectorCache.set(tipKey, tipVectors)
+    }
+
+    let result: NodeNameCounts[]
+    if (unit === "species") {
+      const vectors = tipVectors as Map<number, SpeciesTipVector>
+      result = nodeIds.map((id) => {
+        const tips = tipsByNode.get(id)
+        if (!tips?.length) return empty
+        return foldNodeSpeciesCounts(tips, vectors, resolved.length)
+      })
+    } else {
+      const vectors = tipVectors as Map<number, NodeNameCounts>
+      result = nodeIds.map((id) => {
+        const tips = tipsByNode.get(id)
+        if (!tips?.length) return empty
+        return foldNodeCounts(tips, vectors, resolved.length)
+      })
+    }
     matrixCache.set(matrixKey, result)
     return result
   }
@@ -502,12 +614,18 @@ export function createClientHitsAdapter(
         excludeTerms: filter.excludeTerms,
         taxid: filter.taxid ?? null,
         name: filter.name ?? null,
+        includeTaxids: filter.includeTaxids ?? [],
+        includeNames: filter.includeNames ?? [],
+        nameMatch: filter.nameMatch ?? "any",
+        includeCells: filter.includeCells ?? [],
+        includeAnnotationIds: filter.includeAnnotationIds ?? [],
       },
       {
         applyCoverage: false,
         applyTaxon: true,
         applyName: true,
         applySources: false,
+        applyCells: true,
       },
     )
     const counts = new Map<number, number>()
@@ -523,6 +641,7 @@ export function createClientHitsAdapter(
     coverage,
     annotations,
     organismCount,
+    speciesCount,
     nodeCounts,
     tree: getTree,
     overviewRowCounts,

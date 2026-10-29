@@ -1,7 +1,8 @@
 "use client"
 
 import { useEffect, useMemo, useRef, useState } from "react"
-import { Minus, Network, Plus } from "lucide-react"
+import { ChevronDown, Minus, Plus } from "lucide-react"
+
 
 import { FilterChip } from "@/components/annotations/active-filters/filter-chip"
 import { Button } from "@/components/ui/button"
@@ -11,6 +12,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover"
+import { formatScopeSummary } from "@/lib/genes/gene-set"
 import { MAX_TAXIDS } from "@/lib/genes/prefix"
 import type { SelectedTaxon } from "@/lib/genes/taxa"
 import { sameTaxa } from "@/lib/genes/taxa"
@@ -39,6 +41,7 @@ interface GenesTaxaPopoverProps {
   excludeTaxa: SelectedTaxon[]
   onApply: (includeTaxa: SelectedTaxon[], excludeTaxa: SelectedTaxon[]) => void
   disabled?: boolean
+  className?: string
 }
 
 export function GenesTaxaPopover({
@@ -46,6 +49,7 @@ export function GenesTaxaPopover({
   excludeTaxa,
   onApply,
   disabled,
+  className,
 }: GenesTaxaPopoverProps) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState("")
@@ -144,7 +148,7 @@ export function GenesTaxaPopover({
     }
   }
 
-  const total = includeTaxa.length + excludeTaxa.length
+  const scopeLabel = formatScopeSummary(includeTaxa, excludeTaxa)
 
   return (
     <Popover open={open} onOpenChange={handleOpenChange}>
@@ -152,14 +156,16 @@ export function GenesTaxaPopover({
         <Button
           type="button"
           variant="outline"
-          className="h-11 shrink-0 rounded-xl"
-          disabled={disabled}
-        >
-          <Network className="h-4 w-4" />
-          Taxa
-          {total > 0 && (
-            <span className="tabular-nums text-muted-foreground">{total}</span>
+          className={cn(
+            "h-11 max-w-[16rem] shrink-0 gap-1.5 rounded-xl px-3",
+            className,
           )}
+          disabled={disabled}
+          title={scopeLabel}
+        >
+          <span className="text-muted-foreground">Scope:</span>
+          <span className="min-w-0 truncate font-medium">{scopeLabel}</span>
+          <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         </Button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-96 space-y-3 p-3">

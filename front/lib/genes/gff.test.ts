@@ -5,8 +5,11 @@ import {
   cdsLength,
   classifyUtr,
   parseGff,
+  pickLongestTranscript,
   sortExonsByStrand,
+  transcriptSpan,
   type GffInterval,
+  type GffTranscript,
 } from "./gff"
 
 const GENE_ID = "gene:TP53"
@@ -137,5 +140,32 @@ describe("parseGff", () => {
 
   it("sums cds length", () => {
     assert.equal(cdsLength([{ start: 1, end: 10 }, { start: 21, end: 30 }]), 20)
+  })
+
+  it("picks longest genomic span transcript", () => {
+    const short: GffTranscript = {
+      id: "a",
+      strand: "+",
+      start: 1,
+      end: 100,
+      exons: [],
+      utrs: [],
+      cds: [{ start: 1, end: 90 }],
+      introns: [],
+      synthetic: false,
+    }
+    const long: GffTranscript = {
+      id: "b",
+      strand: "+",
+      start: 1,
+      end: 500,
+      exons: [],
+      utrs: [],
+      cds: [{ start: 1, end: 50 }],
+      introns: [],
+      synthetic: false,
+    }
+    assert.equal(transcriptSpan(long), 500)
+    assert.equal(pickLongestTranscript([short, long])?.id, "b")
   })
 })

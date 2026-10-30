@@ -257,12 +257,20 @@ describe("heatmapHeaderHeight", () => {
     assert.equal(heatmapHeaderHeight(false, ["TP53", "BRCA1"]), 40)
   })
 
-  it("clamps rotated height from the longest name", () => {
-    const short = heatmapHeaderHeight(true, ["A", "BC"])
-    const long = heatmapHeaderHeight(true, ["A".repeat(30)])
-    assert.ok(short >= 72)
-    assert.ok(long <= 120)
-    assert.ok(long > short)
+  it("keeps a compact rotated strip from cell width", () => {
+    const narrow = heatmapHeaderHeight(true, ["SELENOK"], 28)
+    const mid = heatmapHeaderHeight(true, ["SELENOK"], 44)
+    const wide = heatmapHeaderHeight(true, ["SELENOK"], 64)
+    assert.ok(narrow >= 56)
+    assert.ok(narrow <= 72)
+    assert.ok(mid <= 72)
+    assert.ok(wide <= 72)
+    assert.ok(wide >= narrow)
+    // Longest name must not inflate the strip.
+    assert.equal(
+      heatmapHeaderHeight(true, ["A"], 44),
+      heatmapHeaderHeight(true, ["A".repeat(40)], 44),
+    )
   })
 })
 

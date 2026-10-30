@@ -50,8 +50,6 @@ export function useGenesExplorer() {
   const queryNames = useGenesStore((s) => s.queryNames)
   const excluded = useGenesStore((s) => s.excluded)
   const listFilters = useGenesStore((s) => s.listFilters)
-  const distributionSelection = useGenesStore((s) => s.distributionSelection)
-  const selectionAnchor = useGenesStore((s) => s.selectionAnchor)
   const sources = useGenesStore((s) => s.sources)
   const coverage = useGenesStore((s) => s.coverage)
   const expanded = useGenesStore((s) => s.expanded)
@@ -65,6 +63,7 @@ export function useGenesExplorer() {
   const keep = useGenesStore((s) => s.keep)
   const group = useGenesStore((s) => s.group)
   const sort = useGenesStore((s) => s.sort)
+  const sortDir = useGenesStore((s) => s.sortDir)
   const search = useGenesStore((s) => s.search)
   const annotationsSelection = useGenesStore((s) => s.annotationsSelection)
   const annotationsSelectionAnchor = useGenesStore(
@@ -76,11 +75,6 @@ export function useGenesExplorer() {
   const toggleSource = useGenesStore((s) => s.toggleSource)
   const setListFilters = useGenesStore((s) => s.setListFilters)
   const patchListFilters = useGenesStore((s) => s.patchListFilters)
-  const dispatchSelection = useGenesStore((s) => s.dispatchSelection)
-  const clearDistributionSelection = useGenesStore(
-    (s) => s.clearDistributionSelection,
-  )
-  const setSelectionAnchor = useGenesStore((s) => s.setSelectionAnchor)
   const dispatchAnnotationsSelection = useGenesStore(
     (s) => s.dispatchAnnotationsSelection,
   )
@@ -147,6 +141,7 @@ export function useGenesExplorer() {
         keep: parsed.keep,
         group: parsed.group,
         sort: parsed.sort,
+        sortDir: parsed.sortDir,
         search: parsed.search,
       })
       setUrlReady(true)
@@ -307,9 +302,10 @@ export function useGenesExplorer() {
       keep,
       group: "none",
       sort,
+      sortDir,
       search,
     })
-  }, [adapter, filter, taxonIndex, keep, sort, search, view])
+  }, [adapter, filter, taxonIndex, keep, sort, sortDir, search, view])
 
   const coverageData = useMemo(
     () =>
@@ -384,6 +380,7 @@ export function useGenesExplorer() {
       keep,
       group,
       sort,
+      sortDir,
       search,
       ready: urlReady,
     },
@@ -428,8 +425,6 @@ export function useGenesExplorer() {
     refetch: () => void hitsQuery.refetch(),
 
     listFilters,
-    distributionSelection,
-    selectionAnchor,
     annotationsSelection,
     annotationsSelectionAnchor,
     annotationsPipeline,
@@ -438,6 +433,7 @@ export function useGenesExplorer() {
     keep,
     group,
     sort,
+    sortDir,
     search,
     expanded,
     drawer,
@@ -462,9 +458,6 @@ export function useGenesExplorer() {
     toggleSource,
     setListFilters,
     patchListFilters,
-    dispatchSelection,
-    clearDistributionSelection,
-    setSelectionAnchor,
     dispatchAnnotationsSelection,
     clearAnnotationsSelection,
     setAnnotationsSelectionAnchor,

@@ -12,7 +12,6 @@ import {
   useState,
   type CSSProperties,
   type FocusEvent,
-  type MouseEvent,
   type PointerEvent,
   type RefObject,
 } from "react"
@@ -27,7 +26,6 @@ import {
   HEATMAP_COUNT_MIN_CELL_W,
   type NodeNameCounts,
 } from "@/lib/genes/heatmap"
-import type { DistributionSelection } from "@/lib/genes/selection"
 import type { FlatHitTreeRow } from "@/lib/genes/tree"
 import { useVirtualColumns } from "@/lib/genes/virtual"
 import type { CountUnit } from "@/lib/genes/view"
@@ -41,6 +39,46 @@ const GAP = 4
 const MIN_CELL_W = 44
 const EMPTY_COUNTS: NodeNameCounts = { n: 0, byName: [] }
 
+interface CanvasTheme {
+  primary: string
+  muted: string
+  foreground: string
+  bar: string
+}
+
+/**
+ * Resolve a CSS color (oklch / hsl / space-separated RGB) for canvas fillStyle.
+ * Wrapping oklch tokens in `rgb(...)` is invalid and paints black.
+ */
+function cssColor(raw: string, fallback: string, alpha?: number): string {
+  const v = raw.trim() || fallback
+  const withAlpha = (solid: string): string => {
+    if (alpha == null) return solid
+    return `color-mix(in oklab, ${solid} ${Math.round(alpha * 100)}%, transparent)`
+  }
+  // Legacy shadcn space-separated channels: "37 99 235"
+  if (/^[\d.]+\s+[\d.]+\s+[\d.]+$/.test(v)) {
+    return alpha != null ? `rgb(${v} / ${alpha})` : `rgb(${v})`
+  }
+  return withAlpha(v)
+}
+
+function readCanvasTheme(el: HTMLElement | null): CanvasTheme {
+  const styles = el ? getComputedStyle(el) : null
+  const primary =
+    styles?.getPropertyValue("--primary").trim() || "oklch(0.58 0.13 215)"
+  const muted =
+    styles?.getPropertyValue("--muted").trim() || "oklch(0.96 0.01 240)"
+  const foreground =
+    styles?.getPropertyValue("--foreground").trim() || "oklch(0.2 0.02 240)"
+  return {
+    primary: cssColor(primary, "oklch(0.58 0.13 215)"),
+    muted: cssColor(muted, "oklch(0.96 0.01 240)"),
+    foreground: cssColor(foreground, "oklch(0.2 0.02 240)", 0.9),
+    bar: cssColor(primary, "oklch(0.58 0.13 215)", 0.85),
+  }
+}
+
 export interface HeatmapNameColumn {
   name: string
   id: string
@@ -53,27 +91,12 @@ interface GenesHeatmapTableProps {
   rows: FlatHitTreeRow[]
   rowCounts: NodeNameCounts[]
   expanded: Set<string>
-  selection: DistributionSelection
   unit: CountUnit
   /** Absolute horizontal bars when a single gene column is active. */
   singleGeneBars?: boolean
   onToggleExpand: (id: string) => void
-  onSelectRow: (
-    id: string,
-    opts: { toggle: boolean; shift: boolean },
-  ) => void
-  onSelectCol: (
-    name: string,
-    opts: { toggle: boolean; shift: boolean },
-  ) => void
-  onSelectCell: (
-    taxid: string,
-    gene: string,
-    opts: { toggle: boolean; shift: boolean },
-  ) => void
   remaining: number
   onLoadMore: () => void
-  taxonTotal?: number
   className?: string
 }
 
@@ -88,22 +111,6 @@ export interface HeatmapTooltipHandle {
   show: (state: TooltipState) => void
   move: (x: number, y: number) => void
   hide: () => void
-}
-
-function prefersReducedMotion(): boolean {
-  if (typeof window === "undefined") return false
-  return window.matchMedia("(prefers-reduced-motion: reduce)").matches
-}
-
-function modOpts(e: {
-  metaKey: boolean
-  ctrlKey: boolean
-  shiftKey: boolean
-}): { toggle: boolean; shift: boolean } {
-  return {
-    toggle: e.metaKey || e.ctrlKey,
-    shift: e.shiftKey && !(e.metaKey || e.ctrlKey),
-  }
 }
 
 function useScrollShadows(ref: RefObject<HTMLElement | null>) {
@@ -172,7 +179,7 @@ const HeatmapFloatingTooltip = forwardRef<HeatmapTooltipHandle>(
       >
         <div className="font-medium leading-snug">{tip.primary}</div>
         {tip.secondary ? (
-          <div className="mt-0.5 text-[11px] text-muted-foreground">
+          <div className="mt-0.5 text-xs text-muted-foreground">
             {tip.secondary}
           </div>
         ) : null}
@@ -186,13 +193,8 @@ interface ColumnHeaderProps {
   cellW: number
   headerH: number
   rotateHeaders: boolean
-  selected: boolean
   scrolledY: boolean
   unit: CountUnit
-  onSelectCol: (
-    name: string,
-    opts: { toggle: boolean; shift: boolean },
-  ) => void
 }
 
 const ColumnHeader = memo(function ColumnHeader({
@@ -200,64 +202,42 @@ const ColumnHeader = memo(function ColumnHeader({
   cellW,
   headerH,
   rotateHeaders,
-  selected,
   scrolledY,
   unit,
-  onSelectCol,
 }: ColumnHeaderProps) {
   const unitLabel = unit === "species" ? "species" : "annotations"
   const tipPrimary = `${col.name} · ${col.count.toLocaleString()} ${unitLabel}`
-
-  const label = (
-    <span
-      className={cn(
-        "max-w-full font-mono text-[11px] font-semibold uppercase tracking-wide",
-        rotateHeaders
-          ? "[writing-mode:vertical-rl] rotate-180 truncate"
-          : "truncate",
-      )}
-    >
-      {col.name}
-    </span>
-  )
 
   return (
     <div
       role="columnheader"
       data-heatmap-col={col.id}
       data-tip-primary={tipPrimary}
+      tabIndex={0}
+      aria-label={`${col.name}, ${col.count.toLocaleString()} ${unitLabel}`}
       className={cn(
         "shrink-0 bg-card/95 p-0 backdrop-blur supports-[backdrop-filter]:bg-card/80",
         "shadow-[0_1px_0_0_var(--border)]",
         scrolledY && "shadow-[0_4px_8px_-4px_rgba(0,0,0,0.12)]",
-        selected && "bg-primary/10",
       )}
       style={{
         width: cellW,
         minWidth: cellW,
         height: headerH,
-        maxHeight: "7rem",
       }}
     >
-      <button
-        type="button"
-        className={cn(
-          "relative flex h-full w-full flex-col items-center justify-end gap-0.5 px-1 pb-1.5 pt-2",
-          "hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-          selected ? "text-primary" : "text-foreground",
-        )}
-        aria-pressed={selected}
-        aria-label={`Select ${col.name}, ${col.count.toLocaleString()} ${unitLabel}`}
-        onClick={(e) => onSelectCol(col.name, modOpts(e))}
-      >
-        {label}
-        {selected ? (
-          <span
-            className="absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-primary"
-            aria-hidden
-          />
-        ) : null}
-      </button>
+      <div className="relative flex h-full w-full items-end justify-center px-0.5 pb-1.5 text-foreground">
+        <span
+          className={cn(
+            "max-h-full overflow-hidden text-ellipsis font-mono text-[11px] font-semibold uppercase leading-none tracking-wide",
+            rotateHeaders
+              ? "[writing-mode:vertical-rl] rotate-180"
+              : "max-w-full truncate",
+          )}
+        >
+          {col.name}
+        </span>
+      </div>
     </div>
   )
 })
@@ -271,13 +251,8 @@ interface TaxonCellProps {
   unit: CountUnit
   hasKids: boolean
   open: boolean
-  selected: boolean
   scrolledX: boolean
   onToggleExpand: (id: string) => void
-  onSelectRow: (
-    id: string,
-    opts: { toggle: boolean; shift: boolean },
-  ) => void
 }
 
 const TaxonCell = memo(function TaxonCell({
@@ -289,12 +264,12 @@ const TaxonCell = memo(function TaxonCell({
   unit,
   hasKids,
   open,
-  selected,
   scrolledX,
   onToggleExpand,
-  onSelectRow,
 }: TaxonCellProps) {
-  const tipPrimary = rank ? `${label} · ${rank}` : label
+  const tipPrimary = rank
+    ? `${label} · ${rank} · taxid ${nodeId}`
+    : `${label} · taxid ${nodeId}`
   const unitLabel = unit === "species" ? "species" : "annotations"
 
   return (
@@ -303,10 +278,9 @@ const TaxonCell = memo(function TaxonCell({
       data-heatmap-taxon={nodeId}
       data-tip-primary={tipPrimary}
       className={cn(
-        "bg-card text-left font-normal",
+        "border-r border-border bg-card text-left font-normal",
         "group-hover/row:bg-muted/50",
-        selected && "bg-primary/10 group-hover/row:bg-primary/15",
-        scrolledX && "shadow-[4px_0_8px_-4px_rgba(0,0,0,0.12)]",
+        scrolledX && "shadow-[4px_0_8px_-4px_rgba(0,0,0,0.08)]",
       )}
       style={{
         width: TAXON_COL_W,
@@ -315,11 +289,7 @@ const TaxonCell = memo(function TaxonCell({
       }}
     >
       <div
-        className={cn(
-          "relative flex h-full min-w-0 items-center gap-1.5 pr-2",
-          selected &&
-            "before:absolute before:inset-y-1 before:left-0 before:w-0.5 before:rounded-full before:bg-primary",
-        )}
+        className="relative flex h-full min-w-0 items-center gap-1.5 pr-2"
         style={{ paddingLeft: depth * INDENT_PX + 8 }}
       >
         {hasKids ? (
@@ -340,24 +310,18 @@ const TaxonCell = memo(function TaxonCell({
         ) : (
           <span className="w-6 shrink-0" aria-hidden />
         )}
-        <button
-          type="button"
-          className={cn(
-            "min-w-0 flex-1 rounded-sm text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-            selected && "text-foreground",
-          )}
-          aria-pressed={selected}
-          onClick={(e) => onSelectRow(nodeId, modOpts(e))}
-        >
-          <span className="block truncate text-sm font-semibold leading-tight">
+        <div className="min-w-0 flex-1 text-left" tabIndex={0}>
+          <span className="block truncate text-sm font-medium leading-tight">
             {label}
           </span>
-          <span className="block truncate font-mono text-[11px] leading-tight text-muted-foreground">
-            {nodeId}
-          </span>
-        </button>
+          {rank ? (
+            <span className="block truncate text-xs leading-tight text-muted-foreground">
+              {rank}
+            </span>
+          ) : null}
+        </div>
         <span
-          className="ml-auto shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[11px] tabular-nums text-muted-foreground"
+          className="ml-auto shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-xs tabular-nums text-muted-foreground"
           aria-label={`${n.toLocaleString()} ${unitLabel}`}
         >
           {n.toLocaleString()}
@@ -409,15 +373,7 @@ interface GenesHeatmapCanvasProps {
   singleGeneBars: boolean
   maxK: number
   unit: CountUnit
-  selectedRows: Set<string>
-  selectedCols: Set<string>
-  selectedCells: Set<string>
   tipRef: RefObject<HeatmapTooltipHandle | null>
-  onSelectCell: (
-    taxid: string,
-    gene: string,
-    opts: { toggle: boolean; shift: boolean },
-  ) => void
 }
 
 const GenesHeatmapCanvas = memo(function GenesHeatmapCanvas({
@@ -434,19 +390,20 @@ const GenesHeatmapCanvas = memo(function GenesHeatmapCanvas({
   singleGeneBars,
   maxK,
   unit,
-  selectedRows,
-  selectedCols,
-  selectedCells,
   tipRef,
-  onSelectCell,
 }: GenesHeatmapCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const hoverRef = useRef<{ row: number; col: number } | null>(null)
+  const themeRef = useRef<CanvasTheme>(readCanvasTheme(null))
 
   const visibleCount = Math.max(0, colEnd - colStart)
   const canvasCssW = Math.max(1, visibleCount * stride)
   const canvasCssH = Math.max(1, rows.length * ROW_H)
   const tileW = Math.max(cellW - GAP * 2, 20)
+
+  const refreshTheme = useCallback(() => {
+    themeRef.current = readCanvasTheme(canvasRef.current)
+  }, [])
 
   const hitAt = useCallback(
     (localX: number, localY: number): HitCell | null => {
@@ -462,8 +419,8 @@ const GenesHeatmapCanvas = memo(function GenesHeatmapCanvas({
       const counts = rowCounts[row] ?? EMPTY_COUNTS
       const n = counts.n
       const activeIdx = col < activeColumnCount ? col : -1
-      const k = activeIdx >= 0 ? (counts.byName[activeIdx] ?? 0) : 0
-      if (!(n > 0 && k > 0)) return null
+      if (activeIdx < 0) return null
+      const k = counts.byName[activeIdx] ?? 0
       return {
         row,
         col,
@@ -502,6 +459,7 @@ const GenesHeatmapCanvas = memo(function GenesHeatmapCanvas({
     ctx.clearRect(0, 0, w, h)
 
     const hover = hoverRef.current
+    const theme = themeRef.current
     if (showCounts) {
       ctx.font = "600 11px ui-sans-serif, system-ui, sans-serif"
     }
@@ -509,10 +467,8 @@ const GenesHeatmapCanvas = memo(function GenesHeatmapCanvas({
     ctx.textBaseline = "middle"
 
     for (let ri = 0; ri < rows.length; ri++) {
-      const item = rows[ri]!
       const counts = rowCounts[ri] ?? EMPTY_COUNTS
       const n = counts.n
-      const rowSelected = selectedRows.has(item.node.id)
       const y0 = ri * ROW_H
       const tileY = y0 + (ROW_H - TILE_H) / 2
 
@@ -521,74 +477,52 @@ const GenesHeatmapCanvas = memo(function GenesHeatmapCanvas({
         if (!col) continue
         const activeIdx = ci < activeColumnCount ? ci : -1
         const k = activeIdx >= 0 ? (counts.byName[activeIdx] ?? 0) : 0
-        const hasValue = n > 0 && k > 0
-        const isZero = n > 0 && k <= 0
-        if (!hasValue && !isZero) continue
-
-        const colSelected = selectedCols.has(col.id)
-        const cellSelected = selectedCells.has(
-          `${item.node.id}\0${col.name.toLowerCase()}`,
-        )
+        const hasValue = k > 0
         const localCol = ci - colStart
         const cellX = localCol * stride
         const tileX = cellX + (cellW - tileW) / 2
 
-        if (hasValue && (rowSelected || colSelected) && !cellSelected) {
-          ctx.fillStyle = "rgba(59, 130, 246, 0.05)"
-          ctx.fillRect(cellX, y0, cellW, ROW_H)
-        }
-
-        if (singleGeneBars) {
-          const barFrac = maxK > 0 ? Math.min(1, k / maxK) : 0
-          const barW = Math.max(barFrac * tileW, k > 0 ? tileW * 0.04 : 0)
-          if (barW > 0) {
-            ctx.fillStyle = "rgba(2, 132, 199, 0.8)"
+        if (hasValue) {
+          if (singleGeneBars) {
+            const barFrac = maxK > 0 ? Math.min(1, k / maxK) : 0
+            const barW = Math.max(barFrac * tileW, tileW * 0.04)
+            ctx.fillStyle = theme.bar
             roundRect(ctx, tileX, tileY + 4, barW, TILE_H - 8, 6)
             ctx.fill()
+            if (showCounts) {
+              ctx.fillStyle = theme.foreground
+              ctx.fillText(
+                k.toLocaleString(),
+                tileX + tileW / 2,
+                tileY + TILE_H / 2,
+              )
+            }
+          } else {
+            const bg = cellBackground(k, n) ?? theme.muted
+            ctx.fillStyle = bg
+            roundRect(ctx, tileX, tileY, tileW, TILE_H, 6)
+            ctx.fill()
+            if (showCounts) {
+              ctx.fillStyle = cellTextIsDark(k, n)
+                ? theme.foreground
+                : "rgba(255, 255, 255, 0.95)"
+              ctx.fillText(
+                k.toLocaleString(),
+                tileX + tileW / 2,
+                tileY + TILE_H / 2,
+              )
+            }
           }
-          if (showCounts) {
-            ctx.fillStyle = "#0f172a"
-            ctx.fillText(k.toLocaleString(), tileX + tileW / 2, tileY + TILE_H / 2)
-          }
-        } else if (hasValue) {
-          const bg = cellBackground(k, n) ?? "#e2e8f0"
-          ctx.fillStyle = bg
-          roundRect(ctx, tileX, tileY, tileW, TILE_H, 8)
-          ctx.fill()
-          if (showCounts) {
-            ctx.fillStyle = cellTextIsDark(k, n)
-              ? "rgba(15, 23, 42, 0.9)"
-              : "rgba(255, 255, 255, 0.95)"
-            ctx.fillText(k.toLocaleString(), tileX + tileW / 2, tileY + TILE_H / 2)
-          }
-        } else {
-          ctx.globalAlpha = 0.6
-          ctx.fillStyle = "#f1f5f9"
-          roundRect(ctx, tileX, tileY, tileW, TILE_H, 8)
-          ctx.fill()
-          ctx.globalAlpha = 1
-          if (showCounts) {
-            ctx.fillStyle = "rgba(148, 163, 184, 0.8)"
-            ctx.fillText("0", tileX + tileW / 2, tileY + TILE_H / 2)
-          }
-        }
-
-        if (cellSelected) {
-          ctx.strokeStyle = "#2563eb"
-          ctx.lineWidth = 2
-          roundRect(ctx, tileX, tileY, tileW, TILE_H, 8)
-          ctx.stroke()
-        } else if (hasValue && (rowSelected || colSelected)) {
-          ctx.strokeStyle = "rgba(37, 99, 235, 0.25)"
-          ctx.lineWidth = 1
-          roundRect(ctx, tileX, tileY, tileW, TILE_H, 8)
-          ctx.stroke()
         }
 
         if (hover && hover.row === ri && hover.col === ci && hasValue) {
-          ctx.strokeStyle = "rgba(37, 99, 235, 0.5)"
+          ctx.strokeStyle = theme.primary
           ctx.lineWidth = 2
-          roundRect(ctx, tileX, tileY, tileW, TILE_H, 8)
+          if (singleGeneBars) {
+            roundRect(ctx, tileX, tileY + 4, tileW, TILE_H - 8, 6)
+          } else {
+            roundRect(ctx, tileX, tileY, tileW, TILE_H, 6)
+          }
           ctx.stroke()
         }
       }
@@ -604,9 +538,6 @@ const GenesHeatmapCanvas = memo(function GenesHeatmapCanvas({
     maxK,
     rowCounts,
     rows,
-    selectedCells,
-    selectedCols,
-    selectedRows,
     showCounts,
     singleGeneBars,
     stride,
@@ -614,8 +545,32 @@ const GenesHeatmapCanvas = memo(function GenesHeatmapCanvas({
   ])
 
   useLayoutEffect(() => {
+    refreshTheme()
     paint()
-  }, [paint])
+  }, [paint, refreshTheme])
+
+  useLayoutEffect(() => {
+    refreshTheme()
+    const root = document.documentElement
+    const mo = new MutationObserver(() => {
+      refreshTheme()
+      paint()
+    })
+    mo.observe(root, {
+      attributes: true,
+      attributeFilter: ["class", "data-theme", "style"],
+    })
+    const mq = window.matchMedia("(prefers-color-scheme: dark)")
+    const onScheme = () => {
+      refreshTheme()
+      paint()
+    }
+    mq.addEventListener("change", onScheme)
+    return () => {
+      mo.disconnect()
+      mq.removeEventListener("change", onScheme)
+    }
+  }, [refreshTheme, paint])
 
   const showTipForHit = useCallback(
     (hit: HitCell, clientX: number, clientY: number) => {
@@ -649,7 +604,7 @@ const GenesHeatmapCanvas = memo(function GenesHeatmapCanvas({
         hoverRef.current = nextHover
         paint()
       }
-      if (hit) {
+      if (hit && hit.k > 0) {
         showTipForHit(hit, e.clientX, e.clientY)
         canvas.style.cursor = "pointer"
       } else {
@@ -667,19 +622,7 @@ const GenesHeatmapCanvas = memo(function GenesHeatmapCanvas({
     if (canvasRef.current) canvasRef.current.style.cursor = "default"
   }, [paint, tipRef])
 
-  const onClick = useCallback(
-    (e: MouseEvent<HTMLCanvasElement>) => {
-      const canvas = canvasRef.current
-      if (!canvas) return
-      const rect = canvas.getBoundingClientRect()
-      const hit = hitAt(e.clientX - rect.left, e.clientY - rect.top)
-      if (!hit) return
-      onSelectCell(hit.nodeId, hit.gene, modOpts(e))
-    },
-    [hitAt, onSelectCell],
-  )
-
-  // Screen-reader summary for the matrix (interactive cells are pointer-driven).
+  // Screen-reader summary for the matrix.
   const ariaLabel = useMemo(() => {
     const parts: string[] = []
     for (let ri = 0; ri < Math.min(rows.length, 3); ri++) {
@@ -723,7 +666,6 @@ const GenesHeatmapCanvas = memo(function GenesHeatmapCanvas({
       }}
       onPointerMove={onPointerMove}
       onPointerLeave={onPointerLeave}
-      onClick={onClick}
     />
   )
 })
@@ -734,13 +676,9 @@ export function GenesHeatmapTable({
   rows,
   rowCounts,
   expanded,
-  selection,
   unit,
   singleGeneBars = false,
   onToggleExpand,
-  onSelectRow,
-  onSelectCol,
-  onSelectCell,
   remaining,
   onLoadMore,
   className,
@@ -759,17 +697,12 @@ export function GenesHeatmapTable({
   const rotateHeaders = layout.rotateHeaders || columns.length > 6
   const headerH = useMemo(
     () =>
-      Math.max(
-        56,
-        Math.min(
-          112,
-          heatmapHeaderHeight(
-            rotateHeaders,
-            columns.map((c) => c.name),
-          ),
-        ),
+      heatmapHeaderHeight(
+        rotateHeaders,
+        columns.map((c) => c.name),
+        cellW,
       ),
-    [rotateHeaders, columns],
+    [rotateHeaders, columns, cellW],
   )
   const showCellCounts = cellW >= HEATMAP_COUNT_MIN_CELL_W
   const geneAreaW = columns.length * stride
@@ -782,21 +715,6 @@ export function GenesHeatmapTable({
     TAXON_COL_W,
     4,
   )
-
-  const selectedRows = useMemo(
-    () => new Set(selection.kind === "rows" ? selection.rows : []),
-    [selection],
-  )
-  const selectedCols = useMemo(() => {
-    if (selection.kind !== "cols") return new Set<string>()
-    return new Set(selection.cols.map((n) => n.toLowerCase()))
-  }, [selection])
-  const selectedCells = useMemo(() => {
-    if (selection.kind !== "cells") return new Set<string>()
-    return new Set(
-      selection.cells.map((c) => `${c.taxid}\0${c.gene.toLowerCase()}`),
-    )
-  }, [selection])
 
   const maxK = useMemo(() => {
     if (!singleGeneBars) return 0
@@ -865,17 +783,6 @@ export function GenesHeatmapTable({
     tipRef.current?.hide()
   }, [])
 
-  useEffect(() => {
-    const root = scrollRef.current
-    if (!root || selection.kind !== "rows" || selection.rows.length !== 1)
-      return
-    const behavior = prefersReducedMotion() ? "auto" : "smooth"
-    const row = root.querySelector(
-      `[data-heatmap-taxon="${CSS.escape(selection.rows[0]!)}"]`,
-    )
-    row?.scrollIntoView({ block: "nearest", inline: "nearest", behavior })
-  }, [selection])
-
   const handleScroll = useCallback(() => {
     onScroll()
   }, [onScroll])
@@ -883,11 +790,10 @@ export function GenesHeatmapTable({
   return (
     <div
       className={cn(
-        "group/heatmap flex h-full min-h-0 flex-col overflow-hidden border border-border border-t-0",
+        "group/heatmap flex h-full min-h-0 flex-col overflow-hidden",
         className,
       )}
       role="grid"
-      aria-multiselectable="true"
       aria-label="Gene distribution heatmap"
       data-scrolled-x={scrolledX ? "true" : undefined}
       data-scrolled-y={scrolledY ? "true" : undefined}
@@ -919,26 +825,17 @@ export function GenesHeatmapTable({
               {remaining > 0
                 ? ` (showing ${rows.length}; ${remaining} more available)`
                 : ""}
-              . Click to select; Ctrl toggles; Shift expands a range. Use Show
-              only to filter Annotations.
+              . Hover cells for counts.
             </div>
 
             {/* Sticky header */}
             <div
-              className="sticky top-0 z-20 flex bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/80"
+              className="sticky top-0 z-20 flex border-b border-border bg-card"
               style={{ height: headerH, width: tableWidth }}
             >
               <div
                 className={cn(
-                  "sticky left-0 z-30 flex shrink-0 items-end bg-card/95 px-2.5 py-2 backdrop-blur",
-                  "shadow-[0_1px_0_0_var(--border),1px_0_0_0_var(--border)]",
-                  scrolledY &&
-                    "shadow-[0_4px_8px_-4px_rgba(0,0,0,0.12),1px_0_0_0_var(--border)]",
-                  scrolledX &&
-                    "shadow-[0_1px_0_0_var(--border),4px_0_8px_-4px_rgba(0,0,0,0.12)]",
-                  scrolledX &&
-                    scrolledY &&
-                    "shadow-[0_4px_8px_-4px_rgba(0,0,0,0.12),4px_0_8px_-4px_rgba(0,0,0,0.12)]",
+                  "sticky left-0 z-30 flex shrink-0 items-end border-r border-border bg-card px-2.5 py-2",
                 )}
                 style={{
                   width: TAXON_COL_W,
@@ -946,7 +843,7 @@ export function GenesHeatmapTable({
                   height: headerH,
                 }}
               >
-                <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                <span className="text-xs font-medium text-muted-foreground">
                   Taxon
                 </span>
               </div>
@@ -972,10 +869,8 @@ export function GenesHeatmapTable({
                           cellW={cellW}
                           headerH={headerH}
                           rotateHeaders={rotateHeaders}
-                          selected={selectedCols.has(col.id)}
                           scrolledY={scrolledY}
                           unit={unit}
-                          onSelectCol={onSelectCol}
                         />
                       </div>
                     )
@@ -996,7 +891,6 @@ export function GenesHeatmapTable({
                   const n = counts.n
                   const hasKids = node.children.length > 0
                   const open = expanded.has(node.id)
-                  const rowSelected = selectedRows.has(node.id)
                   return (
                     <div
                       key={`${node.id}-${depth}`}
@@ -1013,10 +907,8 @@ export function GenesHeatmapTable({
                         unit={unit}
                         hasKids={hasKids}
                         open={open}
-                        selected={rowSelected}
                         scrolledX={scrolledX}
                         onToggleExpand={onToggleExpand}
-                        onSelectRow={onSelectRow}
                       />
                     </div>
                   )
@@ -1041,11 +933,7 @@ export function GenesHeatmapTable({
                     singleGeneBars={singleGeneBars}
                     maxK={maxK}
                     unit={unit}
-                    selectedRows={selectedRows}
-                    selectedCols={selectedCols}
-                    selectedCells={selectedCells}
                     tipRef={tipRef}
-                    onSelectCell={onSelectCell}
                   />
                 ) : null}
               </div>

@@ -2,30 +2,21 @@
 
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useQueries } from "@tanstack/react-query"
-import { Download, Loader2 } from "lucide-react"
+import { Loader2, X } from "lucide-react"
 
+import {
+  GenesCompareLegend,
+  type CompareFeatureMode,
+} from "@/components/genes/genes-compare-legend"
+import { GenesCompareTranscriptPicker } from "@/components/genes/genes-compare-transcript-picker"
 import { Button } from "@/components/ui/button"
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
+import type { TranscriptPin } from "@/lib/genes/compare-store"
 import { streamAnnotationGff } from "@/lib/api/annotations"
-import type {
-  TranscriptMode,
-  TranscriptPin,
-} from "@/lib/genes/compare-store"
 import {
   categoryTint,
   geneCategoryOf,
   GENE_CATEGORY_STYLE,
+  type GeneCategory,
 } from "@/lib/genes/gene-category"
 import {
   cdsLength,
@@ -39,26 +30,22 @@ import {
 import { formatBp, formatTick, niceTicks } from "@/lib/genes/format"
 import { cn } from "@/lib/utils"
 
+export type { CompareFeatureMode }
+
 const TRACK_H = 32
 const EXON_H = 14
 const PAD_X = 12
 const RULER_H = 28
 const TICK_MIN_GAP = 48
-const LABEL_GUTTER_W = 36
-
-export type CompareFeatureMode = "all" | "exons" | "cds"
+const LABEL_GUTTER_W = 12
 
 interface GenesCompareTracksProps {
   pins: TranscriptPin[]
-  transcriptMode?: TranscriptMode
-  onSetTranscript: (pinId: string, transcriptId: string) => void
+  onSetTranscript: (pinId: string, transcriptId: string | null) => void
+  onRemovePin: (pinId: string) => void
   zoom?: number
   featureMode?: CompareFeatureMode
   className?: string
-}
-
-function displayId(id: string): string {
-  return id.replace(/^(transcript:|mrna:|rna:)/i, "")
 }
 
 function clipToExons(interval: GffInterval, exons: GffInterval[]): GffInterval[] {
@@ -76,13 +63,11 @@ function StructureTrack({
   transcript,
   axisMax,
   width,
-  ticks,
   featureMode,
 }: {
   transcript: GffTranscript
   axisMax: number
   width: number
-  ticks: number[]
   featureMode: CompareFeatureMode
 }) {
   const cat = geneCategoryOf({
@@ -123,21 +108,6 @@ function StructureTrack({
       className="block"
       aria-hidden
     >
-      {ticks.map((t) => {
-        const x = xOf(t)
-        return (
-          <line
-            key={`grid-${t}`}
-            x1={x}
-            x2={x}
-            y1={0}
-            y2={TRACK_H}
-            stroke="currentColor"
-            strokeOpacity={0.12}
-            strokeWidth={1}
-          />
-        )
-      })}
       <line
         x1={left}
         x2={right}
@@ -256,56 +226,14 @@ function ScaleRuler({
   )
 }
 
-function TrackDownloadStub({ geneName }: { geneName: string }) {
-  return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="h-7 w-7 shrink-0 text-muted-foreground"
-          aria-label={`Download ${geneName}`}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <Download className="h-3.5 w-3.5" />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent
-        align="start"
-        className="w-44 p-2"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <p className="mb-1.5 px-1 text-[11px] font-medium text-muted-foreground">
-          Download
-        </p>
-        {/* TODO: wire GFF / FASTA / BED export handlers */}
-        <div className="flex flex-col gap-0.5">
-          {(["GFF", "FASTA", "BED"] as const).map((label) => (
-            <button
-              key={label}
-              type="button"
-              disabled
-              className="rounded px-2 py-1.5 text-left text-xs text-muted-foreground opacity-60"
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-      </PopoverContent>
-    </Popover>
-  )
-}
-
 export function GenesCompareTracks({
   pins,
-  transcriptMode = "longest",
   onSetTranscript,
+  onRemovePin,
   zoom = 1,
   featureMode = "all",
   className,
 }: GenesCompareTracksProps) {
-  const chooseMode = transcriptMode === "choose"
   const viewportRef = useRef<HTMLDivElement>(null)
   const [baseWidth, setBaseWidth] = useState(480)
 
@@ -373,37 +301,37 @@ export function GenesCompareTracks({
     })
   }, [pins, gffQueries])
 
-  const assignedRef = useRef<Set<string>>(new Set())
-  useEffect(() => {
-    const live = new Set(pins.map((p) => p.id))
-    for (const id of [...assignedRef.current]) {
-      if (!live.has(id)) assignedRef.current.delete(id)
-    }
-  }, [pins])
-
-  useEffect(() => {
-    if (!chooseMode) {
-      assignedRef.current.clear()
-      return
-    }
-    for (const { pin, selected, query } of resolved) {
-      if (!selected || !query?.isSuccess) continue
-      if (pin.transcriptId) {
-        assignedRef.current.add(pin.id)
-        continue
-      }
-      if (assignedRef.current.has(pin.id)) continue
-      assignedRef.current.add(pin.id)
-      onSetTranscript(pin.id, selected.id)
-    }
-  }, [resolved, onSetTranscript, chooseMode])
-
   const axisMax = useMemo(() => {
     let max = 1
     for (const row of resolved) {
       if (row.selected) max = Math.max(max, transcriptSpan(row.selected))
     }
     return max
+  }, [resolved])
+
+  const legendCategories = useMemo(() => {
+    const seen = new Set<GeneCategory>()
+    for (const row of resolved) {
+      if (!row.selected) continue
+      seen.add(
+        geneCategoryOf({
+          feature_type: row.selected.type,
+          biotype: row.selected.biotype,
+          hasCds: row.selected.cds.length > 0,
+        }),
+      )
+    }
+    const order: GeneCategory[] = ["coding", "non_coding", "pseudogene"]
+    const out = order.filter((c) => seen.has(c))
+    if (!out.includes("coding")) out.unshift("coding")
+    if (!out.includes("non_coding")) {
+      const codingIdx = out.indexOf("coding")
+      out.splice(codingIdx + 1, 0, "non_coding")
+    }
+    if (!seen.has("pseudogene")) {
+      return out.filter((c) => c !== "pseudogene")
+    }
+    return out
   }, [resolved])
 
   const rawTicks = useMemo(
@@ -440,8 +368,11 @@ export function GenesCompareTracks({
         className,
       )}
     >
-      <div style={{ minWidth: plotWidth + LABEL_GUTTER_W }}>
-        <div className="sticky top-0 z-10 flex border-b border-border/60 bg-background/95 backdrop-blur">
+      <div
+        className="flex min-h-full flex-1 flex-col"
+        style={{ minWidth: plotWidth + LABEL_GUTTER_W }}
+      >
+        <div className="sticky top-0 z-10 flex border-b border-border/60 backdrop-blur">
           <div
             className="shrink-0"
             style={{ width: LABEL_GUTTER_W }}
@@ -453,121 +384,113 @@ export function GenesCompareTracks({
               width={plotWidth}
               ticks={ticks}
             />
-            <p className="px-3 pb-1 text-[10px] tabular-nums text-muted-foreground">
-              Shared scale · {formatBp(axisMax)} max span
-              {zoom !== 1 ? ` · ${Math.round(zoom * 100)}%` : ""}
-            </p>
           </div>
         </div>
 
-        <div className="flex flex-col">
-          {resolved.map(({ pin, query, transcripts, selected }) => {
-            const span = selected ? transcriptSpan(selected) : 0
-            const exons = selected?.exons.length ?? 0
-            const cdsBp = selected ? cdsLength(selected.cds) : 0
-            const meta = selected
-              ? `${formatBp(span)} · ${exons} exon${exons === 1 ? "" : "s"}${
-                  cdsBp > 0 ? ` · ${formatBp(cdsBp)} CDS` : ""
-                }`
-              : query?.isLoading
-                ? "Loading…"
-                : query?.isError
-                  ? "Load failed"
-                  : !pin.sourceGeneId
-                    ? "No source gene id"
-                    : "No transcripts"
+        <div className="relative flex min-h-0 flex-1 flex-col">
+          <div className="relative flex flex-col">
+            {resolved.map(({ pin, query, transcripts, selected }) => {
+              const span = selected ? transcriptSpan(selected) : 0
+              const exons = selected?.exons.length ?? 0
+              const cdsBp = selected ? cdsLength(selected.cds) : 0
+              const meta = selected
+                ? `${formatBp(span)} · ${exons} exon${exons === 1 ? "" : "s"}${
+                    cdsBp > 0 ? ` · ${formatBp(cdsBp)} CDS` : ""
+                  }`
+                : query?.isLoading
+                  ? "Loading…"
+                  : query?.isError
+                    ? "Load failed"
+                    : !pin.sourceGeneId
+                      ? "No source gene id"
+                      : "No transcripts"
 
-            return (
-              <div
-                key={pin.id}
-                className="flex border-b border-border/40 py-1"
-              >
+              return (
                 <div
-                  className="flex shrink-0 items-center justify-center self-stretch"
-                  style={{ width: LABEL_GUTTER_W }}
+                  key={pin.id}
+                  className="flex border-b border-border/40 py-0.5"
                 >
-                  <TrackDownloadStub geneName={pin.geneName} />
-                </div>
-                <div className="min-w-0 flex-1" style={{ width: plotWidth }}>
-                  <div className="relative mb-0.5 flex h-6 items-center gap-2 px-2">
-                    <p className="min-w-0 truncate text-center text-[11px] leading-tight">
-                      <span className="italic text-foreground">
-                        {pin.species}
-                      </span>
-                      <span className="text-muted-foreground"> · </span>
-                      <span className="font-mono font-medium">
-                        {pin.geneName}
-                      </span>
-                      <span className="text-muted-foreground"> · </span>
-                      <span className="tabular-nums text-muted-foreground">
-                        {meta}
-                      </span>
-                    </p>
-                    <div className="absolute right-1 top-1/2 flex -translate-y-1/2 items-center">
-                      {transcripts.length > 0 && chooseMode ? (
-                        <Select
-                          value={selected?.id ?? undefined}
-                          onValueChange={(v) => onSetTranscript(pin.id, v)}
-                        >
-                          <SelectTrigger className="h-6 w-[9.5rem] text-[10px]">
-                            <SelectValue placeholder="Transcript" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {transcripts.map((tx) => (
-                              <SelectItem
-                                key={tx.id}
-                                value={tx.id}
-                                className="text-xs"
-                              >
-                                {tx.synthetic
-                                  ? "gene structure"
-                                  : displayId(tx.id)}{" "}
-                                <span className="text-muted-foreground">
-                                  ({formatBp(transcriptSpan(tx))})
-                                </span>
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      ) : selected ? (
-                        <span className="max-w-[9rem] truncate font-mono text-[10px] text-muted-foreground">
-                          {selected.synthetic
-                            ? "gene structure"
-                            : displayId(selected.id)}
+                  <div
+                    className="shrink-0"
+                    style={{ width: LABEL_GUTTER_W }}
+                    aria-hidden
+                  />
+                  <div className="min-w-0 flex-1" style={{ width: plotWidth }}>
+                    <div
+                      className="sticky left-0 z-[2] flex h-5 items-center gap-2 px-2"
+                      style={{ width: baseWidth }}
+                    >
+                      <p className="min-w-0 flex-1 truncate text-xs leading-none">
+                        <span className="rounded-sm bg-background/85 italic text-foreground [box-decoration-break:clone] px-0.5">
+                          {pin.species}
                         </span>
-                      ) : null}
+                        <span className="text-muted-foreground"> · </span>
+                        <span className="rounded-sm bg-background/85 font-mono font-medium [box-decoration-break:clone] px-0.5">
+                          {pin.geneName}
+                        </span>
+                        <span className="ml-1.5 rounded-sm bg-background/85 tabular-nums text-muted-foreground [box-decoration-break:clone] px-0.5">
+                          {meta}
+                        </span>
+                      </p>
+                      <div className="flex shrink-0 items-center gap-0.5 rounded-md bg-background/90">
+                        <GenesCompareTranscriptPicker
+                          geneName={pin.geneName}
+                          species={pin.species}
+                          transcripts={transcripts}
+                          selected={selected}
+                          pinnedTranscriptId={pin.transcriptId}
+                          onSelect={(id) => onSetTranscript(pin.id, id)}
+                          onUseLongest={() => onSetTranscript(pin.id, null)}
+                        />
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6 shrink-0 text-muted-foreground hover:text-foreground"
+                          aria-label={`Remove ${pin.geneName} in ${pin.species}`}
+                          onClick={() => onRemovePin(pin.id)}
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    </div>
+                    <div className="w-full overflow-hidden">
+                      {query?.isLoading ? (
+                        <div
+                          className="flex items-center justify-center gap-1.5 text-xs text-muted-foreground"
+                          style={{ height: TRACK_H, width: plotWidth }}
+                        >
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                          Loading…
+                        </div>
+                      ) : selected ? (
+                        <StructureTrack
+                          transcript={selected}
+                          axisMax={axisMax}
+                          width={plotWidth}
+                          featureMode={featureMode}
+                        />
+                      ) : (
+                        <div
+                          className="flex items-center justify-center text-xs text-muted-foreground"
+                          style={{ height: TRACK_H, width: plotWidth }}
+                        >
+                          —
+                        </div>
+                      )}
                     </div>
                   </div>
-                  <div className="w-full overflow-hidden bg-muted/20">
-                    {query?.isLoading ? (
-                      <div
-                        className="flex items-center justify-center gap-1.5 text-[11px] text-muted-foreground"
-                        style={{ height: TRACK_H, width: plotWidth }}
-                      >
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                        Loading…
-                      </div>
-                    ) : selected ? (
-                      <StructureTrack
-                        transcript={selected}
-                        axisMax={axisMax}
-                        width={plotWidth}
-                        ticks={ticks}
-                        featureMode={featureMode}
-                      />
-                    ) : (
-                      <div
-                        className="flex items-center justify-center text-[11px] text-muted-foreground"
-                        style={{ height: TRACK_H, width: plotWidth }}
-                      >
-                        —
-                      </div>
-                    )}
-                  </div>
                 </div>
-              </div>
-            )
-          })}
+              )
+            })}
+          </div>
+
+          <GenesCompareLegend
+            featureMode={featureMode}
+            categories={legendCategories}
+            className="mt-auto"
+            style={{ width: baseWidth + LABEL_GUTTER_W }}
+          />
         </div>
       </div>
     </div>

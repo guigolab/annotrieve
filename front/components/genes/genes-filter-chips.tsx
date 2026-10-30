@@ -1,11 +1,18 @@
 "use client"
 
-import { useState } from "react"
-import { X } from "lucide-react"
+import { useEffect, useRef, useState } from "react"
 
+import { FilterChip } from "@/components/annotations/active-filters/filter-chip"
 import type { GenesListFilters } from "@/lib/genes/list-filters"
 import { listFiltersIsEmpty } from "@/lib/genes/list-filters"
 import { cn } from "@/lib/utils"
+
+const CHIP_COLORS = {
+  bg: "bg-card",
+  bgHover: "hover:bg-muted/50",
+  border: "border-border",
+  text: "text-foreground",
+}
 
 interface GenesFilterChipsProps {
   listFilters: GenesListFilters
@@ -18,6 +25,8 @@ interface GenesFilterChipsProps {
   onRemoveName?: (name: string) => void
   onRemoveCell?: (index: number) => void
   onRemoveAnnotationId?: (id: string) => void
+  /** Dropdown opens upward when "top" (footer cards). */
+  menuSide?: "top" | "bottom"
   className?: string
 }
 
@@ -34,9 +43,31 @@ export function GenesFilterChips({
   onRemoveName,
   onRemoveCell,
   onRemoveAnnotationId,
+  menuSide = "bottom",
   className,
 }: GenesFilterChipsProps) {
   const [open, setOpen] = useState<ChipKey | null>(null)
+  const rootRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const onPointer = (e: MouseEvent) => {
+      const root = rootRef.current
+      if (root && !root.contains(e.target as Node)) setOpen(null)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault()
+        setOpen(null)
+      }
+    }
+    document.addEventListener("mousedown", onPointer)
+    window.addEventListener("keydown", onKey)
+    return () => {
+      document.removeEventListener("mousedown", onPointer)
+      window.removeEventListener("keydown", onKey)
+    }
+  }, [open])
 
   if (listFiltersIsEmpty(listFilters)) return null
 
@@ -89,116 +120,123 @@ export function GenesFilterChips({
   }
 
   return (
-    <div className={cn("flex flex-wrap items-center gap-1.5", className)}>
-      {chips.map((chip) => (
-        <div key={chip.key} className="relative">
-          <span className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/5 px-2.5 py-1 text-xs font-medium">
-            <button
-              type="button"
-              className="hover:underline"
+    <div
+      ref={rootRef}
+      className={cn("flex flex-wrap items-center gap-1.5 px-3 sm:px-4", className)}
+    >
+      {chips.map((chip) => {
+        const expanded = open === chip.key
+        return (
+          <div key={chip.key} className="relative">
+            <FilterChip
+              label={chip.label}
+              value={chip.key}
+              colorScheme={CHIP_COLORS}
+              onRemove={chip.onClear}
               onClick={() =>
                 setOpen((cur) => (cur === chip.key ? null : chip.key))
               }
-            >
-              {chip.label}
-            </button>
-            <button
-              type="button"
-              className="rounded-full p-0.5 text-muted-foreground hover:text-foreground"
-              onClick={chip.onClear}
-              aria-label={`Remove ${chip.label}`}
-            >
-              <X className="h-3 w-3" />
-            </button>
-          </span>
-          {open === chip.key ? (
-            <div className="absolute left-0 top-full z-30 mt-1 max-h-48 min-w-[12rem] overflow-auto rounded-md border border-border bg-popover p-1 shadow-md">
-              {chip.key === "taxids"
-                ? listFilters.includeTaxids.map((id) => (
-                    <div
-                      key={id}
-                      className="flex items-center justify-between gap-2 rounded px-2 py-1 text-xs"
-                    >
-                      <span className="truncate">{taxonLabel(id)}</span>
-                      {onRemoveTaxid ? (
-                        <button
-                          type="button"
-                          className="text-muted-foreground hover:text-foreground"
-                          onClick={() => onRemoveTaxid(id)}
-                          aria-label={`Remove ${taxonLabel(id)}`}
-                        >
-                          <X className="h-3 w-3" />
-                        </button>
-                      ) : null}
-                    </div>
-                  ))
-                : null}
-              {chip.key === "names"
-                ? listFilters.includeNames.map((name) => (
-                    <div
-                      key={name}
-                      className="flex items-center justify-between gap-2 rounded px-2 py-1 font-mono text-xs"
-                    >
-                      <span className="truncate">{name}</span>
-                      {onRemoveName ? (
-                        <button
-                          type="button"
-                          className="text-muted-foreground hover:text-foreground"
-                          onClick={() => onRemoveName(name)}
-                          aria-label={`Remove ${name}`}
-                        >
-                          <X className="h-3 w-3" />
-                        </button>
-                      ) : null}
-                    </div>
-                  ))
-                : null}
-              {chip.key === "cells"
-                ? listFilters.includeCells.map((cell, i) => (
-                    <div
-                      key={`${cell.taxid}:${cell.gene}:${i}`}
-                      className="flex items-center justify-between gap-2 rounded px-2 py-1 text-xs"
-                    >
-                      <span className="truncate font-mono">
-                        {cell.taxid}:{cell.gene}
-                      </span>
-                      {onRemoveCell ? (
-                        <button
-                          type="button"
-                          className="text-muted-foreground hover:text-foreground"
-                          onClick={() => onRemoveCell(i)}
-                          aria-label="Remove cell"
-                        >
-                          <X className="h-3 w-3" />
-                        </button>
-                      ) : null}
-                    </div>
-                  ))
-                : null}
-              {chip.key === "anns"
-                ? listFilters.includeAnnotationIds.map((id) => (
-                    <div
-                      key={id}
-                      className="flex items-center justify-between gap-2 rounded px-2 py-1 font-mono text-xs"
-                    >
-                      <span className="truncate">{id}</span>
-                      {onRemoveAnnotationId ? (
-                        <button
-                          type="button"
-                          className="text-muted-foreground hover:text-foreground"
-                          onClick={() => onRemoveAnnotationId(id)}
-                          aria-label={`Remove ${id}`}
-                        >
-                          <X className="h-3 w-3" />
-                        </button>
-                      ) : null}
-                    </div>
-                  ))
-                : null}
-            </div>
-          ) : null}
-        </div>
-      ))}
+              isActive={expanded}
+              aria-expanded={expanded}
+            />
+            {expanded ? (
+              <div
+                id={`genes-filter-chip-${chip.key}`}
+                role="listbox"
+                className={cn(
+                  "absolute left-0 z-30 max-h-48 min-w-[12rem] overflow-auto rounded-md border border-border bg-popover p-1 shadow-md",
+                  menuSide === "top"
+                    ? "bottom-full mb-1"
+                    : "top-full mt-1",
+                )}
+              >
+                {chip.key === "taxids"
+                  ? listFilters.includeTaxids.map((id) => (
+                      <div
+                        key={id}
+                        className="flex items-center justify-between gap-2 rounded px-2 py-1 text-xs"
+                      >
+                        <span className="truncate">{taxonLabel(id)}</span>
+                        {onRemoveTaxid ? (
+                          <button
+                            type="button"
+                            className="text-muted-foreground hover:text-foreground"
+                            onClick={() => onRemoveTaxid(id)}
+                            aria-label={`Remove ${taxonLabel(id)}`}
+                          >
+                            ×
+                          </button>
+                        ) : null}
+                      </div>
+                    ))
+                  : null}
+                {chip.key === "names"
+                  ? listFilters.includeNames.map((name) => (
+                      <div
+                        key={name}
+                        className="flex items-center justify-between gap-2 rounded px-2 py-1 font-mono text-xs"
+                      >
+                        <span className="truncate">{name}</span>
+                        {onRemoveName ? (
+                          <button
+                            type="button"
+                            className="text-muted-foreground hover:text-foreground"
+                            onClick={() => onRemoveName(name)}
+                            aria-label={`Remove ${name}`}
+                          >
+                            ×
+                          </button>
+                        ) : null}
+                      </div>
+                    ))
+                  : null}
+                {chip.key === "cells"
+                  ? listFilters.includeCells.map((cell, i) => (
+                      <div
+                        key={`${cell.taxid}:${cell.gene}:${i}`}
+                        className="flex items-center justify-between gap-2 rounded px-2 py-1 text-xs"
+                      >
+                        <span className="truncate font-mono">
+                          {cell.taxid}:{cell.gene}
+                        </span>
+                        {onRemoveCell ? (
+                          <button
+                            type="button"
+                            className="text-muted-foreground hover:text-foreground"
+                            onClick={() => onRemoveCell(i)}
+                            aria-label="Remove cell"
+                          >
+                            ×
+                          </button>
+                        ) : null}
+                      </div>
+                    ))
+                  : null}
+                {chip.key === "anns"
+                  ? listFilters.includeAnnotationIds.map((id) => (
+                      <div
+                        key={id}
+                        className="flex items-center justify-between gap-2 rounded px-2 py-1 font-mono text-xs"
+                      >
+                        <span className="truncate">{id}</span>
+                        {onRemoveAnnotationId ? (
+                          <button
+                            type="button"
+                            className="text-muted-foreground hover:text-foreground"
+                            onClick={() => onRemoveAnnotationId(id)}
+                            aria-label={`Remove ${id}`}
+                          >
+                            ×
+                          </button>
+                        ) : null}
+                      </div>
+                    ))
+                  : null}
+              </div>
+            ) : null}
+          </div>
+        )
+      })}
     </div>
   )
 }

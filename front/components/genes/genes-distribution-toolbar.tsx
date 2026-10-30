@@ -6,6 +6,8 @@ import {
   GenesRankSelect,
   type GenesRankOption,
 } from "@/components/genes/genes-rank-select"
+import { GenesSegmentedControl } from "@/components/genes/genes-segmented-control"
+import { GenesViewToolbar } from "@/components/genes/genes-view-toolbar"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -26,11 +28,11 @@ interface GenesDistributionToolbarProps {
   onViewRankChange: (rank: string | null) => void
   unit: CountUnit
   onUnitChange: (unit: CountUnit) => void
-  annotationTotal: number
-  speciesTotal: number
   onExport: (format: HeatmapExportFormat) => void | Promise<void>
   exportDisabled?: boolean
   exporting?: boolean
+  zeroHitCount?: number
+  onReviewZeroHits?: () => void
   className?: string
 }
 
@@ -43,20 +45,15 @@ export function GenesDistributionToolbar({
   onViewRankChange,
   unit,
   onUnitChange,
-  annotationTotal,
-  speciesTotal,
   onExport,
   exportDisabled,
   exporting,
+  zeroHitCount = 0,
+  onReviewZeroHits,
   className,
 }: GenesDistributionToolbarProps) {
   return (
-    <div
-      className={cn(
-        "flex flex-wrap items-center gap-2 border-b border-border bg-card/40 px-3 py-2",
-        className,
-      )}
-    >
+    <GenesViewToolbar className={cn(className)}>
       <GenesRankSelect
         viewRank={viewRank}
         options={rankOptions}
@@ -65,41 +62,37 @@ export function GenesDistributionToolbar({
         disabledReason={rankSelectDisabledReason}
         onViewRankChange={onViewRankChange}
         className="w-[11rem]"
-        triggerClassName="h-8 rounded-md border-border bg-background px-2 text-xs font-normal shadow-none"
+        triggerClassName="h-9 rounded-md border-border bg-background px-2 text-xs font-normal shadow-none"
       />
 
-      <div
-        role="group"
-        aria-label="Count unit"
-        className="inline-flex h-8 items-center rounded-md border border-border bg-background p-0.5"
-      >
-        {(
-          [
-            ["annotations", "Annotations"],
-            ["species", "Species"],
-          ] as const
-        ).map(([value, label]) => (
-          <button
-            key={value}
-            type="button"
-            aria-pressed={unit === value}
-            className={cn(
-              "rounded px-2.5 text-xs font-medium transition-colors",
-              unit === value
-                ? "bg-muted text-foreground"
-                : "text-muted-foreground hover:text-foreground",
-            )}
-            onClick={() => onUnitChange(value)}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+      <GenesSegmentedControl
+        label="Count unit"
+        value={unit}
+        onChange={onUnitChange}
+        options={[
+          { id: "annotations", label: "Annotations" },
+          { id: "species", label: "Species" },
+        ]}
+      />
 
-      <span className="text-xs tabular-nums text-muted-foreground">
-        {annotationTotal.toLocaleString()} annotations ·{" "}
-        {speciesTotal.toLocaleString()} species
-      </span>
+      {zeroHitCount > 0 ? (
+        <span className="text-xs text-muted-foreground sm:text-sm">
+          {zeroHitCount.toLocaleString()} gene
+          {zeroHitCount === 1 ? "" : "s"} had no hits
+          {onReviewZeroHits ? (
+            <>
+              {" · "}
+              <button
+                type="button"
+                className="font-medium text-foreground underline-offset-2 hover:underline"
+                onClick={onReviewZeroHits}
+              >
+                Review
+              </button>
+            </>
+          ) : null}
+        </span>
+      ) : null}
 
       <div className="ml-auto">
         <DropdownMenu>
@@ -108,7 +101,7 @@ export function GenesDistributionToolbar({
               type="button"
               variant="outline"
               size="sm"
-              className="h-8 gap-1.5 text-xs"
+              className="h-9 gap-1.5 text-xs"
               disabled={exportDisabled || exporting}
               aria-label="Export heatmap"
             >
@@ -138,6 +131,6 @@ export function GenesDistributionToolbar({
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
-    </div>
+    </GenesViewToolbar>
   )
 }

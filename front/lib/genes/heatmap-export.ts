@@ -81,15 +81,10 @@ export function renderHeatmapSvg({
   const layout = heatmapColumnLayout(columns.length)
   const cellW = layout.cellW
   const rotateHeaders = layout.rotateHeaders || columns.length > 6
-  const headerH = Math.max(
-    56,
-    Math.min(
-      112,
-      heatmapHeaderHeight(
-        rotateHeaders,
-        columns.map((c) => c.name),
-      ),
-    ),
+  const headerH = heatmapHeaderHeight(
+    rotateHeaders,
+    columns.map((c) => c.name),
+    cellW,
   )
   const showCounts = cellW >= HEATMAP_COUNT_MIN_CELL_W
   const width =

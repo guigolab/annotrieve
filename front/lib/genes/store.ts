@@ -10,7 +10,9 @@ import {
   DEFAULT_GROUP,
   DEFAULT_KEEP,
   DEFAULT_SORT,
+  DEFAULT_SORT_DIR,
   type AnnotationsSort,
+  type AnnotationsSortDir,
   type GroupMode,
   type KeepPolicy,
 } from "@/lib/genes/annotations-controls"
@@ -59,16 +61,8 @@ export interface GenesState {
   excluded: Set<string>
   /** Include-only Annotations list filters (Show only hand-off). */
   listFilters: GenesListFilters
-  /** In-memory Distribution multi-select (not URL-synced). */
-  distributionSelection: DistributionSelection
   /** In-memory Annotations table multi-select (rows = annotation ids). */
   annotationsSelection: DistributionSelection
-  /** Anchor for shift-range row/col/cell selection (Distribution). */
-  selectionAnchor: {
-    row: string | null
-    col: string | null
-    cell: { taxid: string; gene: string } | null
-  }
   /** Anchor for Annotations table selection. */
   annotationsSelectionAnchor: {
     row: string | null
@@ -78,7 +72,9 @@ export interface GenesState {
   coverage: CoverageRange | null
   keep: KeepPolicy
   group: GroupMode
-  sort: AnnotationsSort
+  /** Null = no column sort (annotationId order). */
+  sort: AnnotationsSort | null
+  sortDir: AnnotationsSortDir
   /** Species / assembly search (URL `q`). */
   search: string
   expanded: Set<string>
@@ -108,9 +104,6 @@ export interface GenesState {
   setCoverage: (range: CoverageRange | null, termCount: number) => void
   setListFilters: (filters: GenesListFilters) => void
   patchListFilters: (patch: Partial<GenesListFilters>) => void
-  dispatchSelection: (action: SelectionAction) => void
-  clearDistributionSelection: () => void
-  setSelectionAnchor: (anchor: Partial<GenesState["selectionAnchor"]>) => void
   dispatchAnnotationsSelection: (action: SelectionAction) => void
   clearAnnotationsSelection: () => void
   setAnnotationsSelectionAnchor: (
@@ -118,7 +111,7 @@ export interface GenesState {
   ) => void
   setKeep: (keep: KeepPolicy) => void
   setGroup: (group: GroupMode) => void
-  setSort: (sort: AnnotationsSort) => void
+  setSort: (sort: AnnotationsSort | null, sortDir?: AnnotationsSortDir) => void
   setSearch: (search: string) => void
   toggleExpanded: (id: string) => void
   setExpanded: (ids: Set<string>) => void
@@ -161,7 +154,8 @@ export interface GenesState {
     unit: CountUnit
     keep: KeepPolicy
     group: GroupMode
-    sort: AnnotationsSort
+    sort: AnnotationsSort | null
+    sortDir: AnnotationsSortDir
     search: string
   }>) => void
   setUrlReady: (ready: boolean) => void
@@ -181,15 +175,14 @@ export const useGenesStore = create<GenesState>((set, get) => ({
   queryNames: [],
   excluded: new Set(),
   listFilters: { ...EMPTY_LIST_FILTERS },
-  distributionSelection: EMPTY_SELECTION,
   annotationsSelection: EMPTY_SELECTION,
-  selectionAnchor: { row: null, col: null, cell: null },
   annotationsSelectionAnchor: { row: null, col: null },
   sources: defaultSources(),
   coverage: null,
   keep: DEFAULT_KEEP,
   group: DEFAULT_GROUP,
   sort: DEFAULT_SORT,
+  sortDir: DEFAULT_SORT_DIR,
   search: "",
   expanded: new Set(),
   drawer: null,
@@ -207,9 +200,7 @@ export const useGenesStore = create<GenesState>((set, get) => ({
       queryNames: names,
       drawer: null,
       listFilters: { ...EMPTY_LIST_FILTERS },
-      distributionSelection: EMPTY_SELECTION,
       annotationsSelection: EMPTY_SELECTION,
-      selectionAnchor: { row: null, col: null, cell: null },
       annotationsSelectionAnchor: { row: null, col: null },
     }),
   setExcluded: (excluded) =>
@@ -246,20 +237,6 @@ export const useGenesStore = create<GenesState>((set, get) => ({
     })
   },
 
-  dispatchSelection: (action) => {
-    const next = reduceSelection(get().distributionSelection, action)
-    set({ distributionSelection: next })
-  },
-  clearDistributionSelection: () =>
-    set({
-      distributionSelection: EMPTY_SELECTION,
-      selectionAnchor: { row: null, col: null, cell: null },
-    }),
-  setSelectionAnchor: (anchor) =>
-    set({
-      selectionAnchor: { ...get().selectionAnchor, ...anchor },
-    }),
-
   dispatchAnnotationsSelection: (action) => {
     const next = reduceSelection(get().annotationsSelection, action)
     set({ annotationsSelection: next })
@@ -279,7 +256,15 @@ export const useGenesStore = create<GenesState>((set, get) => ({
 
   setKeep: (keep) => set({ keep }),
   setGroup: (group) => set({ group }),
-  setSort: (sort) => set({ sort }),
+  setSort: (sort, sortDir) =>
+    set({
+      sort,
+      ...(sortDir !== undefined
+        ? { sortDir }
+        : sort == null
+          ? { sortDir: DEFAULT_SORT_DIR }
+          : {}),
+    }),
   setSearch: (search) => set({ search }),
 
   toggleExpanded: (id) => {
@@ -322,7 +307,6 @@ export const useGenesStore = create<GenesState>((set, get) => ({
         includeCells: [],
       },
       viewRank: null,
-      distributionSelection: EMPTY_SELECTION,
     }),
   relabelTaxa: (labelFor) => {
     const map = (list: SelectedTaxon[]) =>
@@ -338,8 +322,6 @@ export const useGenesStore = create<GenesState>((set, get) => ({
   setViewRank: (rank) =>
     set({
       viewRank: rank,
-      distributionSelection: EMPTY_SELECTION,
-      selectionAnchor: { row: null, col: null, cell: null },
       drawer: null,
       expanded: new Set(),
     }),
@@ -354,6 +336,7 @@ export const useGenesStore = create<GenesState>((set, get) => ({
       keep: DEFAULT_KEEP,
       group: DEFAULT_GROUP,
       sort: DEFAULT_SORT,
+      sortDir: DEFAULT_SORT_DIR,
       search: "",
       annotationsSelection: EMPTY_SELECTION,
       annotationsSelectionAnchor: { row: null, col: null },
@@ -366,14 +349,13 @@ export const useGenesStore = create<GenesState>((set, get) => ({
       queryText: "",
       excluded: new Set(),
       listFilters: { ...EMPTY_LIST_FILTERS },
-      distributionSelection: EMPTY_SELECTION,
       annotationsSelection: EMPTY_SELECTION,
-      selectionAnchor: { row: null, col: null, cell: null },
       annotationsSelectionAnchor: { row: null, col: null },
       coverage: null,
       keep: DEFAULT_KEEP,
       group: DEFAULT_GROUP,
       sort: DEFAULT_SORT,
+      sortDir: DEFAULT_SORT_DIR,
       search: "",
       drawer: null,
       expanded: new Set(),
@@ -420,6 +402,7 @@ export const useGenesStore = create<GenesState>((set, get) => ({
       ...(partial.keep !== undefined ? { keep: partial.keep } : {}),
       ...(partial.group !== undefined ? { group: partial.group } : {}),
       ...(partial.sort !== undefined ? { sort: partial.sort } : {}),
+      ...(partial.sortDir !== undefined ? { sortDir: partial.sortDir } : {}),
       ...(partial.search !== undefined ? { search: partial.search } : {}),
       ...(nextDrawer !== undefined ? { drawer: nextDrawer } : {}),
     })

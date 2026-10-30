@@ -19,8 +19,8 @@ describe("useGenesStore selection", () => {
   beforeEach(() => {
     useGenesStore.setState({
       listFilters: { ...EMPTY_LIST_FILTERS },
-      distributionSelection: EMPTY_SELECTION,
-      selectionAnchor: { row: null, col: null, cell: null },
+      annotationsSelection: EMPTY_SELECTION,
+      annotationsSelectionAnchor: { row: null, col: null },
       unit: DEFAULT_COUNT_UNIT,
       drawer: null,
       coverage: null,

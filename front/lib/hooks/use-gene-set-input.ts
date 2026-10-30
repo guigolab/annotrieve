@@ -78,47 +78,42 @@ export function useGeneSetInput() {
   )
 
   const runSearch = useCallback(() => {
-    const beforePrefix = exactNamesBeforePrefixSheet(queryText)
+    const text = useGenesStore.getState().queryText
+    const beforePrefix = exactNamesBeforePrefixSheet(text)
     if (beforePrefix) {
-      const tokens = tokenizeGeneQuery(queryText)
+      const tokens = tokenizeGeneQuery(text)
       const { prefixes } = partitionTokens(tokens)
       if (beforePrefix.length) {
         commitNames(beforePrefix, {
-          leaveQueryText: prefixTokensOnly(queryText),
+          leaveQueryText: prefixTokensOnly(text),
         })
       } else {
-        setQueryText(prefixTokensOnly(queryText))
+        setQueryText(prefixTokensOnly(text))
       }
       dispatch({
         type: "open",
         seed: prefixes[0]!.replace(/\*+$/, "").trim(),
-        exact: beforePrefix.length
-          ? mergeGeneNames(queryNames, beforePrefix, MAX_NAMES_GET)
-          : uniqueNames(queryNames, MAX_NAMES_GET),
       })
       return { openedPrefix: true as const }
     }
     const exact = uniqueNames(
-      partitionTokens(tokenizeGeneQuery(queryText)).exact,
+      partitionTokens(tokenizeGeneQuery(text)).exact,
       MAX_NAMES_GET,
     )
     const ok = commitNames(exact)
     return { openedPrefix: false as const, committed: ok }
-  }, [queryText, queryNames, commitNames, setQueryText])
+  }, [commitNames, setQueryText])
 
   const openPrefix = useCallback(
     (explicitSeed?: string) => {
       if (explicitSeed != null && explicitSeed !== "") {
         const stem = explicitSeed.replace(/\*+$/, "").trim()
-        dispatch({
-          type: "open",
-          seed: stem,
-          exact: uniqueNames(queryNames, MAX_NAMES_GET),
-        })
+        dispatch({ type: "open", seed: stem })
         return
       }
 
-      const plan = planOpenPrefix(queryText)
+      const text = useGenesStore.getState().queryText
+      const plan = planOpenPrefix(text)
       if (plan.mode === "prefix-token") {
         if (plan.exactToCommit.length) {
           commitNames(plan.exactToCommit, {
@@ -127,24 +122,14 @@ export function useGeneSetInput() {
         } else {
           setQueryText(plan.leaveQueryText)
         }
-        dispatch({
-          type: "open",
-          seed: plan.seed,
-          exact: plan.exactToCommit.length
-            ? mergeGeneNames(queryNames, plan.exactToCommit, MAX_NAMES_GET)
-            : uniqueNames(queryNames, MAX_NAMES_GET),
-        })
+        dispatch({ type: "open", seed: plan.seed })
         return
       }
 
       // bare-stem or empty: never commit; seed the sheet only.
-      dispatch({
-        type: "open",
-        seed: plan.seed,
-        exact: uniqueNames(queryNames, MAX_NAMES_GET),
-      })
+      dispatch({ type: "open", seed: plan.seed })
     },
-    [queryText, queryNames, commitNames, setQueryText],
+    [commitNames, setQueryText],
   )
 
   const cancelPrefix = useCallback(() => {
@@ -155,8 +140,23 @@ export function useGeneSetInput() {
     (names: string[]) => {
       const next = namesToCommitFromSheet(names, sheet.removed)
       dispatch({ type: "close" })
-      if (next.length) commitNames(next)
-      else setQueryText("")
+      if (next.length) {
+        const before = useGenesStore.getState().queryNames.length
+        commitNames(next)
+        const after = useGenesStore.getState().queryNames.length
+        const added = Math.max(0, after - before)
+        if (added > 0) {
+          toast.success(
+            added === 1
+              ? "Added 1 gene to the set"
+              : `Added ${added.toLocaleString()} genes to the set`,
+          )
+        } else {
+          toast.message("Those genes are already in the set")
+        }
+      } else {
+        setQueryText("")
+      }
     },
     [sheet.removed, commitNames, setQueryText],
   )
@@ -190,7 +190,6 @@ export function useGeneSetInput() {
         dispatch({
           type: "open",
           seed: prefixes[0]!.replace(/\*+$/, "").trim(),
-          exact: beforePrefix,
         })
         return
       }

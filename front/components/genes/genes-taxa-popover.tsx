@@ -157,13 +157,13 @@ export function GenesTaxaPopover({
           type="button"
           variant="outline"
           className={cn(
-            "h-11 max-w-[16rem] shrink-0 gap-1.5 rounded-xl px-3",
+            "h-9 max-w-[14rem] shrink-0 gap-1.5 rounded-md px-3",
             className,
           )}
           disabled={disabled}
           title={scopeLabel}
         >
-          <span className="text-muted-foreground">Scope:</span>
+          <span className="text-muted-foreground">Scope</span>
           <span className="min-w-0 truncate font-medium">{scopeLabel}</span>
           <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         </Button>
@@ -173,7 +173,7 @@ export function GenesTaxaPopover({
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           placeholder="Search a taxon"
-          className="h-9 rounded-xl shadow-sm bg-background/70 dark:bg-muted/40 text-foreground border border-border hover:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 focus-visible:border-primary/60 transition-colors placeholder:text-muted-foreground"
+          className="h-9 rounded-md bg-background text-foreground border border-border placeholder:text-muted-foreground"
         />
         <div className="max-h-40 overflow-y-auto">
           {searching && (

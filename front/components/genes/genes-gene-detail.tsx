@@ -105,7 +105,7 @@ export function GenesGeneDetail({
         <div className="flex min-w-0 items-center gap-2">
           <span
             className={cn(
-              "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium",
+              "shrink-0 rounded px-1.5 py-0.5 text-xs font-medium",
               catStyle.textClass,
               catStyle.bgClass,
             )}
@@ -223,7 +223,7 @@ export function GenesGeneDetail({
         <header className="flex flex-wrap items-baseline gap-2">
           <h4 className="text-sm font-medium">Transcripts</h4>
           {spanLabel ? (
-            <span className="ml-auto text-[11px] tabular-nums text-muted-foreground">
+            <span className="ml-auto text-xs tabular-nums text-muted-foreground">
               {spanLabel}
             </span>
           ) : null}

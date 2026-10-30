@@ -9,10 +9,15 @@ import {
   DEFAULT_GROUP,
   DEFAULT_KEEP,
   DEFAULT_SORT,
+  DEFAULT_SORT_DIR,
+  isDefaultAnnotationsSort,
   parseAnnotationsSort,
+  parseAnnotationsSortDir,
   parseGroupMode,
   parseKeepPolicy,
+  primarySortDir,
   type AnnotationsSort,
+  type AnnotationsSortDir,
   type GroupMode,
   type KeepPolicy,
 } from "@/lib/genes/annotations-controls"
@@ -61,7 +66,12 @@ export interface GenesUrlState {
   unit: CountUnit | null
   keep: KeepPolicy | null
   group: GroupMode | null
-  sort: AnnotationsSort | null
+  /**
+   * Parsed sort key. `undefined` = param absent (use default).
+   * `null` = explicit `sort=none`.
+   */
+  sort: AnnotationsSort | null | undefined
+  sortDir: AnnotationsSortDir | null
   q: string | null
 }
 
@@ -140,6 +150,7 @@ export function parseGenesSearchParams(
   const keep = parseKeepPolicy(searchParams.get("keep"))
   const group = parseGroupMode(searchParams.get("group"))
   const sort = parseAnnotationsSort(searchParams.get("sort"))
+  const sortDir = parseAnnotationsSortDir(searchParams.get("dir"))
   const q = searchParams.get("q")?.trim() || null
 
   return {
@@ -162,6 +173,7 @@ export function parseGenesSearchParams(
     keep,
     group,
     sort,
+    sortDir,
     q,
   }
 }
@@ -194,6 +206,7 @@ export function buildGenesQueryString(state: {
   keep?: KeepPolicy | null
   group?: GroupMode | null
   sort?: AnnotationsSort | null
+  sortDir?: AnnotationsSortDir | null
   search?: string | null
 }): string {
   const usp = new URLSearchParams()
@@ -254,8 +267,17 @@ export function buildGenesQueryString(state: {
   if (state.group && state.group !== DEFAULT_GROUP) {
     usp.set("group", state.group)
   }
-  if (state.sort && state.sort !== DEFAULT_SORT) {
-    usp.set("sort", state.sort)
+  const sort = state.sort === undefined ? DEFAULT_SORT : state.sort
+  const sortDir =
+    state.sortDir ??
+    (sort != null ? primarySortDir(sort) : DEFAULT_SORT_DIR)
+  if (sort == null) {
+    usp.set("sort", "none")
+  } else if (!isDefaultAnnotationsSort(sort, sortDir)) {
+    usp.set("sort", sort)
+    if (sortDir !== primarySortDir(sort)) {
+      usp.set("dir", sortDir)
+    }
   }
   if (state.search?.trim()) {
     usp.set("q", state.search.trim())

@@ -1,26 +1,17 @@
-/** Homogeneous distribution selection kinds. */
-export type SelectionKind = "rows" | "cols" | "cells"
-
-export interface SelectionCell {
-  taxid: string
-  gene: string
-}
-
+/**
+ * Row/col multi-select for Annotations (and shared helpers).
+ * Overview heatmap is read-only and does not use this model.
+ */
 export interface DistributionSelection {
-  kind: SelectionKind | null
-  /** Selected taxon node ids (row headers). */
+  /** Selected taxon / annotation row ids. */
   rows: string[]
   /** Selected gene names (display form). */
   cols: string[]
-  /** Selected cells as taxid×gene pairs. */
-  cells: SelectionCell[]
 }
 
 export const EMPTY_SELECTION: DistributionSelection = {
-  kind: null,
   rows: [],
   cols: [],
-  cells: [],
 }
 
 export type SelectionAction =
@@ -40,17 +31,6 @@ export type SelectionAction =
       visibleCols: string[]
       shiftAnchor?: string | null
     }
-  | {
-      type: "click-cell"
-      taxid: string
-      gene: string
-      mod: "replace" | "toggle"
-      /** Visible row×col order for shift rectangle. */
-      visibleRows: string[]
-      visibleCols: string[]
-      shiftAnchor?: SelectionCell | null
-    }
-  | { type: "prune"; rowIds: Set<string>; colNames: Set<string> }
   /** Replace row selection with the given ids (one store update). */
   | { type: "set-rows"; ids: string[] }
   /**
@@ -63,8 +43,8 @@ function normalizeGene(name: string): string {
   return name.trim()
 }
 
-function cellKey(c: SelectionCell): string {
-  return `${c.taxid}\0${c.gene.toLowerCase()}`
+function geneKey(name: string): string {
+  return name.toLowerCase()
 }
 
 function rangeInclusive(
@@ -83,44 +63,47 @@ function rangeInclusive(
   return order.slice(lo, hi + 1)
 }
 
-function rectangleCells(
-  visibleRows: string[],
-  visibleCols: string[],
-  a: SelectionCell,
-  b: SelectionCell,
-): SelectionCell[] {
-  const rows = rangeInclusive(visibleRows, a.taxid, b.taxid)
-  const cols = rangeInclusive(
-    visibleCols,
-    a.gene,
-    b.gene,
-    (s) => s.toLowerCase(),
-  )
-  const out: SelectionCell[] = []
-  for (const taxid of rows) {
-    for (const gene of cols) {
-      out.push({ taxid, gene })
-    }
-  }
-  return out
+function finalize(sel: DistributionSelection): DistributionSelection {
+  if (selectionIsEmpty(sel)) return EMPTY_SELECTION
+  return sel
 }
 
-function withKind(
-  kind: SelectionKind,
-  patch: Partial<DistributionSelection>,
-): DistributionSelection {
-  return {
-    kind,
-    rows: patch.rows ?? [],
-    cols: patch.cols ?? [],
-    cells: patch.cells ?? [],
+function toggleRow(state: DistributionSelection, id: string): DistributionSelection {
+  const has = state.rows.includes(id)
+  if (has) {
+    return finalize({
+      ...state,
+      rows: state.rows.filter((r) => r !== id),
+    })
   }
+  return finalize({
+    ...state,
+    rows: [...state.rows, id],
+  })
+}
+
+function toggleCol(
+  state: DistributionSelection,
+  name: string,
+): DistributionSelection {
+  const g = geneKey(name)
+  const has = state.cols.some((c) => c.toLowerCase() === g)
+  if (has) {
+    return finalize({
+      ...state,
+      cols: state.cols.filter((c) => c.toLowerCase() !== g),
+    })
+  }
+  return finalize({
+    ...state,
+    cols: [...state.cols, normalizeGene(name)],
+  })
 }
 
 /**
- * Pure reducer for heatmap multi-select.
- * Click replaces; Ctrl/Cmd toggles; Shift expands a range/rectangle over
- * the visible row×column order; Esc / clear empties.
+ * Pure reducer for Annotations multi-select.
+ * Plain click toggles; Shift expands a range; Esc / clear empties.
+ * `mod: "replace"` is treated as toggle for compatibility.
  */
 export function reduceSelection(
   state: DistributionSelection,
@@ -130,125 +113,77 @@ export function reduceSelection(
     case "clear":
       return EMPTY_SELECTION
 
-    case "prune": {
-      if (!state.kind) return state
-      if (state.kind === "rows") {
-        const rows = state.rows.filter((id) => action.rowIds.has(id))
-        return rows.length ? withKind("rows", { rows }) : EMPTY_SELECTION
-      }
-      if (state.kind === "cols") {
-        const lower = new Set(
-          [...action.colNames].map((n) => n.toLowerCase()),
-        )
-        const cols = state.cols.filter((n) =>
-          lower.has(n.toLowerCase()),
-        )
-        return cols.length ? withKind("cols", { cols }) : EMPTY_SELECTION
-      }
-      const cells = state.cells.filter(
-        (c) =>
-          action.rowIds.has(c.taxid) &&
-          action.colNames.has(c.gene.toLowerCase()),
-      )
-      return cells.length ? withKind("cells", { cells }) : EMPTY_SELECTION
-    }
-
     case "click-row": {
-      if (action.mod === "toggle" && state.kind === "rows") {
-        const has = state.rows.includes(action.id)
-        const rows = has
-          ? state.rows.filter((id) => id !== action.id)
-          : [...state.rows, action.id]
-        return rows.length ? withKind("rows", { rows }) : EMPTY_SELECTION
-      }
       if (
         action.shiftAnchor &&
-        state.kind === "rows" &&
-        action.visibleRows.length
+        action.visibleRows.length &&
+        state.rows.includes(action.shiftAnchor)
       ) {
-        const rows = rangeInclusive(
+        const range = rangeInclusive(
           action.visibleRows,
           action.shiftAnchor,
           action.id,
         )
-        return withKind("rows", { rows })
+        let next = state
+        for (const id of range) {
+          if (!next.rows.includes(id)) next = toggleRow(next, id)
+        }
+        return next
       }
-      return withKind("rows", { rows: [action.id] })
+      return toggleRow(state, action.id)
     }
 
     case "click-col": {
       const name = normalizeGene(action.name)
-      if (action.mod === "toggle" && state.kind === "cols") {
-        const has = state.cols.some(
-          (c) => c.toLowerCase() === name.toLowerCase(),
-        )
-        const cols = has
-          ? state.cols.filter(
-              (c) => c.toLowerCase() !== name.toLowerCase(),
-            )
-          : [...state.cols, name]
-        return cols.length ? withKind("cols", { cols }) : EMPTY_SELECTION
-      }
       if (
         action.shiftAnchor &&
-        state.kind === "cols" &&
-        action.visibleCols.length
+        action.visibleCols.length &&
+        state.cols.some(
+          (c) => c.toLowerCase() === action.shiftAnchor!.toLowerCase(),
+        )
       ) {
-        const cols = rangeInclusive(
+        const range = rangeInclusive(
           action.visibleCols,
           action.shiftAnchor,
           name,
           (s) => s.toLowerCase(),
         )
-        return withKind("cols", { cols })
+        let next = state
+        for (const col of range) {
+          if (!next.cols.some((c) => c.toLowerCase() === col.toLowerCase())) {
+            next = toggleCol(next, col)
+          }
+        }
+        return next
       }
-      return withKind("cols", { cols: [name] })
-    }
-
-    case "click-cell": {
-      const cell: SelectionCell = {
-        taxid: action.taxid,
-        gene: normalizeGene(action.gene),
-      }
-      if (action.mod === "toggle" && state.kind === "cells") {
-        const key = cellKey(cell)
-        const has = state.cells.some((c) => cellKey(c) === key)
-        const cells = has
-          ? state.cells.filter((c) => cellKey(c) !== key)
-          : [...state.cells, cell]
-        return cells.length ? withKind("cells", { cells }) : EMPTY_SELECTION
-      }
-      if (
-        action.shiftAnchor &&
-        state.kind === "cells" &&
-        action.visibleRows.length &&
-        action.visibleCols.length
-      ) {
-        const cells = rectangleCells(
-          action.visibleRows,
-          action.visibleCols,
-          action.shiftAnchor,
-          cell,
-        )
-        return withKind("cells", { cells })
-      }
-      return withKind("cells", { cells: [cell] })
+      return toggleCol(state, name)
     }
 
     case "set-rows": {
       const ids = action.ids.filter(Boolean)
-      return ids.length ? withKind("rows", { rows: [...ids] }) : EMPTY_SELECTION
+      return finalize({
+        ...state,
+        rows: ids.length ? [...ids] : [],
+      })
     }
 
     case "toggle-all-rows": {
       const ids = action.ids.filter(Boolean)
-      if (!ids.length) return EMPTY_SELECTION
+      if (!ids.length) return state
       const allOn =
-        state.kind === "rows" &&
-        ids.length > 0 &&
-        ids.every((id) => state.rows.includes(id))
-      if (allOn) return EMPTY_SELECTION
-      return withKind("rows", { rows: [...ids] })
+        ids.length > 0 && ids.every((id) => state.rows.includes(id))
+      if (allOn) {
+        const drop = new Set(ids)
+        return finalize({
+          ...state,
+          rows: state.rows.filter((id) => !drop.has(id)),
+        })
+      }
+      const merged = [...new Set([...state.rows, ...ids])]
+      return finalize({
+        ...state,
+        rows: merged,
+      })
     }
 
     default:
@@ -257,12 +192,43 @@ export function reduceSelection(
 }
 
 export function selectionIsEmpty(sel: DistributionSelection): boolean {
-  return sel.kind == null
+  return sel.rows.length === 0 && sel.cols.length === 0
 }
 
+/** Total selected items for simple badges (rows + cols). */
 export function selectionSize(sel: DistributionSelection): number {
-  if (sel.kind === "rows") return sel.rows.length
-  if (sel.kind === "cols") return sel.cols.length
-  if (sel.kind === "cells") return sel.cells.length
-  return 0
+  return sel.rows.length + sel.cols.length
+}
+
+export function selectionHasOnlyRows(sel: DistributionSelection): boolean {
+  return sel.rows.length > 0 && sel.cols.length === 0
+}
+
+export function selectionHasOnlyCols(sel: DistributionSelection): boolean {
+  return sel.cols.length > 0 && sel.rows.length === 0
+}
+
+/** Short label for the floating selection bar. */
+export function selectionSummaryLabel(
+  sel: DistributionSelection,
+  opts?: { rowsAreAnnotations?: boolean },
+): string {
+  const parts: string[] = []
+  if (sel.rows.length) {
+    const n = sel.rows.length
+    const unit = opts?.rowsAreAnnotations
+      ? n === 1
+        ? "annotation"
+        : "annotations"
+      : n === 1
+        ? "clade"
+        : "clades"
+    parts.push(`${n.toLocaleString()} ${unit}`)
+  }
+  if (sel.cols.length) {
+    const n = sel.cols.length
+    parts.push(`${n.toLocaleString()} ${n === 1 ? "gene" : "genes"}`)
+  }
+  if (!parts.length) return "Nothing selected"
+  return `${parts.join(" · ")} selected`
 }

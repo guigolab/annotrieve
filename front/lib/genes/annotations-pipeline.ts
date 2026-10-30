@@ -4,7 +4,9 @@ import {
   DEFAULT_GROUP,
   DEFAULT_KEEP,
   DEFAULT_SORT,
+  DEFAULT_SORT_DIR,
   type AnnotationsSort,
+  type AnnotationsSortDir,
   type GroupMode,
   type KeepPolicy,
 } from "@/lib/genes/annotations-controls"
@@ -42,12 +44,14 @@ export function runAnnotationsPipeline(opts: {
   taxonIndex: Map<string, FlatTreeNode>
   keep?: KeepPolicy
   group?: GroupMode
-  sort?: AnnotationsSort
+  sort?: AnnotationsSort | null
+  sortDir?: AnnotationsSortDir
   search?: string
 }): AnnotationsPipelineResult {
   const keep = opts.keep ?? DEFAULT_KEEP
   const group = opts.group ?? DEFAULT_GROUP
-  const sort = opts.sort ?? DEFAULT_SORT
+  const sort = opts.sort === undefined ? DEFAULT_SORT : opts.sort
+  const sortDir = opts.sortDir ?? DEFAULT_SORT_DIR
   const search = opts.search ?? ""
 
   const page = opts.adapter.annotations(opts.filter, {
@@ -64,7 +68,7 @@ export function runAnnotationsPipeline(opts: {
   const kept = applyKeep(scored, keep)
   const searched = applySearch(kept, search, opts.taxonIndex)
   const species = new Set(searched.map((s) => s.speciesId))
-  const rows = buildGroupedRows(searched, group, sort, opts.taxonIndex)
+  const rows = buildGroupedRows(searched, group, sort, opts.taxonIndex, sortDir)
 
   return {
     filteredTotal,

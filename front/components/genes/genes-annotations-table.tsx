@@ -9,18 +9,25 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
 } from "react"
-import { Loader2, Pin } from "lucide-react"
+import { ArrowDown, ArrowUp, ArrowUpDown, Loader2, Pin } from "lucide-react"
+import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import type { ResolvedTerm } from "@/lib/genes/adapter"
-import { useCompareStore } from "@/lib/genes/compare-store"
+import type {
+  AnnotationsSort,
+  AnnotationsSortDir,
+} from "@/lib/genes/annotations-controls"
+import {
+  MAX_PINS,
+  useCompareStore,
+  type PinMode,
+} from "@/lib/genes/compare-store"
 import { annotationsGeneColumnWidth } from "@/lib/genes/heatmap"
 import type { PipelineRow } from "@/lib/genes/keep"
-import { formatReleaseDate, sourceColor } from "@/lib/genes/hits"
-import {
-  isPinned,
-  resolveAndTogglePin,
-} from "@/lib/genes/pin-gene"
+import { formatReleaseDate, sourceColor, sourceLabel } from "@/lib/genes/hits"
+import { pinKey, resolveAndPinMany } from "@/lib/genes/pin-gene"
 import type { DistributionSelection } from "@/lib/genes/selection"
 import {
   useVariableVirtualWindow,
@@ -28,14 +35,14 @@ import {
 } from "@/lib/genes/virtual"
 import { cn } from "@/lib/utils"
 
-const ROW_H = 40
+const ROW_H = 44
 const HEADER_H = 40
-const CHECK_W = 36
-const PIN_W = 40
-const SPECIES_W = 148
-const ASSEMBLY_W = 120
+const CHECK_W = 32
+const PIN_W = 32
+const SPECIES_W = 136
+const ASSEMBLY_W = 84
 const RELEASE_W = 88
-const COV_W = 56
+const COV_W = 72
 
 interface GenesAnnotationsTableProps {
   rows: PipelineRow[]
@@ -44,6 +51,19 @@ interface GenesAnnotationsTableProps {
   selection: DistributionSelection
   openAnnotationId: string | null
   subjectGene: string | null
+  pinMode: PinMode
+  pinnedKeys: Set<string>
+  pinCountByAnnotation: Map<string, number>
+  pendingPinKeys: Set<string>
+  sort: AnnotationsSort | null
+  sortDir: AnnotationsSortDir
+  onSortColumnClick: (key: AnnotationsSort) => void
+  onPinGeneCell: (
+    annotationId: string,
+    species: string,
+    source: number,
+    geneName: string,
+  ) => void
   onToggleRow: (
     annotationId: string,
     opts: { toggle: boolean; shift: boolean },
@@ -66,6 +86,8 @@ interface GenesAnnotationsTableProps {
   /** `${annotationId}\0${geneName}` of the open gene peek, if any. */
   peekKey?: string | null
   onScrollClosePeek?: () => void
+  /** Extra scroll padding (px) so the last row clears the footer stack. */
+  bottomInset?: number
   className?: string
 }
 
@@ -81,37 +103,16 @@ function modOpts(e: {
 }
 
 function GenePinButton({
-  annotationId,
-  species,
-  source,
+  pinned,
+  busy,
   geneName,
+  onToggle,
 }: {
-  annotationId: string
-  species: string
-  source: number
+  pinned: boolean
+  busy: boolean
   geneName: string
+  onToggle: () => void
 }) {
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const pins = useCompareStore((s) => s.pins)
-  const pinned = isPinned(pins, annotationId, geneName)
-
-  const onClick = async (e: ReactMouseEvent) => {
-    e.stopPropagation()
-    e.preventDefault()
-    if (busy) return
-    setBusy(true)
-    setError(null)
-    const result = await resolveAndTogglePin({
-      annotationId,
-      species,
-      source,
-      geneName,
-    })
-    if (result.status === "error") setError(result.message)
-    setBusy(false)
-  }
-
   return (
     <Button
       type="button"
@@ -128,14 +129,12 @@ function GenePinButton({
           : `Pin ${geneName} for transcript compare`
       }
       aria-pressed={pinned}
-      title={
-        error
-          ? error
-          : pinned
-            ? "Unpin"
-            : "Pin for transcript compare"
-      }
-      onClick={onClick}
+      title={pinned ? "Unpin" : "Pin for transcript compare"}
+      onClick={(e) => {
+        e.stopPropagation()
+        e.preventDefault()
+        if (!busy) onToggle()
+      }}
     >
       {busy ? (
         <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -153,6 +152,14 @@ export function GenesAnnotationsTable({
   selection,
   openAnnotationId,
   subjectGene,
+  pinMode,
+  pinnedKeys,
+  pinCountByAnnotation,
+  pendingPinKeys,
+  sort,
+  sortDir,
+  onSortColumnClick,
+  onPinGeneCell,
   onToggleRow,
   onToggleCol,
   onToggleSelectAll,
@@ -162,9 +169,14 @@ export function GenesAnnotationsTable({
   onClearSelection,
   peekKey = null,
   onScrollClosePeek,
+  bottomInset = 0,
   className,
 }: GenesAnnotationsTableProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
+  const shiftKeyRef = useRef(false)
+  const [headerPinBusy, setHeaderPinBusy] = useState(false)
+  const pinsLength = useCompareStore((s) => s.pins.length)
+  const setPins = useCompareStore((s) => s.setPins)
 
   useEffect(() => {
     const el = scrollRef.current
@@ -173,6 +185,21 @@ export function GenesAnnotationsTable({
     el.addEventListener("scroll", onScroll, { passive: true })
     return () => el.removeEventListener("scroll", onScroll)
   }, [onScrollClosePeek])
+
+  useEffect(() => {
+    const onPointer = (e: PointerEvent) => {
+      shiftKeyRef.current = e.shiftKey
+    }
+    const onKey = (e: KeyboardEvent) => {
+      shiftKeyRef.current = e.shiftKey
+    }
+    window.addEventListener("pointerdown", onPointer, true)
+    window.addEventListener("keydown", onKey, true)
+    return () => {
+      window.removeEventListener("pointerdown", onPointer, true)
+      window.removeEventListener("keydown", onKey, true)
+    }
+  }, [])
   const showPin = Boolean(subjectGene)
   const geneColW = annotationsGeneColumnWidth(geneColumns.length)
   const labelW =
@@ -204,15 +231,15 @@ export function GenesAnnotationsTable({
     4,
   )
 
-  const selectedRows = useMemo(() => {
-    if (selection.kind !== "rows") return new Set<string>()
-    return new Set(selection.rows)
-  }, [selection])
+  const selectedRows = useMemo(
+    () => new Set(selection.rows),
+    [selection.rows],
+  )
 
-  const selectedCols = useMemo(() => {
-    if (selection.kind !== "cols") return new Set<string>()
-    return new Set(selection.cols.map((n) => n.toLowerCase()))
-  }, [selection])
+  const selectedCols = useMemo(
+    () => new Set(selection.cols.map((n) => n.toLowerCase())),
+    [selection.cols],
+  )
 
   const annotationIds = useMemo(
     () =>
@@ -227,6 +254,73 @@ export function GenesAnnotationsTable({
     annotationIds.every((id) => selectedRows.has(id))
   const someSelected =
     !allSelected && annotationIds.some((id) => selectedRows.has(id))
+
+  const subjectPinTargets = useMemo(() => {
+    if (!subjectGene) return []
+    return annotationRows
+      .filter((r) => r.kind === "annotation")
+      .map((r) => {
+        if (r.kind !== "annotation") return null
+        return {
+          annotationId: r.item.row.annotationId,
+          species: r.item.speciesLabel,
+          source: r.item.row.source,
+          geneNames: [subjectGene],
+        }
+      })
+      .filter((t): t is NonNullable<typeof t> => t != null)
+  }, [annotationRows, subjectGene])
+
+  const allSubjectPinned =
+    Boolean(subjectGene) &&
+    subjectPinTargets.length > 0 &&
+    subjectPinTargets.every((t) =>
+      pinnedKeys.has(pinKey(t.annotationId, subjectGene!)),
+    )
+
+  const onHeaderPinAll = useCallback(async () => {
+    if (!subjectGene || headerPinBusy || !subjectPinTargets.length) return
+    setHeaderPinBusy(true)
+    try {
+      if (allSubjectPinned) {
+        const annIds = new Set(
+          subjectPinTargets.map((t) => t.annotationId),
+        )
+        const needle = subjectGene.trim().toLowerCase()
+        const { pins } = useCompareStore.getState()
+        setPins(
+          pins.filter((p) => {
+            if (!annIds.has(p.annotationId)) return true
+            if (p.geneName.trim().toLowerCase() === needle) return false
+            return !p.queryNames.some((n) => n === needle)
+          }),
+        )
+        return
+      }
+      const room = Math.max(0, MAX_PINS - pinsLength)
+      const targets = subjectPinTargets
+        .filter((t) => !pinnedKeys.has(pinKey(t.annotationId, subjectGene)))
+        .slice(0, room)
+      if (!targets.length) {
+        toast.error(`Pin limit reached (${MAX_PINS})`)
+        return
+      }
+      const result = await resolveAndPinMany(targets)
+      if (result.truncated) {
+        toast.message(`Pinned ${result.pinned}; pin limit is ${MAX_PINS}`)
+      }
+    } finally {
+      setHeaderPinBusy(false)
+    }
+  }, [
+    subjectGene,
+    headerPinBusy,
+    subjectPinTargets,
+    allSubjectPinned,
+    setPins,
+    pinsLength,
+    pinnedKeys,
+  ])
 
   const onHeaderClick = useCallback(
     (e: ReactMouseEvent, name: string) => {
@@ -259,7 +353,10 @@ export function GenesAnnotationsTable({
         // Esc handled by GenesAnnotationDrawer
         return
       }
-      if (e.key === "Escape" && selection.kind) {
+      if (
+        e.key === "Escape" &&
+        (selection.rows.length || selection.cols.length)
+      ) {
         e.preventDefault()
         onClearSelection()
       }
@@ -270,7 +367,7 @@ export function GenesAnnotationsTable({
     openAnnotationId,
     onNavigateDrawer,
     onClearSelection,
-    selection.kind,
+    selection,
   ])
 
   const onRowKeyDown = useCallback(
@@ -315,52 +412,121 @@ export function GenesAnnotationsTable({
         <div
           className="relative"
           style={{
-            height: win.totalHeight + HEADER_H,
+            height: win.totalHeight + HEADER_H + Math.max(0, bottomInset),
             width: labelW + colWin.totalWidth,
             minWidth: "100%",
           }}
         >
           <div
-            className="sticky top-0 z-20 flex border-b border-border bg-card/95 text-[10px] font-medium uppercase tracking-wide text-muted-foreground backdrop-blur"
+            className="sticky top-0 z-20 flex border-b border-border bg-card text-xs font-medium text-muted-foreground"
             style={{ height: HEADER_H }}
           >
             <div
-              className="sticky left-0 z-30 flex shrink-0 border-r border-border bg-card/95"
+              className="sticky left-0 z-30 flex shrink-0 border-r border-border bg-card"
               style={{ width: labelW }}
             >
               <div
                 className="flex items-center justify-center"
                 style={{ width: CHECK_W }}
               >
-                <input
-                  type="checkbox"
-                  checked={allSelected}
-                  ref={(el) => {
-                    if (el) el.indeterminate = someSelected
-                  }}
-                  onChange={onToggleSelectAll}
+                <Checkbox
+                  checked={
+                    allSelected ? true : someSelected ? "indeterminate" : false
+                  }
+                  onCheckedChange={() => onToggleSelectAll()}
                   aria-label="Select all filtered annotations"
                 />
               </div>
-              {showPin ? (
+              {showPin && subjectGene ? (
                 <div
                   className="flex items-center justify-center"
                   style={{ width: PIN_W }}
-                  aria-hidden
-                />
+                >
+                  <GenePinButton
+                    pinned={allSubjectPinned}
+                    busy={headerPinBusy}
+                    geneName={subjectGene}
+                    onToggle={() => {
+                      void onHeaderPinAll()
+                    }}
+                  />
+                </div>
               ) : null}
-              <div className="flex items-center px-2" style={{ width: SPECIES_W }}>
-                Organisms
-              </div>
+              <button
+                type="button"
+                className="flex min-w-0 items-center gap-1 overflow-hidden px-2 text-left hover:text-foreground"
+                style={{ width: SPECIES_W }}
+                aria-sort={
+                  sort === "species"
+                    ? sortDir === "asc"
+                      ? "ascending"
+                      : "descending"
+                    : "none"
+                }
+                onClick={() => onSortColumnClick("species")}
+              >
+                <span className="truncate">Organisms</span>
+                {sort === "species" ? (
+                  sortDir === "asc" ? (
+                    <ArrowUp className="h-3 w-3 shrink-0 text-foreground" aria-hidden />
+                  ) : (
+                    <ArrowDown className="h-3 w-3 shrink-0 text-foreground" aria-hidden />
+                  )
+                ) : (
+                  <ArrowUpDown className="h-3 w-3 shrink-0 opacity-50" aria-hidden />
+                )}
+              </button>
               <div className="flex items-center px-2" style={{ width: ASSEMBLY_W }}>
                 Assembly
               </div>
-              <div className="flex items-center px-2" style={{ width: RELEASE_W }}>
-                Release
-              </div>
-              <div className="flex items-center px-2" style={{ width: COV_W }}>
-                Cov
-              </div>
+              <button
+                type="button"
+                className="flex min-w-0 items-center gap-1 overflow-hidden px-2 text-left hover:text-foreground"
+                style={{ width: RELEASE_W }}
+                aria-sort={
+                  sort === "release"
+                    ? sortDir === "asc"
+                      ? "ascending"
+                      : "descending"
+                    : "none"
+                }
+                onClick={() => onSortColumnClick("release")}
+              >
+                <span className="truncate">Release</span>
+                {sort === "release" ? (
+                  sortDir === "asc" ? (
+                    <ArrowUp className="h-3 w-3 shrink-0 text-foreground" aria-hidden />
+                  ) : (
+                    <ArrowDown className="h-3 w-3 shrink-0 text-foreground" aria-hidden />
+                  )
+                ) : (
+                  <ArrowUpDown className="h-3 w-3 shrink-0 opacity-50" aria-hidden />
+                )}
+              </button>
+              <button
+                type="button"
+                className="flex min-w-0 items-center gap-1 overflow-hidden px-2 text-left hover:text-foreground"
+                style={{ width: COV_W }}
+                aria-sort={
+                  sort === "coverage"
+                    ? sortDir === "asc"
+                      ? "ascending"
+                      : "descending"
+                    : "none"
+                }
+                onClick={() => onSortColumnClick("coverage")}
+              >
+                <span className="truncate">Genes</span>
+                {sort === "coverage" ? (
+                  sortDir === "asc" ? (
+                    <ArrowUp className="h-3 w-3 shrink-0 text-foreground" aria-hidden />
+                  ) : (
+                    <ArrowDown className="h-3 w-3 shrink-0 text-foreground" aria-hidden />
+                  )
+                ) : (
+                  <ArrowUpDown className="h-3 w-3 shrink-0 opacity-50" aria-hidden />
+                )}
+              </button>
             </div>
             <div
               className="relative flex"
@@ -378,7 +544,7 @@ export function GenesAnnotationsTable({
                     type="button"
                     title={col.name}
                     className={cn(
-                      "flex shrink-0 items-center justify-center px-0.5 font-mono text-[11px] font-semibold normal-case tracking-normal",
+                      "flex shrink-0 items-center justify-center px-0.5 text-xs font-medium",
                       selected
                         ? "bg-primary/10 text-primary"
                         : "text-muted-foreground",
@@ -406,6 +572,8 @@ export function GenesAnnotationsTable({
             const selected = selectedRows.has(ann.annotationId)
             const matchedSet = new Set(ann.matchedTerms)
             const isOpen = openAnnotationId === ann.annotationId
+            const rowPinCount = pinCountByAnnotation.get(ann.annotationId) ?? 0
+            const rowPinned = rowPinCount > 0
 
             return (
               <div
@@ -415,7 +583,7 @@ export function GenesAnnotationsTable({
                 data-ann-id={ann.annotationId}
                 aria-selected={selected}
                 className={cn(
-                  "absolute left-0 flex w-full border-b border-border/40 text-xs outline-none hover:bg-muted/30 focus-visible:bg-muted/40 focus-visible:ring-1 focus-visible:ring-ring",
+                  "absolute left-0 flex w-full border-b border-border/50 text-xs outline-none hover:bg-muted/30 focus-visible:bg-muted/40 focus-visible:ring-1 focus-visible:ring-ring",
                   selected && "bg-primary/5",
                   isOpen && "bg-primary/10",
                 )}
@@ -429,26 +597,28 @@ export function GenesAnnotationsTable({
                   )
                 }
               >
+                {rowPinned ? (
+                  <span
+                    className="absolute bottom-0 left-0 top-0 z-10 w-0.5 bg-primary"
+                    aria-hidden
+                  />
+                ) : null}
                 <div
-                  className="sticky left-0 z-[5] flex shrink-0 border-r border-border/40 bg-card"
+                  className="sticky left-0 z-[5] flex shrink-0 border-r border-border/50 bg-card"
                   style={{ width: labelW }}
                 >
                   <div
                     className="flex items-center justify-center"
                     style={{ width: CHECK_W }}
                   >
-                    <input
-                      type="checkbox"
+                    <Checkbox
                       checked={selected}
-                      onClick={(e) => {
-                        e.stopPropagation()
+                      onClick={(e) => e.stopPropagation()}
+                      onCheckedChange={() => {
                         onToggleRow(ann.annotationId, {
                           toggle: true,
-                          shift: e.shiftKey,
+                          shift: shiftKeyRef.current,
                         })
-                      }}
-                      onChange={() => {
-                        /* selection updated in onClick */
                       }}
                       aria-label={`Select ${item.speciesLabel}`}
                     />
@@ -459,10 +629,21 @@ export function GenesAnnotationsTable({
                       style={{ width: PIN_W }}
                     >
                       <GenePinButton
-                        annotationId={ann.annotationId}
-                        species={item.speciesLabel}
-                        source={ann.source}
+                        pinned={pinnedKeys.has(
+                          pinKey(ann.annotationId, subjectGene),
+                        )}
+                        busy={pendingPinKeys.has(
+                          pinKey(ann.annotationId, subjectGene),
+                        )}
                         geneName={subjectGene}
+                        onToggle={() =>
+                          onPinGeneCell(
+                            ann.annotationId,
+                            item.speciesLabel,
+                            ann.source,
+                            subjectGene,
+                          )
+                        }
                       />
                     </div>
                   ) : null}
@@ -487,9 +668,19 @@ export function GenesAnnotationsTable({
                       <span
                         className="h-2 w-2 shrink-0 rounded-full"
                         style={{ backgroundColor: sourceColor(ann.source) }}
-                        aria-hidden
+                        title={sourceLabel(ann.source)}
+                        aria-label={sourceLabel(ann.source)}
                       />
                       <span className="truncate">{item.speciesLabel}</span>
+                      {rowPinned ? (
+                        <span
+                          className="inline-flex shrink-0 items-center gap-0.5 tabular-nums text-[10px] font-medium not-italic text-primary"
+                          title={`${rowPinCount} pinned`}
+                        >
+                          <Pin className="h-2.5 w-2.5 fill-current" aria-hidden />
+                          {rowPinCount}
+                        </span>
+                      ) : null}
                     </span>
                     <span
                       className="truncate px-2 text-muted-foreground"
@@ -534,32 +725,62 @@ export function GenesAnnotationsTable({
                           style={{ width: geneColW }}
                           aria-label={`${col.name} absent`}
                         >
-                          <span className="text-sm text-muted-foreground/40">
-                            ○
-                          </span>
+                          <span
+                            className="block h-px w-3 rounded-full bg-muted-foreground/30"
+                            aria-hidden
+                          />
                         </div>
                       )
                     }
+                    const cellKey = pinKey(ann.annotationId, col.name)
+                    const cellPinned = pinnedKeys.has(cellKey)
+                    const cellPending = pendingPinKeys.has(cellKey)
                     const cellPeeked =
                       peekKey ===
                       `${ann.annotationId}\0${col.name.toLowerCase()}`
+                    const pinLabel = cellPinned
+                      ? `Unpin ${col.name} in ${item.speciesLabel}`
+                      : `Pin ${col.name} in ${item.speciesLabel}`
                     return (
                       <button
                         key={col.id}
                         type="button"
                         className={cn(
-                          "flex shrink-0 items-center justify-center rounded-sm",
-                          "text-sm text-primary hover:bg-primary/10",
+                          "group flex shrink-0 items-center justify-center rounded-sm",
+                          "hover:bg-primary/10",
                           "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
                           colSel && "bg-primary/5",
                           cellPeeked && "bg-primary/15 ring-1 ring-primary/40",
+                          cellPinned && "bg-primary/10",
                         )}
                         style={{ width: geneColW }}
-                        aria-label={`View ${col.name} details in ${item.speciesLabel}`}
-                        aria-expanded={cellPeeked}
-                        title={`${col.name} — view gene details`}
+                        aria-label={
+                          pinMode === "pin"
+                            ? pinLabel
+                            : `View ${col.name} details in ${item.speciesLabel}`
+                        }
+                        aria-pressed={
+                          pinMode === "pin" ? cellPinned : undefined
+                        }
+                        aria-expanded={
+                          pinMode === "inspect" ? cellPeeked : undefined
+                        }
+                        title={
+                          pinMode === "pin"
+                            ? pinLabel
+                            : `${col.name} — view gene details`
+                        }
                         onClick={(e) => {
                           e.stopPropagation()
+                          if (pinMode === "pin") {
+                            onPinGeneCell(
+                              ann.annotationId,
+                              item.speciesLabel,
+                              ann.source,
+                              col.name,
+                            )
+                            return
+                          }
                           onOpenGeneCell(
                             ann.annotationId,
                             item.speciesLabel,
@@ -569,7 +790,33 @@ export function GenesAnnotationsTable({
                           )
                         }}
                       >
-                        ●
+                        {cellPending ? (
+                          <Loader2
+                            className="h-3.5 w-3.5 animate-spin text-primary"
+                            aria-hidden
+                          />
+                        ) : cellPinned ? (
+                          <Pin
+                            className="h-3.5 w-3.5 fill-current text-primary"
+                            aria-hidden
+                          />
+                        ) : pinMode === "pin" ? (
+                          <>
+                            <span
+                              className="block h-2.5 w-2.5 rounded-full bg-primary group-hover:hidden"
+                              aria-hidden
+                            />
+                            <Pin
+                              className="hidden h-3.5 w-3.5 text-primary group-hover:block"
+                              aria-hidden
+                            />
+                          </>
+                        ) : (
+                          <span
+                            className="block h-2.5 w-2.5 rounded-full bg-primary"
+                            aria-hidden
+                          />
+                        )}
                       </button>
                     )
                   })}

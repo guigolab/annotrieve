@@ -4,12 +4,16 @@ import { uniqueNames } from "@/lib/genes/tokenize"
 export interface PrefixSheetState {
   open: boolean
   seed: string
+  /**
+   * Names checked in this sheet session (pending adds).
+   * Not seeded with the already-committed gene set — Apply merges these in.
+   */
   names: string[]
   removed: Set<string>
 }
 
 export type PrefixSheetAction =
-  | { type: "open"; seed: string; exact: string[] }
+  | { type: "open"; seed: string; exact?: string[] }
   | { type: "close" }
   | { type: "add"; names: string[] }
   | { type: "drop"; names: string[] }
@@ -27,10 +31,15 @@ export function sheetReducer(
 ): PrefixSheetState {
   switch (action.type) {
     case "open":
+      // Start with an empty pending selection so a second prefix search can
+      // add genes cleanly. Already-committed names stay in the store; Apply
+      // merges. (Previously we seeded `exact` into `names`, so Apply often
+      // re-committed the same set when the user didn't realize they needed
+      // Add shown / checkboxes for the new prefix.)
       return {
         open: true,
         seed: action.seed,
-        names: [...action.exact],
+        names: [],
         removed: new Set(),
       }
     case "close":

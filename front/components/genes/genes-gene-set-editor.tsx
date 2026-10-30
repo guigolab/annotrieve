@@ -1,8 +1,9 @@
 "use client"
 
 import { useEffect, useMemo, useState, type ReactNode } from "react"
-import { Sparkles, X } from "lucide-react"
+import { ChevronDown, Sparkles, X } from "lucide-react"
 
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   Popover,
@@ -109,7 +110,7 @@ function EditorBody({
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
         placeholder="BRCA1, TP53, MYC…"
-        className="min-h-[4.5rem] resize-y rounded-xl text-sm"
+        className="min-h-[4.5rem] resize-y rounded-md text-sm"
         aria-label="Edit gene set as text"
       />
 
@@ -154,9 +155,12 @@ function EditorBody({
               <span className="min-w-0 flex-1 truncate font-mono" title={row.name}>
                 {row.name}
                 {row.viaAlias ? (
-                  <span className="ml-1.5 font-sans text-[10px] uppercase tracking-wide text-muted-foreground">
+                  <Badge
+                    variant="outline"
+                    className="ml-1.5 align-middle text-xs font-normal"
+                  >
                     alias
-                  </span>
+                  </Badge>
                 ) : null}
               </span>
               <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
@@ -223,15 +227,15 @@ export function GenesGeneSetEditor({
     <Button
       type="button"
       variant="outline"
-      className="h-11 max-w-[18rem] shrink-0 gap-1.5 rounded-xl px-3"
+      className="h-9 max-w-[16rem] shrink-0 gap-1.5 rounded-md px-3"
       aria-expanded={open}
       title={queryNames.join(", ") || "Gene set"}
     >
-      <span className="text-muted-foreground">Genes:</span>
+      <span className="text-muted-foreground">Genes</span>
       <span className="min-w-0 truncate font-medium">
         {queryNames.length ? chipLabel : "none"}
       </span>
-      <span className="text-muted-foreground">▾</span>
+      <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
     </Button>
   )
 

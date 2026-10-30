@@ -11,6 +11,7 @@ import type { HitTerm } from "@/lib/api/xrefs-types"
 import type { ResolvedTerm } from "@/lib/genes/adapter"
 import { MAX_NAMES_GET } from "@/lib/genes/prefix"
 import type { SelectedTaxon } from "@/lib/genes/taxa"
+import { GENES_CONTROL_H } from "@/lib/genes/ui"
 import { cn } from "@/lib/utils"
 
 interface GenesQueryBarProps {
@@ -60,6 +61,7 @@ export function GenesQueryBar({
   const [editorOpen, setEditorOpen] = useState(false)
   const draftEmpty = !queryText.trim()
   const atLimit = nameCount >= MAX_NAMES_GET
+  const showPrefixHint = queryText.includes("*")
 
   useEffect(() => {
     if (editorOpenSignal > 0) setEditorOpen(true)
@@ -94,23 +96,23 @@ export function GenesQueryBar({
           }}
           placeholder="Add genes (BRCA1, TP53 or prefix*)…"
           aria-label="Add gene names"
-          className="h-11 rounded-xl bg-background pl-10 shadow-sm"
+          className={cn(GENES_CONTROL_H, "rounded-md bg-background pl-10 pr-24")}
           disabled={atLimit && draftEmpty}
         />
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className={cn(
+            "absolute right-1 top-1/2 h-7 -translate-y-1/2 gap-1 px-2 text-xs",
+            showPrefixHint ? "text-foreground" : "text-muted-foreground",
+          )}
+          onClick={() => onOpenPrefix()}
+        >
+          <Sparkles className="h-3.5 w-3.5" />
+          Prefix
+        </Button>
       </div>
-
-      <Button
-        type="button"
-        variant="outline"
-        className={cn(
-          "h-11 shrink-0 gap-1.5 rounded-xl",
-          !queryText.includes("*") && "text-muted-foreground",
-        )}
-        onClick={() => onOpenPrefix()}
-      >
-        <Sparkles className="h-4 w-4" />
-        Prefix…
-      </Button>
 
       <GenesGeneSetEditor
         open={editorOpen}

@@ -1,5 +1,6 @@
 "use client"
 
+import { Badge } from "@/components/ui/badge"
 import type { GeneMatch } from "@/lib/api/xrefs-types"
 import { groupMatches } from "@/lib/genes/matches"
 import { cn } from "@/lib/utils"
@@ -22,9 +23,12 @@ export function GenesMatchChips({ matches, className }: GenesMatchChipsProps) {
       )}
     >
       {grouped.multiKey && (
-        <span className="shrink-0 rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:text-amber-200">
+        <Badge
+          variant="outline"
+          className="border-amber-500/30 bg-amber-500/20 text-xs font-medium text-amber-800 dark:text-amber-200"
+        >
           {grouped.distinctInputs.length} keys hit this gene
-        </span>
+        </Badge>
       )}
       {grouped.chips.map((chip) => {
         const isAlias = chip.ns === "alias"
@@ -35,7 +39,7 @@ export function GenesMatchChips({ matches, className }: GenesMatchChipsProps) {
           <span
             key={`${chip.ns}:${chip.name}:${chip.input}`}
             className={cn(
-              "inline-flex max-w-full items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[10px]",
+              "inline-flex max-w-full items-center gap-1 rounded-md px-1.5 py-0.5 font-mono text-xs",
               isAlias
                 ? "border border-border bg-background text-muted-foreground"
                 : "bg-primary/10 text-foreground",
@@ -44,9 +48,12 @@ export function GenesMatchChips({ matches, className }: GenesMatchChipsProps) {
           >
             <span className="truncate">{label}</span>
             {isAlias && (
-              <span className="shrink-0 text-[9px] uppercase tracking-wide opacity-70">
+              <Badge
+                variant="outline"
+                className="shrink-0 px-1 py-0 text-xs font-normal"
+              >
                 alias
-              </span>
+              </Badge>
             )}
           </span>
         )

@@ -148,15 +148,22 @@ function nameHitsBody(params: HitsSearchParams) {
   }
 }
 
+/** Prefer POST when the canonical names CSV would blow typical proxy URL limits. */
+const HITS_GET_NAMES_CSV_MAX = 1500
+
 /** Gene-name presence search (`GET|POST /hits`). Canonicalizes the GET URL for nginx cache. */
 export function searchHits(params: HitsSearchParams, init?: RequestInit) {
-  if (params.names.length > MAX_NAMES_GET) {
+  const csv = canonicalNameCsv(params.names)
+  if (
+    params.names.length > MAX_NAMES_GET ||
+    csv.length > HITS_GET_NAMES_CSV_MAX
+  ) {
     return xrefsPost<HitsResponse>("/hits", nameHitsBody(params), init)
   }
   return xrefsGet<HitsResponse>(
     "/hits",
     {
-      names: canonicalNameCsv(params.names),
+      names: csv,
       include_taxids: canonicalTaxidCsv(params.include_taxids),
       exclude_taxids: canonicalTaxidCsv(params.exclude_taxids),
     },

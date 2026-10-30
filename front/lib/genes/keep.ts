@@ -3,6 +3,7 @@ import type { DecodedHitRow } from "@/lib/genes/hits"
 import {
   AUTO_GROUP_MIN_ROWS,
   type AnnotationsSort,
+  type AnnotationsSortDir,
   type GroupMode,
   type KeepPolicy,
 } from "@/lib/genes/annotations-controls"
@@ -191,26 +192,28 @@ export type PipelineRow =
 
 function sortItems(
   items: ScoredAnnotation[],
-  sort: AnnotationsSort,
+  sort: AnnotationsSort | null,
+  sortDir: AnnotationsSortDir,
 ): ScoredAnnotation[] {
   const out = [...items]
+  const sign = sortDir === "asc" ? 1 : -1
   out.sort((a, b) => {
-    if (sort === "coverage") {
-      if (b.k !== a.k) return b.k - a.k
+    if (sort == null) {
       return a.row.annotationId.localeCompare(b.row.annotationId)
     }
-    if (sort === "species") {
-      const c = a.speciesLabel.localeCompare(b.speciesLabel)
-      if (c !== 0) return c
+    if (sort === "coverage") {
+      if (a.k !== b.k) return sign * (a.k - b.k)
       return a.row.annotationId.localeCompare(b.row.annotationId)
     }
     if (sort === "release") {
+      // cmpReleaseDesc: newer first (negative when a is newer).
       const rel = cmpReleaseDesc(a.row.releaseDate, b.row.releaseDate)
-      if (rel !== 0) return rel
+      if (rel !== 0) return sortDir === "desc" ? rel : -rel
       return a.row.annotationId.localeCompare(b.row.annotationId)
     }
-    // source
-    if (a.row.source !== b.row.source) return a.row.source - b.row.source
+    // species
+    const c = a.speciesLabel.localeCompare(b.speciesLabel)
+    if (c !== 0) return sign * c
     return a.row.annotationId.localeCompare(b.row.annotationId)
   })
   return out
@@ -223,12 +226,13 @@ function sortItems(
 export function buildGroupedRows(
   rows: ScoredAnnotation[],
   groupMode: GroupMode,
-  sort: AnnotationsSort,
+  sort: AnnotationsSort | null,
   taxonIndex: Map<string, FlatTreeNode>,
+  sortDir: AnnotationsSortDir = "desc",
 ): PipelineRow[] {
   const rank = resolveGroupRank(groupMode, rows, taxonIndex)
   if (!rank) {
-    return sortItems(rows, sort).map((item) => ({
+    return sortItems(rows, sort, sortDir).map((item) => ({
       kind: "annotation" as const,
       item,
       groupId: null,
@@ -266,7 +270,7 @@ export function buildGroupedRows(
   const out: PipelineRow[] = []
   for (const id of groupIds) {
     const bucket = buckets.get(id)!
-    const sorted = sortItems(bucket.items, sort)
+    const sorted = sortItems(bucket.items, sort, sortDir)
     out.push({
       kind: "group",
       id,
@@ -278,7 +282,7 @@ export function buildGroupedRows(
       out.push({ kind: "annotation", item, groupId: id })
     }
   }
-  for (const item of sortItems(ungrouped, sort)) {
+  for (const item of sortItems(ungrouped, sort, sortDir)) {
     out.push({ kind: "annotation", item, groupId: null })
   }
   return out

@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { Dna } from "lucide-react"
 
 import { GenesDistributionToolbar } from "@/components/genes/genes-distribution-toolbar"
 import {
@@ -9,10 +10,9 @@ import {
 } from "@/components/genes/genes-heatmap-table"
 import { GENES_TREE_PAGE_SIZE } from "@/components/genes/genes-overview-constants"
 import type { GenesRankOption } from "@/components/genes/genes-rank-select"
-import { GenesSelectionBar } from "@/components/genes/genes-selection-bar"
+import { Card } from "@/components/ui/card"
 import type { GenesHitsAdapter } from "@/lib/genes/adapter"
 import type { GenesFilter } from "@/lib/genes/filters"
-import { makeFilter } from "@/lib/genes/filters"
 import {
   downloadHeatmapPng,
   downloadHeatmapSvg,
@@ -22,9 +22,6 @@ import {
   renderHeatmapTsv,
   type HeatmapExportFormat,
 } from "@/lib/genes/heatmap-export"
-import type { NameMatchMode } from "@/lib/genes/list-filters"
-import type { DistributionSelection } from "@/lib/genes/selection"
-import { selectionIsEmpty } from "@/lib/genes/selection"
 import { flattenHitTree, type HitTree } from "@/lib/genes/tree"
 import type { CountUnit } from "@/lib/genes/view"
 import { cn } from "@/lib/utils"
@@ -38,31 +35,8 @@ interface GenesOverviewSectionProps {
   expanded: Set<string>
   loading?: boolean
   onToggleExpand: (id: string) => void
-  selection: DistributionSelection
-  selectionNameMatch: NameMatchMode
-  onSelectionNameMatchChange: (mode: NameMatchMode) => void
-  onSelectRow: (
-    id: string,
-    opts: { toggle: boolean; shift: boolean },
-  ) => void
-  onSelectCol: (
-    name: string,
-    opts: { toggle: boolean; shift: boolean },
-  ) => void
-  onSelectCell: (
-    taxid: string,
-    gene: string,
-    opts: { toggle: boolean; shift: boolean },
-  ) => void
-  onClearSelection: () => void
-  onShowOnly: () => void
-  onRestrictSearch?: () => void
-  selectionAnnotationCount: number
-  selectionSpeciesCount: number
   unit: CountUnit
   onUnitChange: (unit: CountUnit) => void
-  overviewAnnotationTotal: number
-  overviewSpeciesTotal: number
   zeroHitCount: number
   onReviewZeroHits?: () => void
   viewRank: string | null
@@ -81,21 +55,8 @@ export function GenesOverviewSection({
   expanded,
   loading,
   onToggleExpand,
-  selection,
-  selectionNameMatch,
-  onSelectionNameMatchChange,
-  onSelectRow,
-  onSelectCol,
-  onSelectCell,
-  onClearSelection,
-  onShowOnly,
-  onRestrictSearch,
-  selectionAnnotationCount,
-  selectionSpeciesCount,
   unit,
   onUnitChange,
-  overviewAnnotationTotal,
-  overviewSpeciesTotal,
   zeroHitCount,
   onReviewZeroHits,
   viewRank,
@@ -156,16 +117,6 @@ export function GenesOverviewSection({
   const onLoadMore = useCallback(() => {
     setVisibleLimit((n) => n + GENES_TREE_PAGE_SIZE)
   }, [])
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !selectionIsEmpty(selection)) {
-        onClearSelection()
-      }
-    }
-    window.addEventListener("keydown", onKey)
-    return () => window.removeEventListener("keydown", onKey)
-  }, [selection, onClearSelection])
 
   const onExportHeatmap = useCallback(
     async (format: HeatmapExportFormat) => {
@@ -228,7 +179,12 @@ export function GenesOverviewSection({
   const empty = !loading && (!roots.length || !columns.length)
 
   return (
-    <div className={cn("flex min-h-0 flex-1 flex-col overflow-hidden", className)}>
+    <div
+      className={cn(
+        "relative flex min-h-0 flex-1 flex-col overflow-hidden",
+        className,
+      )}
+    >
       {!loading && !empty ? (
         <GenesDistributionToolbar
           viewRank={viewRank}
@@ -239,58 +195,35 @@ export function GenesOverviewSection({
           onViewRankChange={onViewRankChange}
           unit={unit}
           onUnitChange={onUnitChange}
-          annotationTotal={overviewAnnotationTotal}
-          speciesTotal={overviewSpeciesTotal}
           onExport={onExportHeatmap}
           exportDisabled={!roots.length || !columns.length}
           exporting={exporting}
+          zeroHitCount={zeroHitCount}
+          onReviewZeroHits={onReviewZeroHits}
         />
-      ) : null}
-
-      {!loading && !empty ? (
-        <GenesSelectionBar
-          selection={selection}
-          annotationCount={selectionAnnotationCount}
-          speciesCount={selectionSpeciesCount}
-          nameMatch={selectionNameMatch}
-          onNameMatchChange={onSelectionNameMatchChange}
-          onShowOnly={onShowOnly}
-          onClear={onClearSelection}
-          onRestrictSearch={onRestrictSearch}
-        />
-      ) : null}
-
-      {zeroHitCount > 0 && !loading && !empty ? (
-        <div className="flex items-center gap-2 border-b border-border px-3 py-1.5 text-xs text-muted-foreground">
-          <span>
-            {zeroHitCount.toLocaleString()} gene
-            {zeroHitCount === 1 ? "" : "s"} had no hits
-          </span>
-          {onReviewZeroHits ? (
-            <button
-              type="button"
-              className="font-medium text-foreground underline-offset-2 hover:underline"
-              onClick={onReviewZeroHits}
-            >
-              Review
-            </button>
-          ) : null}
-        </div>
       ) : null}
 
       {loading ? (
-        <div className="space-y-1.5 border-t border-border p-4">
+        <div className="space-y-2 p-4">
           {Array.from({ length: 8 }, (_, i) => (
-            <div key={i} className="h-4 animate-pulse rounded bg-muted/50" />
+            <div key={i} className="h-10 animate-pulse rounded-md bg-muted/50" />
           ))}
         </div>
       ) : empty ? (
-        <div className="flex flex-1 items-center justify-center border-t border-dashed border-border p-6">
-          <div className="w-full max-w-sm px-6 py-8 text-center text-sm text-muted-foreground">
-            {!roots.length
-              ? "No eukaryotic lineages in these hits."
-              : "No gene names to show. Add genes in the query bar."}
-          </div>
+        <div className="flex flex-1 items-center justify-center p-6">
+          <Card className="w-full max-w-sm border-2 border-dashed p-8 text-center">
+            <Dna className="mx-auto mb-3 h-10 w-10 text-muted-foreground/50" />
+            <p className="text-sm font-medium text-foreground">
+              {!roots.length
+                ? "No eukaryotic lineages in these hits."
+                : "No gene names to show."}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {!roots.length
+                ? "Try broadening the taxonomic scope."
+                : "Add genes in the query bar."}
+            </p>
+          </Card>
         </div>
       ) : adapter ? (
         <GenesHeatmapTable
@@ -299,75 +232,14 @@ export function GenesOverviewSection({
           rows={visible}
           rowCounts={rowCounts}
           expanded={expanded}
-          selection={selection}
           unit={unit}
           singleGeneBars={columns.length === 1}
           onToggleExpand={onToggleExpand}
-          onSelectRow={onSelectRow}
-          onSelectCol={onSelectCol}
-          onSelectCell={onSelectCell}
           remaining={remaining}
           onLoadMore={onLoadMore}
-          taxonTotal={allVisible.length}
-          className="min-h-0 flex-1"
+          className="min-h-0 flex-1 border-0"
         />
       ) : null}
     </div>
   )
-}
-
-/** Build a GenesFilter from a distribution selection for count previews. */
-export function filterFromSelection(
-  base: GenesFilter,
-  selection: DistributionSelection,
-  nameMatch: NameMatchMode,
-): GenesFilter {
-  if (selection.kind === "rows") {
-    return makeFilter({
-      ...base,
-      includeTaxids: selection.rows,
-      includeNames: [],
-      includeCells: [],
-      includeAnnotationIds: [],
-      nameMatch,
-      taxid: null,
-      name: null,
-    })
-  }
-  if (selection.kind === "cols") {
-    return makeFilter({
-      ...base,
-      includeTaxids: [],
-      includeNames: selection.cols,
-      includeCells: [],
-      includeAnnotationIds: [],
-      nameMatch,
-      taxid: null,
-      name: null,
-    })
-  }
-  if (selection.kind === "cells") {
-    return makeFilter({
-      ...base,
-      includeTaxids: [],
-      includeNames: [],
-      includeCells: selection.cells.map((c) => ({
-        taxid: c.taxid,
-        gene: c.gene,
-      })),
-      includeAnnotationIds: [],
-      nameMatch,
-      taxid: null,
-      name: null,
-    })
-  }
-  return makeFilter({
-    ...base,
-    includeTaxids: [],
-    includeNames: [],
-    includeCells: [],
-    includeAnnotationIds: [],
-    taxid: null,
-    name: null,
-  })
 }

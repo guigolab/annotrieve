@@ -79,14 +79,16 @@ export function GenesAnnotationDrawer({
       role="complementary"
       aria-label={`Annotation ${species}`}
       className={cn(
-        "flex h-full w-full shrink-0 flex-col border-l border-border bg-background",
-        "lg:w-[640px]",
+        "flex h-full w-full shrink-0 flex-col border-l border-border bg-background shadow-xl",
+        "lg:w-[560px] xl:w-[640px]",
         className,
       )}
     >
-      <header className="flex shrink-0 items-start gap-2 border-b border-border px-3 py-3">
+      <header className="flex shrink-0 items-start gap-2 border-b border-border px-4 py-3">
         <div className="min-w-0 flex-1 space-y-1">
-          <h2 className="truncate text-sm font-semibold italic">{species}</h2>
+          <h2 className="truncate text-sm font-semibold italic sm:text-base">
+            {species}
+          </h2>
           <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
             <span
               className="h-2 w-2 shrink-0 rounded-full"
@@ -104,25 +106,29 @@ export function GenesAnnotationDrawer({
             ) : null}
           </div>
           <p
-            className="truncate font-mono text-[11px] text-muted-foreground"
+            className="truncate font-mono text-xs text-muted-foreground"
             title={drawer.annotationId}
           >
             {drawer.annotationId}
           </p>
         </div>
-        <Link
-          href={openHref}
-          className="inline-flex h-8 shrink-0 items-center gap-1 rounded-md px-2 text-xs text-primary hover:underline"
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          className="h-9 w-9 shrink-0"
+          asChild
         >
-          Open
-          <ExternalLink className="h-3 w-3" />
-        </Link>
+          <Link href={openHref} aria-label="Open annotation in Annotations">
+            <ExternalLink className="h-4 w-4" />
+          </Link>
+        </Button>
         <Button
           ref={closeBtnRef}
           type="button"
           variant="ghost"
           size="icon"
-          className="h-8 w-8 shrink-0"
+          className="h-9 w-9 shrink-0"
           aria-label="Close annotation drawer"
           onClick={onClose}
         >

@@ -1,17 +1,34 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
-import { Download, MoreHorizontal, Search, X } from "lucide-react"
+import { useEffect, useMemo, useRef, useState } from "react"
+import { Download, Pin, Search, SlidersHorizontal, X } from "lucide-react"
 
-import { GenesCoveragePopover } from "@/components/genes/genes-coverage-popover"
+import { GenesCoverageHistogram } from "@/components/genes/genes-coverage-popover"
+import { GenesSegmentedControl } from "@/components/genes/genes-segmented-control"
+import { GenesViewToolbar } from "@/components/genes/genes-view-toolbar"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import {
-  type AnnotationsSort,
-  type KeepPolicy,
-} from "@/lib/genes/annotations-controls"
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover"
+import { type KeepPolicy } from "@/lib/genes/annotations-controls"
+import {
+  useCompareStore,
+  type PinMode,
+} from "@/lib/genes/compare-store"
 import type { CoverageRange } from "@/lib/genes/coverage"
-import { GENES_TSV_DOWNLOAD_CAP, PILL_CLASS, SOURCE_DEFS } from "@/lib/genes/ui"
+import { isDefaultCoverageRange } from "@/lib/genes/coverage"
+import { ALL_SOURCE_CODES } from "@/lib/genes/filters"
+import { GENES_TSV_DOWNLOAD_CAP, SOURCE_DEFS, TOGGLE_CHIP_CLASS } from "@/lib/genes/ui"
 import { cn } from "@/lib/utils"
+
+const KEEP_HELP: Record<KeepPolicy, string> = {
+  all: "Show every matching annotation.",
+  best: "One annotation per organism with the most matched genes.",
+  latest: "One annotation per organism with the newest release.",
+}
 
 interface GenesAnnotationsToolbarProps {
   search: string
@@ -24,15 +41,8 @@ interface GenesAnnotationsToolbarProps {
   termCount: number
   coverage: CoverageRange | null
   onCoverageChange: (range: CoverageRange | null) => void
-  coverageOpen: boolean
-  onCoverageOpenChange: (open: boolean) => void
   matchedCounts: number[]
-  sort: AnnotationsSort
-  onSortChange: (s: AnnotationsSort) => void
   visibleTotal: number
-  overviewTotal: number
-  keptTotal: number
-  visibleSpecies: number
   showReset: boolean
   onReset: () => void
   onDownload: () => void
@@ -51,15 +61,8 @@ export function GenesAnnotationsToolbar({
   termCount,
   coverage,
   onCoverageChange,
-  coverageOpen,
-  onCoverageOpenChange,
   matchedCounts,
-  sort,
-  onSortChange,
   visibleTotal,
-  overviewTotal,
-  keptTotal,
-  visibleSpecies,
   showReset,
   onReset,
   onDownload,
@@ -68,6 +71,9 @@ export function GenesAnnotationsToolbar({
 }: GenesAnnotationsToolbarProps) {
   const searchRef = useRef<HTMLInputElement>(null)
   const [searchDraft, setSearchDraft] = useState(search)
+  const [filtersOpen, setFiltersOpen] = useState(false)
+  const pinMode = useCompareStore((s) => s.pinMode)
+  const setPinMode = useCompareStore((s) => s.setPinMode)
 
   useEffect(() => {
     setSearchDraft(search)
@@ -80,174 +86,205 @@ export function GenesAnnotationsToolbar({
   }, [searchDraft, search, onSearchChange])
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "/" || e.metaKey || e.ctrlKey || e.altKey) return
-      const t = e.target as HTMLElement | null
-      if (
+    const isTypingTarget = (t: HTMLElement | null) =>
+      Boolean(
         t &&
-        (t.tagName === "INPUT" ||
-          t.tagName === "TEXTAREA" ||
-          t.isContentEditable)
+          (t.tagName === "INPUT" ||
+            t.tagName === "TEXTAREA" ||
+            t.isContentEditable),
       )
+
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return
+      const t = e.target as HTMLElement | null
+      if (isTypingTarget(t)) return
+      if (e.key === "/") {
+        e.preventDefault()
+        searchRef.current?.focus()
         return
-      e.preventDefault()
-      searchRef.current?.focus()
+      }
+      if (e.key === "p" || e.key === "P") {
+        e.preventDefault()
+        const next: PinMode = pinMode === "inspect" ? "pin" : "inspect"
+        setPinMode(next)
+      }
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
-  }, [])
+  }, [pinMode, setPinMode])
+
+  const activeFilterCount = useMemo(() => {
+    let n = 0
+    if (sources.size < ALL_SOURCE_CODES.length) n += 1
+    if (coverage != null && !isDefaultCoverageRange(coverage, termCount)) n += 1
+    if (keep !== "all") n += 1
+    return n
+  }, [sources, coverage, termCount, keep])
 
   return (
-    <div
-      className={cn(
-        "flex flex-col gap-2 border-b border-border bg-card/40 px-3 py-2",
-        className,
-      )}
-    >
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative min-w-[10rem] flex-1 basis-[12rem]">
-          <Search
-            className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground"
-            aria-hidden
-          />
-          <input
-            ref={searchRef}
-            value={searchDraft}
-            onChange={(e) => setSearchDraft(e.target.value)}
-            placeholder="Search organisms…"
-            aria-label="Search organisms"
-            className="h-8 w-full rounded-md border border-border bg-background pl-7 pr-7 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          />
-          {searchDraft ? (
-            <button
-              type="button"
-              className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:text-foreground"
-              onClick={() => {
-                setSearchDraft("")
-                onSearchChange("")
-              }}
-              aria-label="Clear search"
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
-          ) : null}
-        </div>
-
-        <label className="inline-flex h-8 items-center gap-1 text-xs text-muted-foreground">
-          Keep
-          <select
-            className="h-8 rounded-md border border-border bg-background px-1.5 text-xs text-foreground"
-            value={keep}
-            aria-label="Keep policy"
-            onChange={(e) => onKeepChange(e.target.value as KeepPolicy)}
+    <GenesViewToolbar className={cn(className)}>
+      <div className="relative w-56 max-w-full shrink-0">
+        <Search
+          className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+          aria-hidden
+        />
+        <Input
+          ref={searchRef}
+          value={searchDraft}
+          onChange={(e) => setSearchDraft(e.target.value)}
+          placeholder="Search organisms…"
+          aria-label="Search organisms"
+          className="h-9 pl-9 pr-8 text-sm"
+        />
+        {searchDraft ? (
+          <button
+            type="button"
+            className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:text-foreground"
+            onClick={() => {
+              setSearchDraft("")
+              onSearchChange("")
+            }}
+            aria-label="Clear search"
           >
-            <option value="all">All</option>
-            <option value="best">Best match</option>
-            <option value="latest">Latest</option>
-          </select>
-        </label>
-
-        <div className="flex flex-wrap items-center gap-1">
-          {SOURCE_DEFS.map((source) => {
-            const checked = sources.has(source.code)
-            const count = sourceCounts.get(source.code) ?? 0
-            return (
-              <button
-                key={source.code}
-                type="button"
-                aria-pressed={checked}
-                onClick={() => onToggleSource(source.code)}
-                className={cn(
-                  PILL_CLASS,
-                  "h-8",
-                  checked
-                    ? "border-border bg-background text-foreground"
-                    : "border-transparent bg-muted/50 text-muted-foreground opacity-60",
-                )}
-              >
-                <span
-                  className="h-2 w-2 shrink-0 rounded-full"
-                  style={{ backgroundColor: source.color }}
-                />
-                <span>{source.label}</span>
-                <span className="tabular-nums text-muted-foreground">
-                  {count.toLocaleString()}
-                </span>
-              </button>
-            )
-          })}
-        </div>
-
-        {termCount >= 2 ? (
-          <GenesCoveragePopover
-            matchedCounts={matchedCounts}
-            termCount={termCount}
-            range={coverage}
-            onChange={onCoverageChange}
-            open={coverageOpen}
-            onOpenChange={onCoverageOpenChange}
-            trigger={
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="h-8 gap-1.5 text-xs"
-                aria-label="Coverage options"
-              >
-                <MoreHorizontal className="h-3.5 w-3.5" />
-                Coverage
-              </Button>
-            }
-          />
+            <X className="h-3.5 w-3.5" />
+          </button>
         ) : null}
+      </div>
 
-        <label className="inline-flex h-8 items-center gap-1 text-xs text-muted-foreground">
-          Sort
-          <select
-            className="h-8 rounded-md border border-border bg-background px-1.5 text-xs text-foreground"
-            value={sort}
-            onChange={(e) => onSortChange(e.target.value as AnnotationsSort)}
-          >
-            <option value="coverage">Coverage</option>
-            <option value="species">Organism A–Z</option>
-            <option value="release">Release newest</option>
-            <option value="source">Source</option>
-          </select>
-        </label>
+      <GenesSegmentedControl
+        label="Cell click action"
+        value={pinMode}
+        onChange={setPinMode}
+        options={[
+          { id: "inspect", label: "Inspect" },
+          {
+            id: "pin",
+            label: (
+              <span className="inline-flex items-center gap-1">
+                <Pin className="h-3 w-3" aria-hidden />
+                Pin
+              </span>
+            ),
+          },
+        ]}
+      />
 
-        <span
-          className="ml-auto text-xs tabular-nums text-muted-foreground"
-          aria-live="polite"
-        >
-          {visibleTotal.toLocaleString()} annotations ·{" "}
-          {visibleSpecies.toLocaleString()} organisms
-          {overviewTotal > 0
-            ? ` (of ${overviewTotal.toLocaleString()})`
-            : null}
-          {keep !== "all" && keptTotal !== visibleTotal
-            ? ` · showing ${visibleTotal.toLocaleString()} of ${keptTotal.toLocaleString()}`
-            : keep !== "all"
-              ? ` · showing ${keptTotal.toLocaleString()} of ${overviewTotal || keptTotal}`
-              : null}
-        </span>
-
-        {showReset ? (
+      <Popover open={filtersOpen} onOpenChange={setFiltersOpen}>
+        <PopoverTrigger asChild>
           <Button
             type="button"
-            variant="ghost"
+            variant="outline"
             size="sm"
-            className="h-8 text-xs"
-            onClick={onReset}
+            className="h-9 gap-1.5 text-xs"
+            aria-label="Filters"
           >
-            Reset
+            <SlidersHorizontal className="h-3.5 w-3.5" />
+            Filters
+            {activeFilterCount > 0 ? (
+              <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-primary/10 px-1.5 text-xs font-semibold tabular-nums text-primary">
+                {activeFilterCount}
+              </span>
+            ) : null}
           </Button>
-        ) : null}
+        </PopoverTrigger>
+        <PopoverContent align="end" className="w-[28rem] space-y-0 overflow-hidden p-0">
+          <div className="flex items-center justify-between gap-2 border-b border-border/60 px-3 py-2">
+            <p className="text-xs font-medium">Filters</p>
+            {showReset ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2 text-xs"
+                onClick={() => {
+                  onReset()
+                  setFiltersOpen(false)
+                }}
+              >
+                Reset
+              </Button>
+            ) : null}
+          </div>
 
+          <div className="space-y-1.5 border-b border-border/60 px-3 py-3">
+            <p className="text-xs font-medium text-muted-foreground">Keep</p>
+            <GenesSegmentedControl
+              label="Keep policy"
+              value={keep}
+              stretch
+              size="sm"
+              onChange={onKeepChange}
+              options={[
+                { id: "all", label: "All" },
+                { id: "best", label: "Best match" },
+                { id: "latest", label: "Latest" },
+              ]}
+            />
+            <p className="text-[11px] text-muted-foreground">
+              {KEEP_HELP[keep]}
+            </p>
+          </div>
+
+          <div className="space-y-1.5 border-b border-border/60 px-3 py-3">
+            <p className="text-xs font-medium text-muted-foreground">Source</p>
+            <div
+              role="group"
+              aria-label="Source"
+              className="flex flex-wrap gap-1.5"
+            >
+              {SOURCE_DEFS.map((source) => {
+                const checked = sources.has(source.code)
+                const count = sourceCounts.get(source.code) ?? 0
+                return (
+                  <button
+                    key={source.code}
+                    type="button"
+                    aria-pressed={checked}
+                    onClick={() => onToggleSource(source.code)}
+                    className={cn(
+                      TOGGLE_CHIP_CLASS,
+                      checked
+                        ? "border-border bg-background text-foreground"
+                        : "border-transparent bg-muted/50 text-muted-foreground opacity-60",
+                    )}
+                  >
+                    <span
+                      className="h-2 w-2 shrink-0 rounded-full"
+                      style={{ backgroundColor: source.color }}
+                      aria-hidden
+                    />
+                    {source.label}
+                    <span className="tabular-nums text-muted-foreground">
+                      {count.toLocaleString()}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
+          {termCount >= 2 ? (
+            <div className="space-y-1.5 px-3 py-3">
+              <p className="text-xs font-medium text-muted-foreground">
+                Coverage
+              </p>
+              <GenesCoverageHistogram
+                matchedCounts={matchedCounts}
+                termCount={termCount}
+                range={coverage}
+                onChange={onCoverageChange}
+              />
+            </div>
+          ) : null}
+        </PopoverContent>
+      </Popover>
+
+      <div className="ml-auto">
         <Button
           type="button"
           variant="outline"
           size="sm"
-          className="h-8 gap-1.5 text-xs"
+          className="h-9 gap-1.5 text-xs"
           disabled={downloadDisabled || visibleTotal === 0}
           onClick={onDownload}
         >
@@ -260,6 +297,6 @@ export function GenesAnnotationsToolbar({
           ) : null}
         </Button>
       </div>
-    </div>
+    </GenesViewToolbar>
   )
 }

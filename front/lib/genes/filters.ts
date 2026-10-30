@@ -1,6 +1,7 @@
 import type { CoverageRange, CoverageSegment } from "@/lib/genes/coverage"
 import { defaultCoverageRange, isDefaultCoverageRange } from "@/lib/genes/coverage"
 import type { NameMatchMode } from "@/lib/genes/list-filters"
+import type { DistributionSelection } from "@/lib/genes/selection"
 
 /** Shared filter object for adapter calls and (future) backend endpoints. */
 export interface GenesFilter {
@@ -123,4 +124,24 @@ export function filterKey(filter: GenesFilter): string {
     cells,
     anns,
   ].join("|")
+}
+
+/**
+ * Build a GenesFilter from a row/col selection for count previews / Show only.
+ */
+export function filterFromSelection(
+  base: GenesFilter,
+  selection: DistributionSelection,
+  nameMatch: NameMatchMode,
+): GenesFilter {
+  return makeFilter({
+    ...base,
+    includeTaxids: [...selection.rows],
+    includeNames: [...selection.cols],
+    includeCells: [],
+    includeAnnotationIds: [],
+    nameMatch,
+    taxid: null,
+    name: null,
+  })
 }

@@ -343,14 +343,19 @@ export function annotationsGeneColumnWidth(colCount: number): number {
   return 72
 }
 
-/** Rotated header height from the longest label, clamped. */
+/**
+ * Rotated header strip height.
+ * Compact and independent of the longest name — labels use max-h-full and
+ * truncate instead of growing a void above shorter columns.
+ */
 export function heatmapHeaderHeight(
   rotateHeaders: boolean,
-  names: readonly string[],
+  _names: readonly string[] = [],
+  cellW = 44,
 ): number {
   if (!rotateHeaders) return 40
-  const longest = names.reduce((m, name) => Math.max(m, name.length), 0)
-  return Math.min(120, Math.max(72, longest * 7))
+  // ~10–11 char mono labels fill this; longer names ellipsize.
+  return Math.min(72, Math.max(56, Math.round(cellW * 1.35)))
 }
 
 /** Recursively list node ids in a HitTreeNode subtree (self + descendants). */

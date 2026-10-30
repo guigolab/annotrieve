@@ -119,6 +119,8 @@ export function createClientHitsAdapter(
   for (let i = 0; i < terms.length; i++) {
     const id = nameByTerm[i]!
     if (!termByName.has(id)) termByName.set(id, i)
+    const input = terms[i]!.input?.toLowerCase().trim()
+    if (input && !termByName.has(input)) termByName.set(input, i)
   }
 
   const indexed: IndexedRow[] = rows.map((row) => ({
@@ -221,8 +223,18 @@ export function createClientHitsAdapter(
     if (!path) return false
     return cells.some((cell) => {
       if (!path.has(cell.taxid)) return false
-      const ti = termByName.get(cell.gene.toLowerCase())
-      return ti != null && entry.terms.includes(ti)
+      const key = cell.gene.toLowerCase().trim()
+      const ti = termByName.get(key)
+      if (ti != null && entry.terms.includes(ti)) return true
+      // Fallback: any matched term whose name/input equals the cell gene
+      // (covers duplicate-name / alias index skew vs termByName).
+      for (const idx of entry.terms) {
+        const term = terms[idx]
+        if (!term) continue
+        if (term.name.toLowerCase() === key) return true
+        if (term.input?.toLowerCase().trim() === key) return true
+      }
+      return false
     })
   }
 

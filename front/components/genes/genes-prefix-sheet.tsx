@@ -24,7 +24,10 @@ interface GenesPrefixSheetProps {
   open: boolean
   onClose: () => void
   onApply: (names: string[]) => void
+  /** Pending names checked in this sheet session. */
   names: string[]
+  /** Already-committed gene set (for cap + "in set" hints). */
+  committedNames?: string[]
   includeTaxids: number[]
   excludeTaxids: number[]
   onToggle: (name: string, checked: boolean) => void
@@ -39,6 +42,7 @@ export function GenesPrefixSheet({
   onClose,
   onApply,
   names,
+  committedNames = [],
   includeTaxids,
   excludeTaxids,
   onToggle,
@@ -50,13 +54,14 @@ export function GenesPrefixSheet({
   const [debounced, setDebounced] = useState("")
   const [bucket, setBucket] = useState<NameCategory | "all">("all")
 
+  // Always sync the input when the sheet opens (including clearing a stale
+  // draft from a previous prefix session).
   useEffect(() => {
     if (!open) return
-    const seed = initialPrefix.replace(/\*$/, "")
-    if (seed) {
-      setDraft(seed)
-      setDebounced(seed)
-    }
+    const seed = initialPrefix.replace(/\*$/, "").trim()
+    setDraft(seed)
+    setDebounced(seed)
+    setBucket("all")
   }, [open, initialPrefix])
 
   useEffect(() => {
@@ -118,8 +123,14 @@ export function GenesPrefixSheet({
     [rows, activeBucket],
   )
   const selected = new Set(names.map((n) => n.toLowerCase()))
-  const atCap = names.length >= MAX_NAMES_GET
-  const room = Math.max(0, MAX_NAMES_GET - names.length)
+  const committed = useMemo(
+    () => new Set(committedNames.map((n) => n.toLowerCase())),
+    [committedNames],
+  )
+  // Cap against committed + pending so a full set cannot queue more picks.
+  const used = new Set([...committed, ...selected])
+  const atCap = used.size >= MAX_NAMES_GET
+  const room = Math.max(0, MAX_NAMES_GET - used.size)
 
   const errorMessage =
     (debounced ? localError : null) ??
@@ -166,15 +177,29 @@ export function GenesPrefixSheet({
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             placeholder="Prefix, e.g. seleno"
-            className="h-11 rounded-xl shadow-sm bg-background"
+            className="h-9 rounded-md bg-background"
             autoFocus
           />
-          <p className="text-[11px] text-muted-foreground">
-            At least 3 characters. Selected{" "}
+          <p className="text-xs text-muted-foreground">
+            At least 3 characters.{" "}
+            {committedNames.length > 0 ? (
+              <>
+                Set has{" "}
+                <span className="tabular-nums">
+                  {committedNames.length.toLocaleString()}
+                </span>
+                .{" "}
+              </>
+            ) : null}
+            Adding{" "}
             <span className="tabular-nums">
-              {names.length}/{MAX_NAMES_GET}
+              {names.length.toLocaleString()}
             </span>
-            .
+            {" · "}
+            <span className="tabular-nums">
+              {used.size}/{MAX_NAMES_GET}
+            </span>{" "}
+            total.
           </p>
         </div>
 
@@ -204,9 +229,12 @@ export function GenesPrefixSheet({
               type="button"
               className="rounded-full border border-border bg-background px-2.5 py-1 text-xs font-medium hover:bg-muted/50 disabled:opacity-50"
               disabled={!visible.length || room <= 0}
-              onClick={() =>
-                onIncludeShown(visible.slice(0, room).map((row) => row.name))
-              }
+              onClick={() => {
+                const fresh = visible
+                  .map((row) => row.name)
+                  .filter((n) => !committed.has(n.toLowerCase()))
+                onIncludeShown(fresh.slice(0, room))
+              }}
             >
               Add shown
             </button>
@@ -246,8 +274,10 @@ export function GenesPrefixSheet({
             </p>
           )}
           {visible.map((row) => {
-            const checked = selected.has(row.name.toLowerCase())
-            const disabled = !checked && atCap
+            const id = row.name.toLowerCase()
+            const checked = selected.has(id)
+            const alreadyInSet = committed.has(id)
+            const disabled = !checked && atCap && !alreadyInSet
             return (
               <label
                 key={row.name}
@@ -257,8 +287,8 @@ export function GenesPrefixSheet({
                 )}
               >
                 <Checkbox
-                  checked={checked}
-                  disabled={disabled}
+                  checked={checked || alreadyInSet}
+                  disabled={disabled || alreadyInSet}
                   onCheckedChange={(value) =>
                     onToggle(row.name, value === true)
                   }
@@ -269,6 +299,11 @@ export function GenesPrefixSheet({
                 >
                   {row.name}
                 </span>
+                {alreadyInSet ? (
+                  <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                    in set
+                  </span>
+                ) : null}
                 <span className="text-xs tabular-nums text-muted-foreground">
                   {row.n_annotations.toLocaleString()}
                 </span>
@@ -281,14 +316,14 @@ export function GenesPrefixSheet({
           <Button
             type="button"
             variant="outline"
-            className="h-11 flex-1 rounded-xl"
+            className="h-9 flex-1 rounded-md"
             onClick={onClose}
           >
             Cancel
           </Button>
           <Button
             type="button"
-            className="h-11 flex-1 rounded-xl font-semibold"
+            className="h-9 flex-1 rounded-md font-semibold"
             disabled={!names.length}
             onClick={() => onApply(names)}
           >

@@ -5,6 +5,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation"
 
 import type {
   AnnotationsSort,
+  AnnotationsSortDir,
   GroupMode,
   KeepPolicy,
 } from "@/lib/genes/annotations-controls"
@@ -12,6 +13,8 @@ import {
   DEFAULT_GROUP,
   DEFAULT_KEEP,
   DEFAULT_SORT,
+  DEFAULT_SORT_DIR,
+  primarySortDir,
 } from "@/lib/genes/annotations-controls"
 import type { CoverageRange } from "@/lib/genes/coverage"
 import type { SelectedTaxon } from "@/lib/genes/taxa"
@@ -46,7 +49,8 @@ export type GenesHydratePayload = {
   unit: CountUnit
   keep: KeepPolicy
   group: GroupMode
-  sort: AnnotationsSort
+  sort: AnnotationsSort | null
+  sortDir: AnnotationsSortDir
   search: string
   raw: GenesUrlState
 }
@@ -56,6 +60,11 @@ function payloadFromSearchParams(
 ): GenesHydratePayload {
   const raw = parseGenesSearchParams(searchParams)
   const listFilters = listFiltersFromUrlState(raw)
+  const sort =
+    raw.sort === undefined ? DEFAULT_SORT : raw.sort
+  const sortDir =
+    raw.sortDir ??
+    (sort != null ? primarySortDir(sort) : DEFAULT_SORT_DIR)
   return {
     queryNames: raw.names,
     excluded: new Set(raw.exclude.map((n) => n.toLowerCase())),
@@ -71,7 +80,8 @@ function payloadFromSearchParams(
     unit: raw.unit ?? DEFAULT_COUNT_UNIT,
     keep: raw.keep ?? DEFAULT_KEEP,
     group: raw.group ?? DEFAULT_GROUP,
-    sort: raw.sort ?? DEFAULT_SORT,
+    sort,
+    sortDir,
     search: raw.q ?? "",
     raw,
   }
@@ -105,7 +115,8 @@ export function useGenesUrlSync(
     unit: CountUnit
     keep: KeepPolicy
     group: GroupMode
-    sort: AnnotationsSort
+    sort: AnnotationsSort | null
+    sortDir: AnnotationsSortDir
     search: string
     ready: boolean
   },
@@ -197,6 +208,7 @@ export function useGenesUrlSync(
     state.keep,
     state.group,
     state.sort,
+    state.sortDir,
     state.search,
     state.ready,
     pathname,

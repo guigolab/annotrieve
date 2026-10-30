@@ -53,7 +53,7 @@ export function GenesViewTabs({
       role="tablist"
       aria-label="Genes views"
       className={cn(
-        "flex h-10 shrink-0 items-stretch gap-0 border-b border-border px-3 sm:px-5",
+        "inline-flex h-9 shrink-0 items-center rounded-md border border-border bg-muted/40 p-0.5",
         className,
       )}
     >
@@ -69,15 +69,15 @@ export function GenesViewTabs({
             role="tab"
             id={`genes-tab-${tab.id}`}
             aria-selected={selected}
-            aria-controls={`genes-panel-${tab.id}`}
+            aria-controls={selected ? `genes-panel-${tab.id}` : undefined}
             tabIndex={selected ? 0 : -1}
             onClick={() => onViewChange(tab.id)}
             onKeyDown={(e) => onKeyDown(e, index)}
             className={cn(
-              "relative inline-flex items-center gap-1.5 px-3 text-sm font-medium outline-none transition-colors",
-              "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+              "inline-flex h-8 items-center gap-1.5 rounded-sm px-2.5 text-xs font-medium outline-none transition-colors sm:px-3 sm:text-sm",
+              "focus-visible:ring-2 focus-visible:ring-ring",
               selected
-                ? "text-foreground"
+                ? "bg-background text-foreground shadow-sm"
                 : "text-muted-foreground hover:text-foreground",
             )}
           >
@@ -88,15 +88,9 @@ export function GenesViewTabs({
               </span>
             ) : null}
             {tab.id === "compare" && pinCount > 0 ? (
-              <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-primary/10 px-1.5 text-[11px] font-semibold tabular-nums text-primary">
+              <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-primary/10 px-1.5 text-xs font-semibold tabular-nums text-primary">
                 {pinCount}
               </span>
-            ) : null}
-            {selected ? (
-              <span
-                className="absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-primary"
-                aria-hidden
-              />
             ) : null}
           </button>
         )

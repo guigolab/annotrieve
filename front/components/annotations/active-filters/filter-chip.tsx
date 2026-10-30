@@ -12,6 +12,8 @@ interface FilterChipProps {
   icon?: ReactNode
   onClick?: () => void
   isActive?: boolean
+  /** When set, exposed as aria-expanded (e.g. expandable filter chips). */
+  "aria-expanded"?: boolean
   readOnly?: boolean
   /** True while URL stub label is being hydrated (taxon name, etc.). */
   isLoading?: boolean
@@ -30,6 +32,7 @@ export function FilterChip({
   onClick,
   colorScheme,
   isActive = false,
+  "aria-expanded": ariaExpanded,
   readOnly = false,
   isLoading = false,
 }: FilterChipProps) {
@@ -45,9 +48,24 @@ export function FilterChip({
         isLoading && "opacity-80"
       )}
       onClick={isLoading ? undefined : onClick}
+      onKeyDown={
+        onClick && !isLoading
+          ? (event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault()
+                onClick()
+              }
+            }
+          : undefined
+      }
       role={onClick && !isLoading ? "button" : undefined}
       tabIndex={onClick && !isLoading ? 0 : undefined}
-      aria-pressed={onClick && !isLoading ? isActive : undefined}
+      aria-pressed={
+        onClick && !isLoading && ariaExpanded === undefined
+          ? isActive
+          : undefined
+      }
+      aria-expanded={ariaExpanded}
       aria-busy={isLoading || undefined}
     >
       {isLoading ? (

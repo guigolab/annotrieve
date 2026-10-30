@@ -70,7 +70,7 @@ export function GenesRankSelect({
       >
         <SelectTrigger
           className={cn(
-            "h-7 w-full min-w-0 px-2 text-[11px] shadow-none",
+            "h-9 w-full min-w-0 px-2 text-xs shadow-none",
             triggerClassName,
           )}
           aria-label="Taxonomy root rank"
@@ -97,7 +97,7 @@ export function GenesRankSelect({
         </SelectContent>
       </Select>
       {disabled && disabledReason ? (
-        <p className="mt-0.5 text-[9px] leading-tight text-muted-foreground">
+        <p className="mt-0.5 text-xs leading-tight text-muted-foreground">
           {disabledReason}
         </p>
       ) : null}

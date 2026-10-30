@@ -3,6 +3,7 @@
 import { useMemo } from "react"
 import { keepPreviousData, useQuery } from "@tanstack/react-query"
 import { Loader2 } from "lucide-react"
+import { toast } from "sonner"
 
 import { GenesGeneDetail } from "@/components/genes/genes-gene-detail"
 import {
@@ -12,7 +13,11 @@ import {
 } from "@/lib/api/xrefs"
 import type { AnnotationGeneRow } from "@/lib/api/xrefs-types"
 import type { GenesHitsAdapter } from "@/lib/genes/adapter"
-import { pinIdFor, useCompareStore } from "@/lib/genes/compare-store"
+import {
+  MAX_PINS,
+  pinIdFor,
+  useCompareStore,
+} from "@/lib/genes/compare-store"
 import {
   locusSiblings,
   shortGeneId,
@@ -94,7 +99,10 @@ export function GenesAnnotationDetail({
       activeGene.primary_name || `Gene ${activeGene.local_id}`,
     )
     if (!input) return
-    togglePin(input)
+    const ok = togglePin(input)
+    if (!ok) {
+      toast.error(`Pin limit reached (${MAX_PINS})`)
+    }
   }
 
   if (localId == null) {
@@ -170,7 +178,7 @@ export function GenesAnnotationDetail({
                     }
                   }}
                   className={cn(
-                    "rounded-md border px-2 py-1 font-mono text-[11px] tabular-nums",
+                    "rounded-md border px-2 py-1 font-mono text-xs tabular-nums",
                     selected
                       ? "border-primary bg-primary/10 text-primary"
                       : "border-border bg-background text-muted-foreground hover:bg-muted/50",

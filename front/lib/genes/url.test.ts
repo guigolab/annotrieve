@@ -227,6 +227,36 @@ describe("buildGenesQueryString", () => {
       "names=TP53&keep=best&group=order&sort=species&q=homo",
     )
   })
+
+  it("writes sort=none and non-primary dir", () => {
+    assert.equal(
+      buildGenesQueryString({
+        names: ["TP53"],
+        exclude: [],
+        sources: new Set([1, 2, 3]),
+        coverage: null,
+        termCount: 1,
+        ann: null,
+        gene: null,
+        sort: null,
+      }),
+      "names=TP53&sort=none",
+    )
+    assert.equal(
+      buildGenesQueryString({
+        names: ["TP53"],
+        exclude: [],
+        sources: new Set([1, 2, 3]),
+        coverage: null,
+        termCount: 1,
+        ann: null,
+        gene: null,
+        sort: "coverage",
+        sortDir: "asc",
+      }),
+      "names=TP53&sort=coverage&dir=asc",
+    )
+  })
 })
 
 describe("parseGenesSearchParams", () => {
@@ -280,5 +310,17 @@ describe("parseGenesSearchParams", () => {
       parseGenesSearchParams(new URLSearchParams("names=TP53")).view,
       null,
     )
+  })
+
+  it("reads sort=none and dir", () => {
+    const none = parseGenesSearchParams(new URLSearchParams("sort=none"))
+    assert.equal(none.sort, null)
+    const withDir = parseGenesSearchParams(
+      new URLSearchParams("sort=coverage&dir=asc"),
+    )
+    assert.equal(withDir.sort, "coverage")
+    assert.equal(withDir.sortDir, "asc")
+    const absent = parseGenesSearchParams(new URLSearchParams("names=TP53"))
+    assert.equal(absent.sort, undefined)
   })
 })

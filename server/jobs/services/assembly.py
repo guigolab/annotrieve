@@ -28,6 +28,12 @@ import time
 FTP_BASE = "https://ftp.ncbi.nlm.nih.gov/genomes/all"
 NCBI_FTP_SITE = "https://ftp.ncbi.nlm.nih.gov"
 REQUEST_TIMEOUT = 15
+# Assembly reports range from KBs to ~100 MB and are streamed to disk. A short *total* timeout
+# makes every large report fail (and retry identically); bound connection setup and read stalls
+# instead, with a generous cap on the whole transfer.
+REPORT_CONNECT_TIMEOUT = 15
+REPORT_READ_TIMEOUT = 60
+REPORT_TOTAL_TIMEOUT = 900
 _FTP_REQUEST_COUNT = 0
 _FTP_RATE_LIMIT_EVERY = 3
 _FTP_RATE_LIMIT_WAIT = 1.0
@@ -424,6 +430,14 @@ def _classify_http_status(status: int) -> FetchOutcome:
     return FetchOutcome.NOT_FOUND
 
 
+def _report_timeout() -> aiohttp.ClientTimeout:
+    return aiohttp.ClientTimeout(
+        total=REPORT_TOTAL_TIMEOUT,
+        sock_connect=REPORT_CONNECT_TIMEOUT,
+        sock_read=REPORT_READ_TIMEOUT,
+    )
+
+
 async def get_assembly_report_result(
     session: aiohttp.ClientSession,
     url: str,
@@ -435,7 +449,7 @@ async def get_assembly_report_result(
     """
     tmp_path = f"{raw_dest}.tmp" if raw_dest else None
     try:
-        async with session.get(url, timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)) as resp:
+        async with session.get(url, timeout=_report_timeout()) as resp:
             status = resp.status
             if status != 200:
                 return AssemblyReportFetchResult(
@@ -468,7 +482,7 @@ async def get_assembly_report_result(
         return AssemblyReportFetchResult(
             outcome=FetchOutcome.TRANSIENT,
             url=url,
-            message=str(e),
+            message=str(e) or type(e).__name__,  # asyncio.TimeoutError has an empty str()
         )
     finally:
         if tmp_path and os.path.exists(tmp_path):

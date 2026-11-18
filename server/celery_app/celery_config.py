@@ -35,4 +35,12 @@ beat_schedule = {
         'kwargs': {'dry_run': False},
         'options': {'expires': 7200},
     },
-} 
+    'backfill-annotation-providers-monthly': {
+        'task': 'backfill_annotation_providers',
+        # Third week of each month: Monday on days 15-21, 05:30 Europe/Madrid
+        # (the prune job runs on the second-week Monday; import runs Saturdays).
+        'schedule': crontab(day_of_month='15-21', day_of_week=1, hour=5, minute=30),
+        'kwargs': {'dry_run': False},
+        'options': {'expires': 7200},
+    },
+}

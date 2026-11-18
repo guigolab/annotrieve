@@ -12,6 +12,7 @@ pytestmark = pytest.mark.unit
 
 def _ann(**kwargs):
     defaults = dict(
+        source_database="Ensembl",
         md5_checksum="m1",
         taxon_id="9606",
         assembly_accession="GCA_1",
@@ -197,6 +198,8 @@ class TestProcessAnnotationsPipeline:
         assert result == []
         handle_dup.assert_not_called()
         handle_err.assert_called_once()
-        assert safe_remove.call_count == 2
+        assert safe_remove.call_count == 3
         safe_remove.assert_any_call(full_path, "/ann", relative_path)
         safe_remove.assert_any_call(f"{full_path}.csi", "/ann", f"{relative_path}.csi")
+        # contigs.txt is only removed if the bgzipped path itself is unreferenced
+        safe_remove.assert_any_call(f"{full_path}.contigs.txt", "/ann", relative_path)

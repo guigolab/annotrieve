@@ -14,7 +14,7 @@ def stream_gff_file(file_path: str, index_format: str = "csi", seqid: Optional[s
                 if feature_source and fields[1] != feature_source:
                     continue
                 if biotype:
-                    attributes = {k: v for k, v in (item.split('=') for item in fields[8].split(';') if '=' in item)}
+                    attributes = {k: v for k, v in (item.split('=', 1) for item in fields[8].split(';') if '=' in item)}  # maxsplit: values may contain '='
                     if biotype not in attributes.values():
                         continue
                 yield line + '\n'

@@ -43,4 +43,10 @@ beat_schedule = {
         'kwargs': {'dry_run': False},
         'options': {'expires': 7200},
     },
+    'retry-missing-assembly-reports-monthly': {
+        'task': 'retry_missing_assembly_reports',
+        # Fourth week of each month: Monday on days 22-28, 05:00 Europe/Madrid
+        'schedule': crontab(day_of_month='22-28', day_of_week=1, hour=5, minute=0),
+        'options': {'expires': 7200},
+    },
 }

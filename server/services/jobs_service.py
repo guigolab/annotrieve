@@ -19,6 +19,7 @@ from jobs.updates import (
 )
 from jobs.track_users import track_unique_users_by_country
 from jobs.repair_annotation_files import repair_missing_annotation_files
+from jobs.relocate_assembly_files import relocate_misplaced_assembly_files
 
 
 def _validate_auth_key(auth_key: str) -> None:
@@ -158,3 +159,13 @@ def trigger_repair_missing_annotation_files(auth_key: str, dry_run: bool = True)
     _validate_auth_key(auth_key)
     repair_missing_annotation_files.delay(dry_run=dry_run)
     return {"message": "Repair missing annotation files task triggered"}
+
+
+def trigger_relocate_misplaced_assembly_files(auth_key: str, dry_run: bool = True):
+    """
+    Move the files of assemblies whose taxid changed into the folder of their current taxid and
+    repoint the database (backfill for the taxid-change drift). Defaults to dry_run=True.
+    """
+    _validate_auth_key(auth_key)
+    relocate_misplaced_assembly_files.delay(dry_run=dry_run)
+    return {"message": "Relocate misplaced assembly files task triggered"}

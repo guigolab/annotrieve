@@ -38,6 +38,10 @@ class AssemblyReportBackfill(EmbeddedDocument):
 
     report_status = StringField(default="pending")  # pending | ok | failed
     report_fetched_at = DateTimeField()
+    # Raw NCBI assembly_report.txt stored on disk (all assemblies):
+    # pending | ok | failed (transient, retried) | missing (not on NCBI, retried monthly)
+    raw_report_status = StringField(default="pending")
+    raw_report_fetched_at = DateTimeField()
 
     meta = {"strict": False}  # tolerate legacy fields e.g. sequence_stored_count
 

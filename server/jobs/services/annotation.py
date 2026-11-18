@@ -983,6 +983,17 @@ def delete_annotations_with_missing_source_urls(
     return stats
 
 
+def _relocate_assembly_files(assembly_accession: str, taxid: str) -> None:
+    """Annotation files follow their assembly's taxid (see services/file_layout.py)."""
+    from . import file_layout
+    try:
+        stats = file_layout.relocate_assembly(assembly_accession, taxid)
+        if stats["moved"] or stats["repointed"] or stats["conflicts"] or stats["errors"]:
+            logger.info(f"Relocated files of {assembly_accession} to taxid {taxid}: {stats}")
+    except Exception as e:  # never fail the taxonomy update; the backfill job repairs it
+        logger.warning(f"Could not relocate files of {assembly_accession}: {e}")
+
+
 def update_stale_annotations(assembly_taxids: list[str]) -> None:
     """
     Update taxonomy fields on annotations whose taxid is not in assembly_taxids.
@@ -1028,6 +1039,7 @@ def update_stale_annotations(assembly_taxids: list[str]) -> None:
             taxon_lineage=assembly.taxon_lineage,
         )
         GenomeAnnotation.objects(annotation_id__in=ann_ids).update(**update_payload)
+        _relocate_assembly_files(acc, assembly.taxid)
 
     if assemblies_not_found:
         annotations_path = os.getenv("LOCAL_ANNOTATIONS_DIR")

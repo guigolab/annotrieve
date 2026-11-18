@@ -33,6 +33,31 @@ async def get_assemblies_frequencies(field: str, commons: Dict[str, Any] = Depen
     params = params_helper.handle_request_params(commons, payload)
     return assemblies_service.get_assemblies(**params, field=field, response_type='frequencies')
 
+@router.get("/assemblies/{assembly_accession}/sequences/resolve")
+@router.post("/assemblies/{assembly_accession}/sequences/resolve")
+async def resolve_sequence_aliases(
+    assembly_accession: str,
+    aliases: Optional[str] = Query(None, description="Comma-separated aliases (GET), max 1000"),
+    payload: Optional[Dict[str, Any]] = Body(None),
+):
+    """
+    Resolve sequence aliases (names, GenBank/RefSeq accessions, UCSC names) to the INSDC accession
+    of the assembly: RefSeq for GCF_ assemblies, GenBank for GCA_ ones.
+    """
+    items: list = []
+    if aliases:
+        items.extend(aliases.split(","))
+    body_aliases = (payload or {}).get("aliases")
+    if isinstance(body_aliases, str):
+        items.extend(body_aliases.split(","))
+    elif isinstance(body_aliases, list):
+        items.extend(body_aliases)
+    return {
+        "assembly_accession": assembly_accession,
+        "results": assemblies_service.resolve_sequence_aliases(assembly_accession, items),
+    }
+
+
 @router.get("/assemblies/{assembly_accession}")
 async def get_assembly(assembly_accession: str):
     return assemblies_service.get_assembly(assembly_accession).to_mongo().to_dict()

@@ -158,6 +158,15 @@ def resolve_sequence_id(region: str | int, md5_checksum: str, file_path: str):
         )
 
     rel_path = annotation.indexed_file_info.bgzipped_path.lstrip("/")
+
+    # Fast path: the region is already a seqid of the GFF. Stream contigs.txt with early exit
+    # (no set built, no assembly query, no alias/chromosomes files read).
+    if seq_files.contigs_file_exists(rel_path):
+        if any(name == region_str for name in seq_files.iter_contigs_lines(rel_path)):
+            return region_str
+    elif any(name == region_str for name in pysam_helper.stream_contigs_names(file_path)):
+        return region_str
+
     contig_candidates: set[str] = {region_str}
 
     assembly = GenomeAssembly.objects(
@@ -198,10 +207,42 @@ def resolve_sequence_id(region: str | int, md5_checksum: str, file_path: str):
     if region_str in contig_ids:
         return region_str
 
+    # Last resort (the lookups above are unchanged): the stored raw assembly report knows every
+    # sequence role, e.g. scaffolds missing from chr_aliases.tsv / chromosomes.json.
+    via_report = _resolve_via_assembly_report(
+        region_str, annotation, paired, contig_ids, file_path
+    )
+    if via_report:
+        return via_report
+
     raise HTTPException(
         status_code=404,
         detail=f"Region '{region}' not found in annotation {md5_checksum}",
     )
+
+
+def _resolve_via_assembly_report(region_str, annotation, paired, contig_ids, file_path):
+    """Return the seqid present in the GFF for an alias found in the raw report, else None."""
+    try:
+        from helpers import sequence_resolver
+
+        report_path = seq_files.resolve_assembly_report_path(
+            annotation.taxid, annotation.assembly_accession, paired
+        )
+        if not report_path:
+            return None
+        resolved = sequence_resolver.resolve_aliases_in_report(
+            report_path, [region_str], annotation.assembly_accession
+        )[0]
+        if resolved.status != sequence_resolver.STATUS_RESOLVED:
+            return None
+        available = contig_ids or set(pysam_helper.stream_contigs_names(file_path))
+        for candidate in resolved.identifiers:
+            if candidate in available:
+                return candidate
+    except Exception:
+        return None  # never turn a clean 404 into a 500
+    return None
 
 
 # Utility to flatten nested dictionaries

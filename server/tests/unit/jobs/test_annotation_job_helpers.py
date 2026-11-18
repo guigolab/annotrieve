@@ -26,7 +26,7 @@ class TestAnnotationJobHelpers:
         ann.source_file_info.url_path = "http://missing"
 
         qs = MagicMock()
-        qs.only.return_value = [ann]
+        qs.only.return_value.no_cache.return_value = [ann]
 
         with (
             patch.object(ann_svc, "GenomeAnnotation") as GA,
@@ -63,8 +63,12 @@ class TestUpdateAnnotationSourceMetadata:
     def test_noop_when_url_unchanged(self):
         existing = MagicMock()
         existing.source_file_info.url_path = "http://same"
+        existing.source_file_info.uncompressed_md5 = "srcmd5"
         annotation_to_process = MagicMock()
         annotation_to_process.access_url = "http://same"
+        annotation_to_process.md5_checksum = "srcmd5"
+        annotation_to_process.last_modified = None
+        annotation_to_process.release_date = None
 
         updated = ann_svc.update_annotation_source_metadata(existing, annotation_to_process)
 
@@ -146,7 +150,9 @@ class TestUpdateAnnotationSourceMetadata:
 class TestHandleDuplicateAnnotationContent:
     def test_updates_existing_annotation_when_found(self):
         annotation_to_process = MagicMock()
+        annotation_to_process.assembly_accession = "GCA_1"
         existing = MagicMock()
+        existing.assembly_accession = "GCA_1"
 
         with (
             patch.object(ann_svc, "GenomeAnnotation") as GA,
@@ -241,23 +247,23 @@ class TestProcessAnnotationFileDuplicateDetection:
     def _fake_popen_factory(tmp_subdir_path, bgzipped_path, content_md5):
         state = {"n": 0}
 
-        def fake_popen(cmd, stdout=None, stderr=None):
+        def fake_popen(cmd, stdout=None, stderr=None, **popen_kwargs):
             state["n"] += 1
             call_n = state["n"]
             proc = MagicMock()
             proc.returncode = 0
 
-            def communicate():
+            def communicate(**kwargs):
                 if call_n == 1:
                     # streaming stage: sort | tee md5sum | bgzip
                     md5_path = os.path.join(tmp_subdir_path, "md5.txt")
                     with open(md5_path, "w") as f:
                         f.write(content_md5 + "\n")
-                    with open(bgzipped_path, "wb") as f:
+                    with open(f"{bgzipped_path}.part", "wb") as f:
                         f.write(b"bgzip-bytes")
                 else:
                     # tabix stage
-                    with open(f"{bgzipped_path}.csi", "wb") as f:
+                    with open(f"{bgzipped_path}.part.csi", "wb") as f:
                         f.write(b"csi-bytes")
                 return (b"", b"")
 

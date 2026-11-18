@@ -1,6 +1,7 @@
 from .celery_utils import create_celery
 from db.database import connect_to_db
 from jobs.import_annotations import import_annotations
+from jobs.backfill_providers import backfill_annotation_providers
 from jobs.assemblies import sync_new_assemblies_from_summary
 from jobs.migration import (
     backfill_taxon_parent_id,

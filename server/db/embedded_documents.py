@@ -67,12 +67,14 @@ class SourceFileInfo(EmbeddedDocument):
     release_date = DateTimeField(required=True)
     url_path = URLField(required=True, unique=True)
     last_modified = DateTimeField(required=True)
+    # md5 of the file as published by the SOURCE (tracker TSV md5_checksum). Not the annotation id.
     uncompressed_md5 = StringField(required=True, unique=True) # 32-hex
     pipeline = EmbeddedDocumentField(PipelineInfo)
 
 class IndexedFileInfo(EmbeddedDocument):
     bgzipped_path = StringField(required=True, unique=True)
     csi_path = StringField(required=True, unique=True)
+    # md5 of OUR sorted, uncompressed stream; equals GenomeAnnotation.annotation_id.
     uncompressed_md5 = StringField(required=True, unique=True) # 32-hex
     file_size = IntField(required=True)
     processed_at = DateTimeField(default=datetime.now())

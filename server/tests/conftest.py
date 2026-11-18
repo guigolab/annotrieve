@@ -59,3 +59,15 @@ def mock_celery_delay():
         return patch(f"{task_path}.delay")
 
     return _factory
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _warm_sort_probe():
+    """The GNU-sort probe is cached; run it for real once so tests that fake Popen never consume it."""
+    try:
+        from jobs.services import annotation as annotation_service
+
+        annotation_service._sort_supports_gnu_options()
+    except Exception:  # pragma: no cover - environment without the job deps
+        pass
+    yield

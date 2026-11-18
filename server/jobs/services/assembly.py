@@ -170,18 +170,38 @@ def fetch_new_assemblies_and_bioprojects(new_accessions: list[str], tmp_dir: str
             #delete the assemblies that were saved, we will retry it in the next job
             GenomeAssembly.objects(assembly_accession__in=found_accessions).delete()
             continue
-    existing_bioprojects = BioProject.objects(accession__in=list(bioprojects_to_save.keys())).scalar('accession')
-    bioprojects_to_save = {accession: bioproject for accession, bioproject in bioprojects_to_save.items() if accession not in existing_bioprojects}
-    if bioprojects_to_save:
-        #filter out existing bioprojects
-        try:
-            BioProject.objects.insert(list(bioprojects_to_save.values()))
-        except Exception as e:
-            print(f"Error upserting bioproject batch: {e}")
-            #delete the bioprojects that were saved
-            BioProject.objects(accession__in=list(bioprojects_to_save.keys())).delete()        
-            raise e
+    existing_bioprojects = set(
+        BioProject.objects(accession__in=list(bioprojects_to_save.keys())).scalar('accession')
+    )
+    _insert_bioprojects([
+        bioproject for accession, bioproject in bioprojects_to_save.items()
+        if accession not in existing_bioprojects
+    ])
     return saved_accessions
+
+
+def _insert_bioprojects(bioprojects: list[BioProject]) -> None:
+    """
+    Insert bioprojects without ever raising.
+
+    The assemblies referencing them are already saved at this point; raising would make the
+    caller lose the list of newly saved accessions (so their FTP/sequence sync would never be
+    scheduled and they would keep their placeholder download_url forever). On a bulk failure
+    fall back to inserting one by one so a single bad document does not drop the rest.
+    """
+    if not bioprojects:
+        return
+    try:
+        BioProject.objects.insert(bioprojects)
+        return
+    except Exception as e:
+        print(f"Error inserting bioproject batch, falling back to one-by-one: {e}")
+    for bioproject in bioprojects:
+        try:
+            if not BioProject.objects(accession=bioproject.accession).first():
+                BioProject.objects.insert([bioproject])
+        except Exception as single_e:
+            print(f"Error inserting bioproject {bioproject.accession}: {single_e}")
 
 
 def save_chromosome_files(

@@ -14,6 +14,7 @@ from unittest.mock import MagicMock, patch
 
 import mongomock
 import pytest
+from tests.unit.jobs.mongomock_helper import connect_mongomock
 from mongoengine import connect, disconnect
 
 from jobs.services import annotation as ann_svc
@@ -34,7 +35,7 @@ def mongo():
     from db.models import AnnotationError, GenomeAnnotation
 
     disconnect(alias="default")
-    connect(db="audit_medium", alias="default", mongo_client_class=mongomock.MongoClient)
+    connect_mongomock("audit_medium")
     GenomeAnnotation.objects.delete()
     AnnotationError.objects.delete()
     yield

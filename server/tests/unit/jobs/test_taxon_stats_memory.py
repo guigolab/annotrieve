@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 import mongomock
 import pytest
+from tests.unit.jobs.mongomock_helper import connect_mongomock
 from mongoengine import connect, disconnect
 
 from db.embedded_documents import (
@@ -27,7 +28,7 @@ def mongo():
     from db.models import GenomeAnnotation, TaxonNode
 
     disconnect(alias="default")
-    connect(db="taxon_stats", alias="default", mongo_client_class=mongomock.MongoClient)
+    connect_mongomock("taxon_stats")
     GenomeAnnotation.objects.delete()
     TaxonNode.objects.delete()
     yield

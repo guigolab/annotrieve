@@ -19,6 +19,7 @@ from unittest.mock import MagicMock, patch
 
 import mongomock
 import pytest
+from tests.unit.jobs.mongomock_helper import connect_mongomock
 from mongoengine import connect, disconnect
 
 from jobs.services import annotation as ann_svc
@@ -33,11 +34,11 @@ pytestmark = pytest.mark.unit
 
 @pytest.fixture
 def mongo():
-    """In-process mongomock connection (mongoengine>=0.28 needs mongo_client_class)."""
+    """In-process mongomock connection (mongomock:// host works on every pinned mongoengine)."""
     from db.models import AnnotationError, GenomeAnnotation
 
     disconnect(alias="default")
-    connect(db="audit_regressions", alias="default", mongo_client_class=mongomock.MongoClient)
+    connect_mongomock("audit_regressions")
     GenomeAnnotation.objects.delete()
     AnnotationError.objects.delete()
     yield

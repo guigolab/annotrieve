@@ -14,6 +14,7 @@ from unittest.mock import MagicMock, patch
 
 import mongomock
 import pytest
+from tests.unit.jobs.mongomock_helper import connect_mongomock
 from mongoengine import connect, disconnect
 
 from db.embedded_documents import FeatureOverview, GFFStats
@@ -61,7 +62,7 @@ def world(tmp_path, monkeypatch):
     monkeypatch.setattr(file_helper, "ANNOTATIONS_PATH", str(root))
 
     disconnect(alias="default")
-    connect(db="e2e", alias="default", mongo_client_class=mongomock.MongoClient)
+    connect_mongomock("e2e")
     GenomeAnnotation.objects.delete()
     AnnotationError.objects.delete()
 

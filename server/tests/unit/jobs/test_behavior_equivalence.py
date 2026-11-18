@@ -19,6 +19,7 @@ import subprocess
 
 import mongomock
 import pytest
+from tests.unit.jobs.mongomock_helper import connect_mongomock
 from mongoengine import connect, disconnect
 
 from jobs.services import annotation as new_ann
@@ -46,7 +47,7 @@ def mongo(monkeypatch):
     monkeypatch.setattr(factories, "_utcnow", lambda: datetime(2024, 1, 1))  # identical seeds -> identical dates
 
     disconnect(alias="default")
-    connect(db="equivalence", alias="default", mongo_client_class=mongomock.MongoClient)
+    connect_mongomock("equivalence")
     for model in (GenomeAnnotation, AnnotationError, TaxonNode):
         model.objects.delete()
     yield

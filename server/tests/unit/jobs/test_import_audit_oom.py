@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import mongomock
 import pytest
+from tests.unit.jobs.mongomock_helper import connect_mongomock
 from mongoengine import connect, disconnect
 
 from helpers import file as file_helper
@@ -20,13 +21,15 @@ pytestmark = pytest.mark.unit
 
 
 class TestSortIsMemoryBounded:
-    def test_buffer_and_spill_dir_are_in_the_command(self):
+    def test_buffer_and_spill_dir_are_in_the_command(self, monkeypatch):
+        monkeypatch.setattr(ann_svc, "_sort_supports_gnu_options", lambda: True)  # independent of the host/probe cache
         cmd = ann_svc.build_stream_cmd("/work/dir one/in.gff.gz", "/work/md5.txt", "/out/x.part")
         assert f"-S {ann_svc.SORT_BUFFER_SIZE}" in cmd
         assert f"--parallel={ann_svc.SORT_THREADS}" in cmd
         assert "-T '/work/dir one'" in cmd  # spill next to the per-annotation work dir, quoted
 
-    def test_repair_job_signature_still_works_without_a_spill_dir(self):
+    def test_repair_job_signature_still_works_without_a_spill_dir(self, monkeypatch):
+        monkeypatch.setattr(ann_svc, "_sort_supports_gnu_options", lambda: True)
         cmd = ann_svc._sorted_gff_stream_cmd("/work/in.gff.gz")
         assert "-T" not in cmd and "-S " in cmd
 
@@ -98,7 +101,7 @@ def mongo():
     from db.models import GenomeAnnotation
 
     disconnect(alias="default")
-    connect(db="audit_oom", alias="default", mongo_client_class=mongomock.MongoClient)
+    connect_mongomock("audit_oom")
     GenomeAnnotation.objects.delete()
     yield
     GenomeAnnotation.objects.delete()

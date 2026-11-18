@@ -3,6 +3,7 @@ from unittest.mock import patch
 
 import mongomock
 import pytest
+from tests.unit.jobs.mongomock_helper import connect_mongomock
 from mongoengine import connect, disconnect
 
 from jobs import backfill_providers as bp
@@ -17,7 +18,7 @@ def mongo():
     from db.models import GenomeAnnotation
 
     disconnect(alias="default")
-    connect(db="prov", alias="default", mongo_client_class=mongomock.MongoClient)
+    connect_mongomock("prov")
     GenomeAnnotation.objects.delete()
     yield
     GenomeAnnotation.objects.delete()

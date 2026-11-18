@@ -5,6 +5,7 @@ import math
 from typing import List
 from collections import defaultdict
 from .utils import create_batches
+from helpers import assembly_sequence_files as seq_files
 
 def update_assemblies_counts():
     """
@@ -28,7 +29,17 @@ def update_assemblies_counts():
     orphan_qs_count = orphan_qs.count()
     if orphan_qs_count > 0:
         print(f"Found {orphan_qs_count} orphan assemblies, deleting them")
+        orphan_files = [
+            (a.taxid, a.assembly_accession)
+            for a in orphan_qs.only("assembly_accession", "taxid").no_cache()
+        ]
         orphan_qs.delete()
+        # DB first, then disk: a failure here must never abort the stats update
+        for taxid, accession in orphan_files:
+            try:
+                seq_files.delete_assembly_files(taxid, accession)
+            except Exception as e:
+                print(f"Could not remove files of pruned assembly {accession}: {e}")
     print("Assemblies counts updated")
 
 def update_organisms_counts():

@@ -140,3 +140,42 @@ def get_chr_aliases_file(accession: str):
             "X-Accel-Buffering": "no",
         },
     )
+
+
+MAX_RESOLVE_ALIASES = 1000
+
+
+def resolve_sequence_aliases(accession: str, aliases: list[str]) -> list[dict]:
+    """
+    Resolve sequence aliases to the INSDC accession (RefSeq for GCF_, GenBank for GCA_) using the
+    stored assembly report (or its paired assembly's).
+    """
+    from helpers import sequence_resolver
+
+    aliases = [str(a).strip() for a in aliases if a is not None and str(a).strip()]
+    if not aliases:
+        raise HTTPException(status_code=422, detail="Provide at least one alias")
+    if len(aliases) > MAX_RESOLVE_ALIASES:
+        raise HTTPException(
+            status_code=422, detail=f"Too many aliases ({len(aliases)}), maximum is {MAX_RESOLVE_ALIASES}"
+        )
+    assembly = get_assembly(accession)
+    path = seq_files.resolve_assembly_report_path(
+        assembly.taxid, accession, assembly.paired_assembly_accession
+    )
+    if not path:
+        raise HTTPException(
+            status_code=409, detail=f"Assembly report for {accession} is not available yet"
+        )
+    return [
+        {
+            "alias": r.alias,
+            "status": r.status,
+            "accession": r.accession,
+            "db": r.db,
+            "sequence_name": r.sequence_name,
+            "length": r.length,
+            "match": r.match,
+        }
+        for r in sequence_resolver.resolve_aliases_in_report(path, aliases, accession)
+    ]

@@ -100,3 +100,22 @@ async def trigger_repair_missing_annotation_files(
     return jobs_service.trigger_repair_missing_annotation_files(
         x_auth_key, dry_run=dry_run
     )
+
+
+@router.post("/jobs/update/assemblies/relocate-misplaced-files")
+async def trigger_relocate_misplaced_assembly_files(
+    x_auth_key: str = Header(..., alias="X-Auth-Key"),
+    dry_run: bool = True,
+):
+    """
+    Backfill: move every file of an assembly (annotation GFF/CSI/contigs and the assembly-level
+    chromosomes, aliases and report) into the folder of the assembly's current taxid and repoint
+    the database. Fixes the drift left by assembly taxid changes.
+
+    Defaults to dry_run=true; pass dry_run=false to apply (refuses to run while the import job runs).
+
+    Requires X-Auth-Key header for authentication.
+    """
+    return jobs_service.trigger_relocate_misplaced_assembly_files(
+        x_auth_key, dry_run=dry_run
+    )

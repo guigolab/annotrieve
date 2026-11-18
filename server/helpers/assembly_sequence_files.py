@@ -4,6 +4,7 @@ On-disk assembly sequence artifacts under LOCAL_ANNOTATIONS_DIR.
 Layout per assembly:
   {taxid}/{assembly_accession}/chromosomes.json
   {taxid}/{assembly_accession}/chr_aliases.tsv
+  {taxid}/{assembly_accession}/assembly_report.txt   (raw NCBI report, verbatim)
   {taxid}/{assembly_accession}/{db}_{annotation_id}.gff.gz
   {taxid}/{assembly_accession}/{db}_{annotation_id}.contigs.txt
 """
@@ -24,6 +25,7 @@ from jobs.services.classes import (
 ANNOTATIONS_PATH = os.getenv("LOCAL_ANNOTATIONS_DIR")
 CHROMOSOMES_FILENAME = "chromosomes.json"
 CHR_ALIASES_FILENAME = "chr_aliases.tsv"
+ASSEMBLY_REPORT_FILENAME = "assembly_report.txt"
 CONTIGS_SUFFIX = ".contigs.txt"
 ASSEMBLED_MOLECULE_ROLE = "assembled-molecule"
 CHROMOSOME_LEVELS = frozenset({"chromosome", "complete genome"})
@@ -51,6 +53,50 @@ def chromosomes_path(taxid: str, assembly_accession: str) -> str:
 
 def chr_aliases_path(taxid: str, assembly_accession: str) -> str:
     return os.path.join(assembly_dir(taxid, assembly_accession), CHR_ALIASES_FILENAME)
+
+
+def assembly_report_path(taxid: str, assembly_accession: str) -> str:
+    return os.path.join(assembly_dir(taxid, assembly_accession), ASSEMBLY_REPORT_FILENAME)
+
+
+def assembly_report_file_exists(taxid: str, assembly_accession: str) -> bool:
+    path = assembly_report_path(taxid, assembly_accession)
+    return os.path.isfile(path) and os.path.getsize(path) > 0
+
+
+def resolve_assembly_report_path(
+    taxid: str,
+    view_accession: str,
+    paired_accession: str | None = None,
+) -> str | None:
+    """Path to assembly_report.txt for the accession, or the paired one if missing."""
+    for acc in (view_accession, paired_accession):
+        if acc and assembly_report_file_exists(taxid, acc):
+            return assembly_report_path(taxid, acc)
+    return None
+
+
+def delete_assembly_files(taxid: str, assembly_accession: str) -> list[str]:
+    """
+    Remove the report, chromosomes.json and chr_aliases.tsv of an assembly, then its directory
+    if nothing else is left in it. Never touches annotation files. Returns removed paths.
+    """
+    removed: list[str] = []
+    for path in (
+        assembly_report_path(taxid, assembly_accession),
+        f"{assembly_report_path(taxid, assembly_accession)}.tmp",
+        chromosomes_path(taxid, assembly_accession),
+        chr_aliases_path(taxid, assembly_accession),
+    ):
+        if os.path.isfile(path):
+            os.remove(path)
+            removed.append(path)
+    directory = assembly_dir(taxid, assembly_accession)
+    try:
+        os.rmdir(directory)  # only succeeds when empty
+    except OSError:
+        pass
+    return removed
 
 
 def contigs_path_for_bgzipped(bgzipped_relative_path: str) -> str:

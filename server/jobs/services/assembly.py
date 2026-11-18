@@ -60,6 +60,7 @@ class NcbiFtpResolution:
 class AssemblyFtpContext:
     assembly_name: str
     ncbi_ftp_directory_url: str | None = None
+    raw_dest: str | None = None  # where to store the raw assembly_report.txt, if wanted
 
 
 class FetchOutcome(Enum):
@@ -224,9 +225,11 @@ def save_chromosome_files(
 
 async def parse_assembly_report_stream(
     resp: aiohttp.ClientResponse,
+    raw_out=None,
 ) -> list[AssemblyReportSequence]:
     """
     Stream and parse the assembly report. Returns assembled-molecule rows in report order.
+    When `raw_out` (a binary file object) is given, every line is also written to it verbatim.
     """
     assembled_rows: list[AssemblyReportSequence] = []
     header_cols: list[str] | None = None
@@ -251,6 +254,8 @@ async def parse_assembly_report_stream(
         raw_line_bytes = await resp.content.readline()
         if not raw_line_bytes:
             break
+        if raw_out is not None:
+            raw_out.write(raw_line_bytes)
         line = raw_line_bytes.decode("utf-8", errors="replace").rstrip("\n")
         if not line:
             continue
@@ -422,7 +427,13 @@ def _classify_http_status(status: int) -> FetchOutcome:
 async def get_assembly_report_result(
     session: aiohttp.ClientSession,
     url: str,
+    raw_dest: str | None = None,
 ) -> AssemblyReportFetchResult:
+    """
+    Fetch and parse one assembly report. When `raw_dest` is given the raw text is streamed to
+    `raw_dest.tmp` and atomically published only if the whole body was read (never held in RAM).
+    """
+    tmp_path = f"{raw_dest}.tmp" if raw_dest else None
     try:
         async with session.get(url, timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)) as resp:
             status = resp.status
@@ -433,7 +444,16 @@ async def get_assembly_report_result(
                     status=status,
                     message=f"HTTP {status}",
                 )
-            data = await parse_assembly_report_stream(resp)
+            if tmp_path:
+                os.makedirs(os.path.dirname(tmp_path), exist_ok=True)
+                with open(tmp_path, "wb") as raw_out:
+                    data = await parse_assembly_report_stream(resp, raw_out)
+                if os.path.getsize(tmp_path) > 0:
+                    os.replace(tmp_path, raw_dest)
+                else:
+                    os.remove(tmp_path)
+            else:
+                data = await parse_assembly_report_stream(resp)
             if not data:
                 return AssemblyReportFetchResult(
                     outcome=FetchOutcome.PARSE_EMPTY,
@@ -444,23 +464,24 @@ async def get_assembly_report_result(
             return AssemblyReportFetchResult(
                 outcome=FetchOutcome.OK, data=data, url=url, status=status
             )
-    except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+    except Exception as e:  # aiohttp/timeout/disk errors: all retried as transient
         return AssemblyReportFetchResult(
             outcome=FetchOutcome.TRANSIENT,
             url=url,
             message=str(e),
         )
-    except Exception as e:
-        return AssemblyReportFetchResult(
-            outcome=FetchOutcome.TRANSIENT,
-            url=url,
-            message=str(e),
-        )
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
 
 
 async def _fetch_report_outcomes(
     acc_to_url: dict[str, str],
     concurrency: int = 10,
+    raw_dests: dict[str, str] | None = None,
 ) -> dict[str, AssemblyReportFetchResult]:
     outcomes: dict[str, AssemblyReportFetchResult] = {}
     sem = asyncio.Semaphore(concurrency)
@@ -469,7 +490,7 @@ async def _fetch_report_outcomes(
         async def bound_fetch(accession: str, url: str) -> None:
             async with sem:
                 outcomes[accession] = await get_assembly_report_result(
-                    session, url
+                    session, url, (raw_dests or {}).get(accession)
                 )
 
         await asyncio.gather(
@@ -521,6 +542,7 @@ async def fetch_reports_with_retry(
         if url:
             acc_to_url[acc] = url
 
+    raw_dests = {acc: ctx.raw_dest for acc, ctx in acc_to_context.items() if ctx.raw_dest}
     all_outcomes: dict[str, AssemblyReportFetchResult] = {}
 
     if not acc_to_url:
@@ -532,7 +554,7 @@ async def fetch_reports_with_retry(
             )
         return [], resolved_to_persist, stats, all_outcomes
 
-    outcomes = await _fetch_report_outcomes(acc_to_url, concurrency=10)
+    outcomes = await _fetch_report_outcomes(acc_to_url, concurrency=10, raw_dests=raw_dests)
     all_outcomes.update(outcomes)
     fetched, transient, not_found = _collect_successful_fetches(outcomes)
 
@@ -541,7 +563,7 @@ async def fetch_reports_with_retry(
             break
         await asyncio.sleep(delay)
         stats["transient_retries"] += len(transient)
-        retry_outcomes = await _fetch_report_outcomes(transient, concurrency=5)
+        retry_outcomes = await _fetch_report_outcomes(transient, concurrency=5, raw_dests=raw_dests)
         all_outcomes.update(retry_outcomes)
         retry_fetched, transient, retry_not_found = _collect_successful_fetches(retry_outcomes)
         fetched.extend(retry_fetched)
@@ -562,7 +584,7 @@ async def fetch_reports_with_retry(
                 resolve_urls[acc] = ftp.assembly_report_url
         if resolve_urls:
             stats["resolved"] = len(resolve_urls)
-            resolve_outcomes = await _fetch_report_outcomes(resolve_urls, concurrency=5)
+            resolve_outcomes = await _fetch_report_outcomes(resolve_urls, concurrency=5, raw_dests=raw_dests)
             all_outcomes.update(resolve_outcomes)
             resolve_fetched, _, _ = _collect_successful_fetches(resolve_outcomes)
             fetched.extend(resolve_fetched)
@@ -646,6 +668,13 @@ def assemblies_with_failed_report() -> Q:
     return Q(assembly_report__report_status=REPORT_STATUS_FAILED)
 
 
+def count_raw_reports_not_ok(accessions: list[str] | None = None) -> int:
+    qs = GenomeAssembly.objects()
+    if accessions is not None:
+        qs = qs.filter(assembly_accession__in=accessions)
+    return qs.filter(assembly_report__raw_report_status__ne=RAW_STATUS_OK).count()
+
+
 def count_incomplete_reports(accessions: list[str] | None = None) -> int:
     qs = GenomeAssembly.objects()
     if accessions is not None:
@@ -673,11 +702,42 @@ def assembly_report_status(row: GenomeAssembly) -> str:
 
 def update_assembly_report(accession: str, status: str) -> None:
     GenomeAssembly.objects(assembly_accession=accession).update_one(
-        set__assembly_report=AssemblyReportBackfill(
-            report_status=status,
-            report_fetched_at=datetime.utcnow(),
-        )
+        set__assembly_report__report_status=status,
+        set__assembly_report__report_fetched_at=datetime.utcnow(),
     )
+
+
+RAW_STATUS_PENDING = "pending"
+RAW_STATUS_OK = "ok"
+RAW_STATUS_FAILED = "failed"    # transient error, retried on the next sync
+RAW_STATUS_MISSING = "missing"  # not found on NCBI, retried by the monthly job
+
+
+def update_raw_report_status(accession: str, status: str) -> None:
+    GenomeAssembly.objects(assembly_accession=accession).update_one(
+        set__assembly_report__raw_report_status=status,
+        set__assembly_report__raw_report_fetched_at=datetime.utcnow(),
+    )
+
+
+def apply_raw_report_outcomes(
+    outcomes: dict[str, AssemblyReportFetchResult],
+    acc_to_taxid: dict[str, str],
+) -> dict[str, int]:
+    """Set raw_report_status from the fetch outcome; the file on disk is the source of truth."""
+    counts = {RAW_STATUS_OK: 0, RAW_STATUS_FAILED: 0, RAW_STATUS_MISSING: 0}
+    for acc, result in outcomes.items():
+        taxid = acc_to_taxid.get(acc)
+        if taxid and result.outcome in (FetchOutcome.OK, FetchOutcome.PARSE_EMPTY) \
+                and seq_files.assembly_report_file_exists(taxid, acc):
+            status = RAW_STATUS_OK
+        elif result.outcome == FetchOutcome.TRANSIENT:
+            status = RAW_STATUS_FAILED
+        else:
+            status = RAW_STATUS_MISSING
+        update_raw_report_status(acc, status)
+        counts[status] += 1
+    return counts
 
 
 def backfill_assembly_report_embed(accessions: list[str] | None = None) -> int:
@@ -788,6 +848,8 @@ def sync_assemblies_ftp_and_sequences(
     accessions_needing_sequences: list[str] = []
     accessions_for_path_update: dict[str, str] = {}
     acc_to_taxid: dict[str, str] = {}
+    chromosome_accs: set[str] = set()  # need chromosomes.json + chr_aliases.tsv
+    raw_needed: set[str] = set()       # need assembly_report.txt
 
     assemblies = GenomeAssembly.objects(assembly_accession__in=target_list).only(
         "assembly_accession",
@@ -805,9 +867,19 @@ def sync_assemblies_ftp_and_sequences(
         has_real_dir = bool(assembly.ncbi_ftp_directory_url)
         is_chromosome = seq_files.is_chromosome_level_assembly(assembly.assembly_level)
 
+        raw_complete = (not overwrite_sequences) and seq_files.assembly_report_file_exists(assembly.taxid, acc)
+        if raw_complete and (assembly.assembly_report is None or assembly.assembly_report.raw_report_status != RAW_STATUS_OK):
+            update_raw_report_status(acc, RAW_STATUS_OK)
         if is_chromosome and not overwrite_sequences and seq_files.chromosomes_file_exists(assembly.taxid, acc):
             if assembly_report_status(assembly) != REPORT_STATUS_OK:
                 update_assembly_report(acc, REPORT_STATUS_OK)
+            if raw_complete:
+                stats["paths_skipped_complete"] += 1
+                continue
+            chromosomes_needed = False
+        else:
+            chromosomes_needed = is_chromosome
+        if raw_complete and not chromosomes_needed:
             stats["paths_skipped_complete"] += 1
             continue
 
@@ -828,10 +900,13 @@ def sync_assemblies_ftp_and_sequences(
         elif not has_real_dir:
             print(f"No ftp_path in assembly summaries for {acc}")
 
-        if is_chromosome and (
-            overwrite_sequences or path_just_updated or not seq_files.chromosomes_file_exists(assembly.taxid, acc)
-        ):
+        if is_chromosome and chromosomes_needed:
             accessions_needing_sequences.append(acc)
+            chromosome_accs.add(acc)
+        if not raw_complete:
+            raw_needed.add(acc)
+            if acc not in accessions_needing_sequences:
+                accessions_needing_sequences.append(acc)
 
     still_missing_path = [
         acc for acc in target_set if acc not in ftp_path_index and acc not in accessions_for_path_update
@@ -839,6 +914,7 @@ def sync_assemblies_ftp_and_sequences(
     stats["still_missing_path"] = len(still_missing_path)
 
     if not accessions_needing_sequences:
+        stats["still_missing_raw_reports"] = count_raw_reports_not_ok(list(target_set))
         stats["still_missing_sequences"] = count_incomplete_reports(list(target_set))
         return stats
 
@@ -855,6 +931,11 @@ def sync_assemblies_ftp_and_sequences(
             acc_to_context[row.assembly_accession] = AssemblyFtpContext(
                 assembly_name=row.assembly_name,
                 ncbi_ftp_directory_url=row.ncbi_ftp_directory_url,
+                raw_dest=(
+                    seq_files.assembly_report_path(acc_to_taxid[row.assembly_accession], row.assembly_accession)
+                    if row.assembly_accession in raw_needed and acc_to_taxid.get(row.assembly_accession)
+                    else None
+                ),
             )
 
         chunk_outcomes: dict[str, AssemblyReportFetchResult] = {}
@@ -871,15 +952,23 @@ def sync_assemblies_ftp_and_sequences(
             )
             _persist_resolved_ftp_paths(resolved_to_persist)
             chunk_outcomes.update(fetch_outcomes)
-            save_chromosome_files(fetched, acc_to_taxid)
+            save_chromosome_files(
+                [(a, d) for a, d in fetched if a in chromosome_accs], acc_to_taxid
+            )
             total_fetched += chunk_stats.get("fetched", 0)
 
-        apply_report_fetch_outcomes(chunk_outcomes, acc_to_taxid)
+        apply_report_fetch_outcomes(
+            {a: o for a, o in chunk_outcomes.items() if a in chromosome_accs}, acc_to_taxid
+        )
+        apply_raw_report_outcomes(
+            {a: o for a, o in chunk_outcomes.items() if a in raw_needed}, acc_to_taxid
+        )
 
         if i + chunk_size < len(items):
             time.sleep(1)
 
     stats["sequences_fetched"] = total_fetched
+    stats["still_missing_raw_reports"] = count_raw_reports_not_ok(list(target_set))
     stats["still_missing_sequences"] = count_incomplete_reports(list(target_set))
     return stats
 
@@ -913,6 +1002,17 @@ def parse_assembly_from_ncbi(assembly_dict: dict, valid_lineages: dict[str, list
     )
 
 
+def _relocate_after_taxid_change(assembly_accession: str, previous_taxid: str, new_taxid: str) -> None:
+    """Move the assembly's files (annotations and assembly-level) to the new taxid folder."""
+    from . import file_layout
+    try:
+        stats = file_layout.relocate_assembly(
+            assembly_accession, new_taxid, old_taxids={str(previous_taxid)})
+        print(f"Taxid of {assembly_accession} changed {previous_taxid} -> {new_taxid}; files: {stats}")
+    except Exception as e:  # the taxid update itself must not fail; the backfill job repairs it
+        print(f"Could not relocate files of {assembly_accession} after taxid change: {e}")
+
+
 def update_assemblies_from_ncbi_report(ncbi_report: dict):
     """
     Update the assemblies from the NCBI report
@@ -938,12 +1038,16 @@ def update_assemblies_from_ncbi_report(ncbi_report: dict):
             update_payload['refseq_category'] = assembly_info.get('refseq_category')
         if assembly_object.organism_name != organism_name:
             update_payload['organism_name'] = organism_name
-        if assembly_object.taxid != taxid:
+        previous_taxid = assembly_object.taxid
+        taxid_changed = previous_taxid != taxid
+        if taxid_changed:
             update_payload['taxid'] = taxid
             #clean up taxon lineage if taxid changed
             update_payload['taxon_lineage'] = []
         if update_payload:  
             assembly_object.modify(**update_payload)
+        if taxid_changed:
+            _relocate_after_taxid_change(assembly_object.assembly_accession, previous_taxid, taxid)
 
 
 def update_assemblies_from_ncbi(accessions: list[str], tmp_dir: str, batch_size: int=1000):

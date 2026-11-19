@@ -4,6 +4,7 @@ from jobs.import_annotations import import_annotations
 from jobs.backfill_providers import backfill_annotation_providers
 from jobs.assemblies import (
     backfill_assembly_reports,
+    backfill_placeholder_assembly_paths,
     retry_missing_assembly_reports,
     sweep_orphan_assembly_files,
     sync_new_assemblies_from_summary,

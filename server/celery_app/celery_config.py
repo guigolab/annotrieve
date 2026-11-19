@@ -49,4 +49,12 @@ beat_schedule = {
         'schedule': crontab(day_of_month='22-28', day_of_week=1, hour=5, minute=0),
         'options': {'expires': 7200},
     },
+    'check-misplaced-assembly-files-monthly': {
+        'task': 'relocate_misplaced_assembly_files',
+        # First week of each month: Monday on days 1-7, 05:00 Europe/Madrid. Report only: moving
+        # files stays a manual run (dry_run=False).
+        'schedule': crontab(day_of_month='1-7', day_of_week=1, hour=5, minute=0),
+        'kwargs': {'dry_run': True},
+        'options': {'expires': 7200},
+    },
 }

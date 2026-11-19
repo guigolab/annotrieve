@@ -83,8 +83,14 @@ def preferred_db(assembly_accession: str) -> str:
 
 
 def _row_identifiers(row: dict[str, str]) -> list[str]:
+    # Assigned-Molecule names the sequence itself only for assembled molecules. For unlocalized
+    # scaffolds it is the *parent chromosome* ("1", "X"...), which would make every chromosome
+    # alias ambiguous with all the scaffolds placed on it.
+    own_molecule = (row.get("sequence_role", "") or "").strip().lower() == "assembled-molecule"
     out: list[str] = []
     for col in _IDENTIFIER_COLUMNS:
+        if col == "assigned_molecule" and not own_molecule:
+            continue
         v = row.get(col, "")
         if v and v not in out:
             out.append(v)

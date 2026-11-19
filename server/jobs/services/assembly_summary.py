@@ -5,12 +5,16 @@ Download and parse NCBI assembly_summary*.txt files for FTP path lookup.
 from __future__ import annotations
 
 import json
+import logging
 import os
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Iterable
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+
+logger = logging.getLogger(__name__)
+LOG_PATH = "[ftp-path]"  # same tag as the sync job: summaries only exist to find FTP paths
 
 USER_AGENT = "annotrieve-assembly-summary/1.0"
 REQUEST_TIMEOUT = 120
@@ -149,17 +153,17 @@ def download_assembly_summaries(
         try:
             remote_dt = _remote_last_modified(url)
             if remote_dt and _local_matches_remote(dest_dir, filename, remote_dt):
-                print(f"Assembly summary up to date: {filename}")
+                logger.debug(f"{LOG_PATH} NCBI summary {filename}: local copy is up to date")
                 skipped.append(filename)
                 continue
 
-            print(f"Downloading assembly summary: {filename}")
+            logger.info(f"{LOG_PATH} NCBI summary {filename}: changed on NCBI or missing locally, downloading (large file)")
             remote_dt = _download_file(url, dest_path) or remote_dt
             if remote_dt:
                 _write_stored_remote_mtime(dest_dir, filename, remote_dt)
             downloaded.append(filename)
         except (HTTPError, URLError, TimeoutError, OSError) as exc:
-            print(f"Failed to download {filename}: {exc}")
+            logger.error(f"{LOG_PATH} NCBI summary {filename}: download failed ({exc}); the previous local copy, if any, is used")
             failed.append(filename)
 
     return {"downloaded": downloaded, "skipped": skipped, "failed": failed}
@@ -197,7 +201,7 @@ def _stream_file_ftp_paths(
     index: dict[str, str],
 ) -> None:
     if not os.path.isfile(filepath):
-        print(f"Assembly summary file not found (skipped): {filepath}")
+        logger.warning(f"{LOG_PATH} NCBI summary file {filepath} is not on disk: skipped, assemblies in it will not get a path from it")
         return
 
     header: dict[str, int] | None = None

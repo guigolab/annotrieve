@@ -128,4 +128,10 @@ def relocate_misplaced_assembly_files(dry_run: bool = True):
                 return stats
             stats = relocate_all(dry_run=False)
     print(f"relocate_misplaced_assembly_files: {stats}")
+    if dry_run and (stats.get("misplaced_assemblies") or stats.get("conflicts") or stats.get("errors")):
+        logger.warning(
+            f"{stats.get('misplaced_assemblies', 0)} assemblies have files outside their taxid folder "
+            f"({len(stats.get('conflicts', []))} conflicts, {len(stats.get('errors', []))} errors); "
+            f"run relocate_misplaced_assembly_files with dry_run=False"
+        )
     return stats

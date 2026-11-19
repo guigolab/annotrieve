@@ -13,7 +13,7 @@ from email.utils import parsedate_to_datetime
 from typing import Union
 import requests
 from .utils import create_batches
-from db.models import GenomeAnnotation, AnnotationError
+from db.models import GenomeAnnotation, GenomeAssembly, AnnotationError, Organism
 from db.embedded_documents import PipelineInfo, IndexedFileInfo
 from mongoengine import Q
 from helpers import file as file_helper
@@ -559,6 +559,8 @@ def remove_files_from_annotations(annotations, annotations_path) -> int:
         paths.append(path)
         paths.append(f"{path}{seq_files.CONTIGS_SUFFIX}")
         paths.append(f"{path}.csi")
+        # leftovers of an interrupted import/contigs write for the same annotation
+        paths += [f"{path}{PART_SUFFIX}", f"{path}{PART_SUFFIX}.csi", f"{path}{seq_files.CONTIGS_SUFFIX}.tmp"]
     deleted_files = file_helper.remove_files(paths, annotations_path)
     return len(deleted_files)
 
@@ -994,52 +996,61 @@ def _relocate_assembly_files(assembly_accession: str, taxid: str) -> None:
         logger.warning(f"Could not relocate files of {assembly_accession}: {e}")
 
 
-def update_stale_annotations(assembly_taxids: list[str]) -> None:
+def update_stale_annotations(assembly_taxids: list[str] | None = None) -> None:
     """
-    Update taxonomy fields on annotations whose taxid is not in assembly_taxids.
-    Deletes annotations whose assembly no longer exists.
+    Make every annotation carry its assembly's taxonomy (taxid, organism, lineage) and move its
+    files into the assembly's taxid folder.
+
+    The comparison is per assembly. (Comparing against the set of all assembly taxids missed an
+    annotation whose old taxid is still used by some other assembly.) Annotations whose assembly no
+    longer exists are deleted only when their taxid matches no assembly at all, as before.
+    ``assembly_taxids`` is optional: it is only used to decide that deletion.
     """
     from . import assembly as assembly_service
 
-    annotations_with_stale_taxids = GenomeAnnotation.objects(taxid__nin=assembly_taxids)
-    if annotations_with_stale_taxids.count() == 0:
+    # one (assembly, taxid) pair per group: far smaller than the annotation collection
+    pairs: dict[str, set[str]] = {}
+    lineages: dict[str, list[list[str]]] = {}
+    for row in GenomeAnnotation.objects.aggregate(
+        {"$group": {"_id": {"acc": "$assembly_accession", "taxid": "$taxid", "lineage": "$taxon_lineage"}}}
+    ):
+        key = row["_id"]
+        pairs.setdefault(key.get("acc"), set()).add(key.get("taxid"))
+        lineages.setdefault(key.get("acc"), []).append(list(key.get("lineage") or []))
+    if not pairs:
         return
+    if assembly_taxids is None:
+        assembly_taxids = list(set(GenomeAssembly.objects().scalar("taxid")))
+    known_taxids = set(assembly_taxids)
 
-    pipeline = [
-        {
-            "$group": {
-                "_id": "$assembly_accession",
-                "annotation_ids": {"$push": "$annotation_id"},
-            }
-        }
-    ]
+    accessions = [acc for acc in pairs if acc]
+    assembly_map = {}
+    for batch in create_batches(accessions, 1000):
+        assembly_map.update(assembly_service.build_assembly_lookup(batch))
 
     assemblies_not_found = set()
-    annotations_by_assembly = {}
-
-    for row in annotations_with_stale_taxids.aggregate(*pipeline):
-        acc = row["_id"]
-        annotation_ids = row["annotation_ids"]
-        annotations_by_assembly[acc] = annotation_ids
-
-    if not annotations_by_assembly:
-        return
-
-    related_assembly_accessions = list(annotations_by_assembly.keys())
-    assembly_map = assembly_service.build_assembly_lookup(related_assembly_accessions)
-
-    for acc, ann_ids in annotations_by_assembly.items():
+    for acc, taxids in pairs.items():
         assembly = assembly_map.get(acc)
         if not assembly:
-            assemblies_not_found.add(acc)
+            if any(t not in known_taxids for t in taxids):
+                assemblies_not_found.add(acc)
             continue
-        update_payload = dict(
-            taxid=assembly.taxid,
-            organism_name=assembly.organism_name,
-            taxon_lineage=assembly.taxon_lineage,
-        )
-        GenomeAnnotation.objects(annotation_id__in=ann_ids).update(**update_payload)
-        _relocate_assembly_files(acc, assembly.taxid)
+        if not assembly_service.normalize_taxid(assembly.taxid):
+            continue  # never propagate a broken taxid
+        if taxids != {assembly.taxid}:
+            GenomeAnnotation.objects(assembly_accession=acc, taxid__ne=assembly.taxid).update(
+                taxid=assembly.taxid,
+                organism_name=assembly.organism_name,
+                taxon_lineage=assembly.taxon_lineage,
+            )
+            _relocate_assembly_files(acc, assembly.taxid)
+        # Same taxid, older lineage: align it, but never copy an empty lineage over a stored one
+        # (the assembly's is cleared when its taxid changes, until the organism lineage is applied).
+        assembly_lineage = list(assembly.taxon_lineage or [])
+        if assembly_lineage and any(lin != assembly_lineage for lin in lineages.get(acc, [])):
+            GenomeAnnotation.objects(
+                assembly_accession=acc, taxid=assembly.taxid, taxon_lineage__ne=assembly_lineage
+            ).update(taxon_lineage=assembly_lineage)
 
     if assemblies_not_found:
         annotations_path = os.getenv("LOCAL_ANNOTATIONS_DIR")
@@ -1047,6 +1058,47 @@ def update_stale_annotations(assembly_taxids: list[str]) -> None:
             query=dict(assembly_accession__in=list(assemblies_not_found)),
             annotations_path=annotations_path,
         )
+
+
+def align_annotations_with_assemblies(
+    annotations: list[AnnotationToProcess],
+    valid_lineages: dict[str, list[str]],
+) -> int:
+    """
+    New annotation files are written to ``{taxon_id}/{assembly}/``. The tracker's taxon id can differ
+    from NCBI's for the same assembly (and the assembly files follow NCBI's), which split an
+    assembly across two folders. Before processing, point each annotation at its stored assembly's
+    taxid; the lineage is added to ``valid_lineages`` (empty is fine, the lineage fallback fills it).
+    Returns how many annotations were changed.
+    """
+    from . import assembly as assembly_service
+
+    changed = 0
+    accessions = list({a.assembly_accession for a in annotations if a.assembly_accession})
+    lookup = {}
+    for batch in create_batches(accessions, 1000):
+        lookup.update(assembly_service.build_assembly_lookup(batch))
+    for annotation in annotations:
+        assembly = lookup.get(annotation.assembly_accession)
+        if not assembly or not assembly_service.normalize_taxid(assembly.taxid):
+            continue
+        if str(annotation.taxon_id) == assembly.taxid:
+            continue
+        logger.info(
+            f"{annotation.access_url}: tracker taxon {annotation.taxon_id} differs from "
+            f"{assembly.assembly_accession} taxon {assembly.taxid}; using the assembly's"
+        )
+        annotation.taxon_id = assembly.taxid
+        if assembly.organism_name:
+            annotation.organism_name = assembly.organism_name
+        if assembly.taxid not in valid_lineages:
+            lineage = list(assembly.taxon_lineage or [])
+            if not lineage:
+                organism = Organism.objects(taxid=assembly.taxid).only("taxon_lineage").first()
+                lineage = list(organism.taxon_lineage or []) if organism else []
+            valid_lineages[assembly.taxid] = lineage
+        changed += 1
+    return changed
 
 
 def clean_up_annotations_with_errors(batch_size: int = 1000) -> int:

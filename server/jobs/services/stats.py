@@ -1,5 +1,7 @@
 import logging
+from datetime import datetime, timedelta, timezone
 from array import array
+from bson import ObjectId
 from db.models import GenomeAssembly, GenomeAnnotation, Organism, TaxonNode, BioProject
 from db.embedded_documents import DistributionStats, TaxonAnnotationStats, TaxonGeneStats, TaxonGeneCategoryStats, TranscriptTypeStats, TaxonTranscriptTypeStats, TaxonBuscoScore
 import math
@@ -9,6 +11,10 @@ from .utils import create_batches
 from helpers import assembly_sequence_files as seq_files
 
 logger = logging.getLogger(__name__)
+
+# An assembly is saved before its annotations (the import runs for hours). Pruning one that has no
+# annotation yet would leave those annotations without an assembly, so only older rows are pruned.
+ORPHAN_ASSEMBLY_MIN_AGE = timedelta(hours=24)
 
 def update_assemblies_counts():
     """
@@ -28,7 +34,8 @@ def update_assemblies_counts():
             annotations_count=counts.get(assembly.assembly_accession, 0)
         )
 
-    orphan_qs = GenomeAssembly.objects(annotations_count=0)
+    cutoff = ObjectId.from_datetime(datetime.now(timezone.utc) - ORPHAN_ASSEMBLY_MIN_AGE)
+    orphan_qs = GenomeAssembly.objects(annotations_count=0, id__lt=cutoff)  # id embeds the creation time
     orphan_qs_count = orphan_qs.count()
     if orphan_qs_count > 0:
         logger.info(

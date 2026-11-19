@@ -20,6 +20,7 @@ from jobs.updates import (
 from jobs.track_users import track_unique_users_by_country
 from jobs.repair_annotation_files import repair_missing_annotation_files
 from jobs.relocate_assembly_files import relocate_misplaced_assembly_files
+from jobs.restore_assemblies import restore_missing_assemblies
 
 
 def _validate_auth_key(auth_key: str) -> None:
@@ -169,3 +170,13 @@ def trigger_relocate_misplaced_assembly_files(auth_key: str, dry_run: bool = Tru
     _validate_auth_key(auth_key)
     relocate_misplaced_assembly_files.delay(dry_run=dry_run)
     return {"message": "Relocate misplaced assembly files task triggered"}
+
+
+def trigger_restore_missing_assemblies(auth_key: str, dry_run: bool = True):
+    """
+    Re-create the assembly rows that annotations still belong to (fetched from NCBI again).
+    Defaults to dry_run=True; never deletes anything.
+    """
+    _validate_auth_key(auth_key)
+    restore_missing_assemblies.delay(dry_run=dry_run)
+    return {"message": "Restore missing assemblies task triggered"}

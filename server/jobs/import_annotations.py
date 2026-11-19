@@ -253,6 +253,13 @@ def _run_import(run_dir: str) -> None:
             _refresh_if_taxonomy_changed(taxon_nodes_before)
             return
 
+        try:
+            realigned = annotation_service.align_annotations_with_assemblies(new_annotations_to_process, valid_lineages)
+        except Exception as e:  # never abort the import; the relocate job repairs a split folder
+            realigned = 0
+            logger.warning(f"Could not align annotation taxids with their assemblies: {e}")
+        if realigned:
+            logger.info(f"{realigned} annotations use their assembly's taxid instead of the tracker's")
         logger.info(f"Found {len(new_annotations_to_process)} new annotations to process")
 
         #the annotation id is the md5 of the uncompressed sorted file; the pipeline adds to this set as it goes

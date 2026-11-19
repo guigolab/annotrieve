@@ -15,6 +15,7 @@ import json
 import os
 import re
 import subprocess
+import time
 from typing import Any, Iterable, Iterator
 
 from jobs.services.classes import (
@@ -27,6 +28,10 @@ CHROMOSOMES_FILENAME = "chromosomes.json"
 CHR_ALIASES_FILENAME = "chr_aliases.tsv"
 ASSEMBLY_REPORT_FILENAME = "assembly_report.txt"
 CONTIGS_SUFFIX = ".contigs.txt"
+# Leftovers of interrupted atomic writes / moves. Never a published file, safe to delete.
+TRANSIENT_SUFFIXES = (".tmp", ".part", ".part.csi", ".moving")
+# A leftover younger than this may belong to a write that is still running: leave it alone.
+TRANSIENT_MIN_AGE_SECONDS = 3600
 ASSEMBLED_MOLECULE_ROLE = "assembled-molecule"
 CHROMOSOME_LEVELS = frozenset({"chromosome", "complete genome"})
 
@@ -76,22 +81,37 @@ def resolve_assembly_report_path(
     return None
 
 
+def _older_than(path: str, seconds: float) -> bool:
+    try:
+        return time.time() - os.path.getmtime(path) >= seconds
+    except OSError:
+        return False
+
+
 def delete_assembly_files(taxid: str, assembly_accession: str) -> list[str]:
     """
-    Remove the report, chromosomes.json and chr_aliases.tsv of an assembly, then its directory
-    if nothing else is left in it. Never touches annotation files. Returns removed paths.
+    Remove the report, chromosomes.json and chr_aliases.tsv of an assembly, plus any leftover of an
+    interrupted write (``*.tmp``, ``*.part``, ``*.part.csi``, ``*.moving``), then its directory if
+    nothing else is left in it. Never touches published annotation files. Returns removed paths.
     """
     removed: list[str] = []
-    for path in (
+    directory = assembly_dir(taxid, assembly_accession)
+    paths = [
         assembly_report_path(taxid, assembly_accession),
-        f"{assembly_report_path(taxid, assembly_accession)}.tmp",
+        f"{assembly_report_path(taxid, assembly_accession)}.tmp",  # always removed, as before
         chromosomes_path(taxid, assembly_accession),
         chr_aliases_path(taxid, assembly_accession),
-    ):
+    ]
+    if os.path.isdir(directory):
+        paths += [
+            os.path.join(directory, name)
+            for name in sorted(os.listdir(directory))
+            if name.endswith(TRANSIENT_SUFFIXES) and _older_than(os.path.join(directory, name), TRANSIENT_MIN_AGE_SECONDS)
+        ]
+    for path in dict.fromkeys(paths):
         if os.path.isfile(path):
             os.remove(path)
             removed.append(path)
-    directory = assembly_dir(taxid, assembly_accession)
     try:
         os.rmdir(directory)  # only succeeds when empty
     except OSError:

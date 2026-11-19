@@ -26,6 +26,7 @@ from jobs.track_users import track_unique_users_by_country
 from jobs.upload_gff import compute_custom_gff_stats
 from jobs.repair_annotation_files import repair_missing_annotation_files
 from jobs.relocate_assembly_files import relocate_misplaced_assembly_files
+from jobs.restore_assemblies import restore_missing_assemblies
 
 
 app = create_celery()

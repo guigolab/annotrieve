@@ -7,7 +7,7 @@ from collections import Counter
 from contextlib import contextmanager
 from celery import shared_task
 
-from db.models import GenomeAssembly
+from db.models import GenomeAnnotation, GenomeAssembly
 from helpers import assembly_sequence_files as seq_files
 from helpers.constants import PLACEHOLDER_DOWNLOAD_URL_PREFIX
 from mongoengine import Q
@@ -132,11 +132,22 @@ def retry_missing_assembly_reports(chunk_size: int = 500):
 _ASSEMBLY_DIR_RE = re.compile(r"^GC[AF]_\d+\.\d+$")
 
 
+def _folder_is_referenced(taxid: str, accession: str) -> bool:
+    """True if a stored annotation belongs to this accession or points at a file in this folder."""
+    return bool(
+        GenomeAnnotation.objects(assembly_accession=accession).only("annotation_id").first()
+        or GenomeAnnotation.objects(indexed_file_info__bgzipped_path__startswith=f"/{taxid}/{accession}/")
+        .only("annotation_id").first()
+    )
+
+
 @shared_task(name="sweep_orphan_assembly_files", ignore_result=False)
 def sweep_orphan_assembly_files(dry_run: bool = True):
     """
     One-off: remove assembly files (report, chromosomes.json, chr_aliases.tsv) of assemblies
-    that no longer exist in the DB. Annotation files are never touched. Dry-run by default.
+    that no longer exist in the DB. Annotation files are never touched, and a folder that a stored
+    annotation still belongs to is skipped and reported under ``referenced_dirs`` (the assembly row
+    is missing there: ``restore_missing_assemblies`` brings it back). Dry-run by default.
     """
     root = seq_files.ANNOTATIONS_PATH
     if not root:
@@ -146,7 +157,8 @@ def sweep_orphan_assembly_files(dry_run: bool = True):
         # an empty collection (wrong DB, outage) would make every directory look orphaned
         raise RuntimeError("No assemblies in the database; refusing to sweep")
     logger.info(f"{LOG_JOB} sweep_orphan_assembly_files: START ({'DRY RUN, nothing is deleted' if dry_run else 'DELETING files'}), {len(known)} assemblies in the DB")
-    stats = {"scanned": 0, "orphans": 0, "files_removed": 0, "dry_run": dry_run, "orphan_dirs": []}
+    stats = {"scanned": 0, "orphans": 0, "files_removed": 0, "dry_run": dry_run, "orphan_dirs": [],
+             "referenced": 0, "referenced_dirs": []}
     for taxid in os.listdir(root):
         taxid_dir = os.path.join(root, taxid)
         if not os.path.isdir(taxid_dir):
@@ -156,6 +168,11 @@ def sweep_orphan_assembly_files(dry_run: bool = True):
                 continue
             stats["scanned"] += 1
             if name in known:
+                continue
+            if _folder_is_referenced(taxid, name):
+                stats["referenced"] += 1
+                if len(stats["referenced_dirs"]) < 200:
+                    stats["referenced_dirs"].append(f"{taxid}/{name}")
                 continue
             stats["orphans"] += 1
             if len(stats["orphan_dirs"]) < 200:
@@ -167,6 +184,12 @@ def sweep_orphan_assembly_files(dry_run: bool = True):
         f"{stats['orphans']} belong to no assembly in the DB, "
         f"{'files removed=' + str(stats['files_removed']) if not dry_run else 'would be cleaned by a real run'}"
     )
+    if stats["referenced_dirs"]:
+        logger.warning(
+            f"{LOG_JOB} sweep_orphan_assembly_files: {stats['referenced']} folders were left alone because annotations "
+            f"still reference them but the assembly is not in the DB (run restore_missing_assemblies): "
+            f"{assembly_service._listed(stats['referenced_dirs'])}"
+        )
     if stats["orphan_dirs"]:
         logger.info(f"{LOG_JOB} sweep_orphan_assembly_files: orphan directories: {assembly_service._listed(stats['orphan_dirs'])}")
     return stats

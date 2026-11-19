@@ -119,3 +119,19 @@ async def trigger_relocate_misplaced_assembly_files(
     return jobs_service.trigger_relocate_misplaced_assembly_files(
         x_auth_key, dry_run=dry_run
     )
+
+
+@router.post("/jobs/update/assemblies/restore-missing")
+async def trigger_restore_missing_assemblies(
+    x_auth_key: str = Header(..., alias="X-Auth-Key"),
+    dry_run: bool = True,
+):
+    """
+    Backfill: re-create the assemblies that stored annotations still belong to but that are missing
+    from the database (fetched from NCBI again, then synced). Nothing is deleted.
+
+    Defaults to dry_run=true; pass dry_run=false to apply (refuses to run while the import job runs).
+
+    Requires X-Auth-Key header for authentication.
+    """
+    return jobs_service.trigger_restore_missing_assemblies(x_auth_key, dry_run=dry_run)
